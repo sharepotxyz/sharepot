@@ -1,0 +1,28 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="/favicon.svg"><meta name="theme-color" content="#ffffff">
+<title>SharePot · bet with your stock tokens</title>
+<meta name="description" content="Daily prediction pools on US stocks, staked and paid in tokenized stocks (xStocks, Backpack, Ondo) on Solana.">
+<link rel="stylesheet" href="/src/styles.css"></head><body>
+<header class="topbar"><div class="container tb">
+  <a class="brand" href="/"><svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16" fill="#5b4bdb"/><circle cx="32" cy="32" r="15" fill="none" stroke="#fff" stroke-width="6"/><path d="M32 17a15 15 0 0 1 15 15H32z" fill="#fff"/></svg><span>SharePot</span></a>
+  <label class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input id="q" type="search" placeholder="Search SpaceX, TSLA, Ondo…" aria-label="Search markets"></label>
+  <nav class="tb-right"><a class="navlink" href="/portfolio.html">My bets</a><span id="netbadge"></span><div id="wallet" class="walletbox"></div></nav>
+</div><div class="container"><nav id="catnav" class="catnav" aria-label="Stocks"></nav></div></header>
+<main class="container">
+  <section class="hero">
+    <div><h1>Bet with your stock tokens. <span>Win more shares.</span></h1>
+      <p>Daily pools on where US stocks close. Stake the tokenized stock you already hold — xStocks, Backpack or Ondo — and winners are paid in that same token. Nothing gets sold.</p></div>
+    <ol class="steps">
+      <li><span class="n">1</span><span><b>Pick a range</b>Big drop, small drop, small gain or big gain — for today's close vs yesterday's.</span></li>
+      <li><span class="n">2</span><span><b>Stake shares</b>Bets stop at the opening bell. A drop bet hedges shares you keep; a gain bet adds upside.</span></li>
+      <li><span class="n">3</span><span><b>Get paid in shares</b>After the official close, winners split the losing pools. Automatic, verifiable on-chain.</span></li>
+    </ol>
+  </section>
+  <div id="filters" class="filters"></div>
+  <div id="summary" class="note"></div>
+  <div id="events" class="evgrid"><div class="note">Loading markets…</div></div>
+</main>
+<footer class="container foot">
+  <p>SharePot is a parimutuel pool, not an order book: payouts depend on the final pool sizes. Fee 3% of winnings (2% early), never on your stake. Results are disputable for one hour, then paid out automatically.</p>
+  <p><b>Issuer controls.</b> Stock tokens are issued by xStocks (Backed), Backpack Securities and Ondo Global Markets, who can pause transfers of a token; xStocks and Backpack tokens also let the issuer move tokens in any account, these pools included. Tokenized stocks are not offered to US persons.</p>
+</footer>
+<script type="module" src="/src/main.ts"></script></body></html>

@@ -1,0 +1,16 @@
+# SharePot site blocks for the VPS Caddyfile. Caddy terminates TLS and forwards everything — the static site and
+# /api/* — to the one Node process (pm2 sharepot-api on 127.0.0.1:5041). The devnet app lives on its own subdomain;
+# the apex redirects there until a mainnet app exists.
+devnet.sharepot.xyz {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:5041
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+}
+
+sharepot.xyz, www.sharepot.xyz {
+	redir https://devnet.sharepot.xyz{uri} 302
+}

@@ -1,0 +1,13 @@
+# SharePot devnet jobs — crontab of the `sharepot` unix user (install: crontab deploy/crontab.txt).
+# Both scripts are idempotent and find session times from the NYSE calendar themselves, so the host time zone does not
+# matter. They sign with the proposer key only: it may create markets, seed them from its own stock supply, propose
+# results and crank payouts. The operator / upgrade-authority key is not on this machine.
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+S=/home/sharepot
+
+# keep one market per listed token open for betting
+*/30 * * * * cd $S/apps/sharepot && CLUSTER=devnet STATE=$S/secrets/devnet/state.json DATA_DIR=$S/data ANCHOR_PROVIDER_URL=https://api.devnet.solana.com ANCHOR_WALLET=$S/secrets/devnet/proposer.json node server/open-markets.mjs >> $S/logs/open-markets.log 2>&1
+
+# propose results after the close, finalize after the dispute window, pay out and sweep
+*/10 * * * * cd $S/apps/sharepot && CLUSTER=devnet CLUSTER_RPC=https://api.devnet.solana.com DATA_DIR=$S/data SHAREPOT_SECRETS=$S/secrets/devnet node server/resolve.mjs >> $S/logs/resolve.log 2>&1

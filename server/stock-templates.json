@@ -1,0 +1,23 @@
+{
+  "_doc": "One market per listed token per New York trading session (see open-markets.mjs). A stock can trade on Solana as several tokens from different issuers (xStocks, Backpack Securities, Ondo Global Markets); each token gets its own pool, since the tokens are not interchangeable. All pools of a stock share the stock's thresholds and resolve on the same official close. thresholdsBps are chosen near the quartiles of the stock's daily moves (TSLA/NVDA/SPY: 12 weeks to 2026-09-11 from Alpaca SIP; SPCX: all 63 sessions since listing, Yahoo) with the middle cut at 0, so the four ranges read big drop / small drop / small gain / big gain. On-chain thresholds are in ppm (bps x 100). seed = fee-free prize in shares of that token; profile = which issuer's Token-2022 extension set the devnet mock copies.",
+  "resolveDelaySecs": 1800,
+  "stocks": [
+    { "symbol": "SPCX", "name": "SpaceX", "thresholdsBps": [-325, 0, 275], "tokens": [
+      { "token": "SPCXx", "issuer": "xStocks", "decimals": 8, "profile": "xstocks", "mainnetMint": "Xs3oZwbHvqis4NYcf4YKWmEia2eC84wSiVrcYcTqpH8", "seed": 0.5 },
+      { "token": "SPCX", "issuer": "Backpack", "decimals": 6, "profile": "backpack", "mainnetMint": "SPCXxcqXj6e5dJDVNovHN8744zkbhM2bYudU45BimGb", "seed": 0.5 },
+      { "token": "SPCXon", "issuer": "Ondo", "decimals": 9, "profile": "ondo", "mainnetMint": "wzAyQTorWyoVXuJKj2x8EqKEGJpS13z6EWE9z5Aondo", "seed": 0.5 }
+    ] },
+    { "symbol": "TSLA", "name": "Tesla", "thresholdsBps": [-175, 0, 200], "tokens": [
+      { "token": "TSLAx", "issuer": "xStocks", "decimals": 8, "profile": "xstocks", "mainnetMint": "XsDoVfqeBukxuZHWhdvWHBhgEHjGNst4MLodqsJHzoB", "seed": 0.25 },
+      { "token": "TSLAon", "issuer": "Ondo", "decimals": 9, "profile": "ondo", "mainnetMint": "KeGv7bsfR4MheC1CkmnAVceoApjrkvBhHYjWb67ondo", "seed": 0.25 }
+    ] },
+    { "symbol": "NVDA", "name": "NVIDIA", "thresholdsBps": [-150, 0, 225], "tokens": [
+      { "token": "NVDAx", "issuer": "xStocks", "decimals": 8, "profile": "xstocks", "mainnetMint": "Xsc9qvGR1efVDFGLrVsmkzv3qi45LTBjeUKSPmx9qEh", "seed": 0.5 },
+      { "token": "NVDAon", "issuer": "Ondo", "decimals": 9, "profile": "ondo", "mainnetMint": "gEGtLTPNQ7jcg25zTetkbmF7teoDLcrfTnQfmn2ondo", "seed": 0.5 }
+    ] },
+    { "symbol": "SPY", "name": "S&P 500 ETF", "thresholdsBps": [-50, 0, 50], "tokens": [
+      { "token": "SPYx", "issuer": "xStocks", "decimals": 8, "profile": "xstocks", "mainnetMint": "XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W", "seed": 0.15 },
+      { "token": "SPYon", "issuer": "Ondo", "decimals": 9, "profile": "ondo", "mainnetMint": "k18WJUULWheRkSpSquYGdNNmtuE2Vbw1hpuUi92ondo", "seed": 0.15 }
+    ] }
+  ]
+}
