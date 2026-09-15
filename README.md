@@ -70,7 +70,7 @@ resolve on the same official close; each is staked and paid in its own token.
    **on-chain** from the market's thresholds.
 3. **Anyone can check the number.** The raw response is published byte for byte; the market page re-hashes it **in
    your browser** and shows whether it matches the hash stored on-chain.
-4. **Dispute window.** A proposal can be disputed (wallet-signed) for one hour on devnet; it can be corrected by
+4. **Dispute window.** A proposal can be disputed (wallet-signed) for six hours on devnet; it can be corrected by
    re-proposing, which restarts the window. After the window anyone can finalize.
 5. **Betting closes before any of the answer exists.** Bets stop at the opening bell of the session being predicted.
 6. **Integer math end to end.** Moves are stored in ppm and floored, so a fall of any size can never round onto the

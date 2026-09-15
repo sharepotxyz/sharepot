@@ -66,6 +66,9 @@ async function load() {
     update();
   } catch (e: any) { grid.innerHTML = `<div class="msg err">Could not load markets: ${esc(e.message ?? e)}</div>`; }
 }
+// footer: the dispute window is on-chain config (shipped in the page's boot data), not a constant
+{ const secs = Number((window as any).__BOOT__?.config?.disputeWindowSecs), el = document.getElementById("dwin");
+  if (el && secs > 0) el.textContent = secs % 3600 === 0 ? `${secs / 3600} hour${secs === 3600 ? "" : "s"}` : `${Math.round(secs / 60)} minutes`; }
 load();
 setInterval(load, 30_000); // pools move as people bet; the API caches for 15 s
 void STOCK_NAMES;
