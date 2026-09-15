@@ -58,10 +58,14 @@ function buildEvents(c) {
 }
 const question = (ev) => `Where does ${ev.symbol} close on ${sessionLabel(ev.date)}?`;
 
-/** Home: the default view (betting open, all stocks, closing soon) as event cards + the summary line. */
-export function homeHtml(data, html) {
+/** Home: the default view (betting open, closing soon; all stocks or the ?stock= tab) as event cards + the summary line.
+ *  Other filters in the URL are left to the browser. A stock tab hides the hero, as main.ts does. */
+export function homeHtml(data, html, url) {
+  const stock = url?.searchParams.get("stock") || "all";
+  if (stock !== "all") html = html.replace(`<section class="hero">`, `<section class="hero" hidden>`);
+  if (["issuer", "status", "sort", "q"].some((k) => url?.searchParams.get(k))) return html;
   const c = context(data); if (!c.markets.length) return html;
-  const evs = buildEvents(c).filter((e) => e.status === "open").sort((a, b) => a.closeTs - b.closeTs || a.symbol.localeCompare(b.symbol));
+  const evs = buildEvents(c).filter((e) => e.status === "open" && (stock === "all" || e.symbol === stock)).sort((a, b) => a.closeTs - b.closeTs || a.symbol.localeCompare(b.symbol));
   if (!evs.length) return html;
   const cards = evs.map((ev) => {
     const m0 = ev.markets[0], backed = ev.dist.some((x) => x > 0), label = (i) => bucketName(m0, i) || bucketLabel(m0, i);

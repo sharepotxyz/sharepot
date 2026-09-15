@@ -53,6 +53,8 @@ function update() {
   summary.textContent = list.length ? `${list.length} market${list.length === 1 ? "" : "s"} · ${pools} pools${pot ? ` · ${fmtUsd(pot)} in play` : ""}` : "";
   grid.innerHTML = list.length ? list.map(card).join("") : `<div class="empty-state">Nothing matches these filters. <a href="/">Show all open markets</a></div>`;
   renderFilters(); renderCatnav(state.stock);
+  // the pitch is for the front page; a stock tab goes straight to that stock's markets
+  const hero = document.querySelector<HTMLElement>(".hero"); if (hero) hero.hidden = state.stock !== "all";
   const p = new URLSearchParams(); for (const [k, v] of Object.entries(state)) if (v && v !== DEFAULTS[k]) p.set(k, v);
   history.replaceState(null, "", p.toString() ? "?" + p : location.pathname);
 }

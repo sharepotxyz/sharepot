@@ -2,7 +2,7 @@ import { PublicKey } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { API_BASE, CLUSTER, IS_TEST } from "./config";
 import { STATUS, connection, type MarketView } from "./chain";
-import { STOCK_NAMES, STOCK_ORDER, symbolOf, tokenSymbol, uiAmount } from "./stocks";
+import { STOCK_NAMES, STOCK_ORDER, issuerOf, priceOf, symbolOf, tokenSymbol, uiAmount } from "./stocks";
 import { connectWallet, devWallet, listWallets, type Session } from "./wallet";
 
 /** HTML-escape anything that did not originate in our own source. */
@@ -27,9 +27,9 @@ const COLORS_4 = ["#e5484d", "#f5a524", "#6cc68e", "#12a150"];
 const COLORS = ["#e5484d", "#f08c3a", "#f5a524", "#c3c65a", "#6cc68e", "#12a150", "#3b9ede", "#5b4bdb"];
 export const bucketColor = (m: MarketView, i: number) => (m.nBuckets === 2 ? (i === 1 ? "var(--gain)" : "var(--drop)") : m.nBuckets === 4 ? COLORS_4[i] : COLORS[Math.round((i * (COLORS.length - 1)) / Math.max(1, m.nBuckets - 1))]);
 /** Ticker monogram in a colour derived from the symbol (no third-party logos). */
-export function tickerBadge(symbol: string, big = false) {
+export function tickerBadge(symbol: string, big = false, small = false) {
   let h = 0; for (const c of symbol) h = (h * 31 + c.charCodeAt(0)) % 360;
-  return `<span class="tick${big ? " big" : ""}" style="--h:${h}">${esc(symbol)}</span>`;
+  return `<span class="tick${big ? " big" : small ? " sm" : ""}" style="--h:${h}">${esc(symbol)}</span>`;
 }
 
 // ---------- top bar: brand, search, stock tabs, network badge, wallet ----------
@@ -37,7 +37,13 @@ type TopbarOpts = { active?: string; q?: string; onSearch?: (q: string) => void;
 let topOpts: TopbarOpts = {};
 export function mountTopbar(opts: TopbarOpts = {}) {
   topOpts = opts;
-  const nb = document.getElementById("netbadge"); if (nb && IS_TEST) nb.innerHTML = `<span class="netbadge" title="Test network: mock stock tokens, no real value">${CLUSTER === "devnet" ? "Devnet" : CLUSTER}</span>`;
+  // test networks only: the faucet page, linked from the nav and the network badge (the badge stays visible on phones)
+  const faucetOn = IS_TEST && !!API_BASE, net = CLUSTER === "devnet" ? "Devnet" : CLUSTER;
+  const nb = document.getElementById("netbadge");
+  if (nb && IS_TEST) nb.innerHTML = faucetOn
+    ? `<a class="netbadge" href="/faucet.html" title="Test network: mock stock tokens, no real value. Free test stocks on the faucet page.">${esc(net)}</a>`
+    : `<span class="netbadge" title="Test network: mock stock tokens, no real value">${esc(net)}</span>`;
+  const fl = document.getElementById("faucetlink"); if (fl) fl.hidden = !faucetOn;
   const q = document.getElementById("q") as HTMLInputElement | null;
   if (q) {
     q.value = opts.q ?? "";
@@ -124,24 +130,24 @@ function renderWallet() {
     const d = el.querySelector<HTMLButtonElement>("#wdev"); if (d) d.onclick = () => setSession(devWallet());
     return;
   }
-  const held = tracked.filter((t) => (balances.raw[t.mint.toBase58()] ?? 0) > 0);
-  const holdings = !balances.loaded ? `<div class="note" style="padding:4px 6px">loading…</div>` : held.length
-    ? held.map((t) => `<div class="hold"><span>${esc(t.token)}</span><span class="mono">${uiAmount(t.view, balances.raw[t.mint.toBase58()]).toLocaleString("en-US", { maximumFractionDigits: 4 })}</span></div>`).join("")
-    : `<div class="note" style="padding:4px 6px">No stock tokens yet.</div>`;
-  el.innerHTML = `<button class="wbtn" id="wbtn"><span class="dot"></span><span class="mono">${short(session.publicKey)}</span>${balances.loaded ? `<span class="note">${balances.sol.toFixed(3)} SOL</span>` : ""}</button>${menuOpen ? `<div class="menu" id="wmenu">
-    <div class="mh">${esc(session.label)}</div><div id="wholdings">${holdings}</div>${balances.loaded && balances.sol < 0.002 ? `<div class="note warn" style="padding:4px 6px">Not enough SOL for network fees.</div>` : ""}<hr>
-    ${IS_TEST && API_BASE ? `<button id="wfaucet" title="2 shares of every mock stock token + a little SOL for fees, once per day">Get test stocks</button>` : ""}
-    <a class="mi" href="/portfolio.html">My bets</a><button id="wdis">Disconnect</button></div>` : ""}`;
+  // holdings: one row per token (stock badge, token, stock · issuer, amount, dollar value), biggest value first
+  const addr = session.publicKey.toBase58();
+  const held = tracked.map((t) => ({ t, raw: balances.raw[t.mint.toBase58()] ?? 0 })).filter((h) => h.raw > 0)
+    .map((h) => { const amt = uiAmount(h.t.view, h.raw), p = priceOf(h.t.view); return { ...h, amt, usd: p != null ? amt * p : null }; })
+    .sort((a, b) => (b.usd ?? -1) - (a.usd ?? -1) || STOCK_ORDER.indexOf(a.t.symbol) - STOCK_ORDER.indexOf(b.t.symbol));
+  const priced = held.filter((h) => h.usd != null), total = priced.reduce((a, h) => a + h.usd!, 0);
+  const usd = (v: number) => "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const rows = !balances.loaded ? `<div class="note" style="padding:4px">Loading balances…</div>` : held.length
+    ? held.map((h) => `<div class="hold">${tickerBadge(h.t.symbol, false, true)}<span class="hname"><b>${esc(h.t.token)}</b><small>${esc(STOCK_NAMES[h.t.symbol] ?? h.t.symbol)} · ${esc(issuerOf(h.t.view))}</small></span><span class="hamt"><b>${h.amt.toLocaleString("en-US", { maximumFractionDigits: 4 })}</b><small>${h.usd != null ? usd(h.usd) : "no price"}</small></span></div>`).join("")
+    : `<div class="note" style="padding:4px">No stock tokens in this wallet yet.</div>`;
+  el.innerHTML = `<button class="wbtn" id="wbtn"><span class="dot"></span><span class="mono">${short(session.publicKey)}</span>${balances.loaded ? `<span class="note">${balances.sol.toFixed(3)} SOL</span>` : ""}</button>${menuOpen ? `<div class="menu wmenu" id="wmenu">
+    <div class="whead"><div><div class="mh">${esc(session.label)}</div><button class="addr" id="wcopy" title="Copy address">${short(addr)}</button></div><button class="ghost" id="wdis">Disconnect</button></div>
+    <div class="wtotal"><span class="note">Stock tokens</span><span class="sol">${balances.loaded ? balances.sol.toFixed(3) + " SOL" : ""}</span><b>${!balances.loaded ? "…" : priced.length ? usd(total) : held.length ? "—" : "$0.00"}</b></div>
+    ${balances.loaded && balances.sol < 0.002 ? `<div class="note warn" style="padding:0 4px">Not enough SOL for network fees.</div>` : ""}
+    <div class="wlist" id="wholdings">${rows}</div><hr>
+    <a class="mi" href="/portfolio.html">My bets</a></div>` : ""}`;
   el.querySelector<HTMLButtonElement>("#wbtn")!.onclick = (e) => { e.stopPropagation(); menuOpen = !menuOpen; renderWallet(); };
   const dis = el.querySelector<HTMLButtonElement>("#wdis"); if (dis) dis.onclick = async () => { await session?.disconnect(); setSession(null); };
-  const f = el.querySelector<HTMLButtonElement>("#wfaucet");
-  if (f) f.onclick = async (e) => {
-    e.stopPropagation(); f.disabled = true; f.textContent = "Sending…";
-    let label = "Failed";
-    try { const r = await fetch(API_BASE + "/faucet", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ address: session!.publicKey.toBase58() }) }); const j = await r.json(); label = r.ok ? `Got ${j.sent}` : (j.error ?? "Failed"); }
-    catch { label = "Faucet unreachable"; }
-    await refreshBalances();
-    const f2 = document.querySelector<HTMLButtonElement>("#wfaucet"); if (f2) { f2.disabled = true; f2.textContent = label; setTimeout(() => { const f3 = document.querySelector<HTMLButtonElement>("#wfaucet"); if (f3) { f3.disabled = false; f3.textContent = "Get test stocks"; } }, 6000); }
-    listeners.forEach((fn) => fn(session));
-  };
+  const cp = el.querySelector<HTMLButtonElement>("#wcopy");
+  if (cp) cp.onclick = async () => { try { await navigator.clipboard.writeText(addr); cp.textContent = "Copied ✓"; } catch { cp.textContent = addr; } setTimeout(() => { if (cp.isConnected) cp.textContent = short(addr); }, 1500); };
 }

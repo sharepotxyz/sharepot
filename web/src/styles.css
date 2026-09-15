@@ -35,7 +35,24 @@ select{font:inherit;font-size:13.5px;color:var(--fg);background:var(--surface);b
 .wbtn{display:flex;align-items:center;gap:8px;font-weight:500}.wbtn .dot{width:8px;height:8px;border-radius:50%;background:var(--gain)}
 .menu{position:absolute;right:0;top:calc(100% + 8px);width:290px;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:10px;display:grid;gap:6px;z-index:30}
 .menu .mh{font-size:12px;font-weight:600;color:var(--dim);padding:4px 6px}
-.menu .hold{display:flex;justify-content:space-between;padding:4px 6px;font-size:13.5px}
+[hidden]{display:none!important}
+.tick.sm{width:28px;height:28px;border-radius:8px;font-size:8.5px;letter-spacing:0}
+.wmenu{width:330px;padding:12px;gap:10px}
+.whead{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.whead .mh{padding:0}.menu .addr{padding:2px 0;font-size:13.5px;font-weight:600;font-family:var(--mono)}.menu .addr:hover{background:none;color:var(--accent)}
+.menu .ghost{border:1px solid var(--line);padding:5px 10px;font-size:12.5px;flex:none}
+.wtotal{display:grid;grid-template-columns:1fr auto;gap:2px 8px;background:var(--surface2);border-radius:12px;padding:10px 12px}
+.wtotal b{font-size:20px;letter-spacing:-.01em}.wtotal .sol{grid-row:span 2;align-self:center;font-size:13px;color:var(--dim)}
+.wlist{display:grid;gap:2px;max-height:330px;overflow:auto}
+.hold{display:grid;grid-template-columns:28px minmax(0,1fr) auto;gap:10px;align-items:center;padding:6px 4px;border-radius:8px}.hold:hover{background:var(--surface2)}
+.hname,.hamt{display:grid;line-height:1.25}.hname b{font-weight:600;font-size:13.5px}.hname small,.hamt small{color:var(--dim);font-size:11.5px}.hamt{text-align:right}.hamt b{font-size:13.5px;font-weight:600}
+.menu a.mi.cta{color:var(--accent);font-weight:600}
+a.netbadge:hover{text-decoration:none;filter:brightness(.97)}
+.fwrap{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:24px;align-items:start;padding-bottom:40px}
+.fcard{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px;display:grid;gap:14px}
+.ftoks{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}.ftok{display:flex;align-items:center;gap:6px;background:var(--surface2);border-radius:999px;padding:3px 10px 3px 3px;font-size:13px}.ftok .tick.sm{width:24px;height:24px;border-radius:999px;font-size:7.5px}
+.fsteps{margin:0;padding-left:18px;display:grid;gap:6px;font-size:14px}
+@media(max-width:900px){.fwrap{grid-template-columns:1fr}}
 .menu button,.menu a.mi{text-align:left;border:0;background:none;padding:8px 6px;border-radius:8px;color:var(--fg);font-size:14px}.menu button:hover,.menu a.mi:hover{background:var(--surface2);text-decoration:none}
 .menu hr{border:0;border-top:1px solid var(--line);margin:2px 0}
 

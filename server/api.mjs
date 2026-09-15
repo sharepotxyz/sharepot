@@ -118,16 +118,18 @@ function bootScript() {
 }
 function serveStatic(res, url) {
   const pathname = url.pathname;
-  const rel = pathname === "/" ? "/index.html" : decodeURIComponent(pathname);
-  const file = path.resolve(STATIC, "." + rel);
-  if (!file.startsWith(STATIC + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404, { "content-type": "text/plain" }); return res.end("not found"); }
+  // A malformed percent-escape ("/%") throws here; answered as 404 instead of leaving the connection hanging.
+  let rel; try { rel = pathname === "/" ? "/index.html" : decodeURIComponent(pathname); } catch { rel = null; }
+  const file = rel ? path.resolve(STATIC, "." + rel) : "";
+  if (!rel || rel.includes("\0") || !file.startsWith(STATIC + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404, { "content-type": "text/plain" }); return res.end("not found"); }
   const ext = path.extname(file);
   if (ext === ".html") {
-    res.writeHead(200, { "content-type": TYPES[".html"], "cache-control": "no-cache" });
+    // Wallet pages must never be framed (clickjacking); the rest of the policy is left to the front web server.
+    res.writeHead(200, { "content-type": TYPES[".html"], "cache-control": "no-cache", "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY" });
     let html = pageHtml(file).replace("</head>", bootScript() + "</head>");
     // first-paint content rendered here (ssr.mjs); a rendering error only costs the pre-render, never the page
     const data = { markets: chainCache.markets, config: chainCache.config, stocks, prices: priceCache.at ? priceCache.prices : null };
-    try { if (rel === "/index.html") html = homeHtml(data, html); else if (rel === "/market.html") html = eventHtml(data, url, html); }
+    try { if (rel === "/index.html") html = homeHtml(data, html, url); else if (rel === "/market.html") html = eventHtml(data, url, html); }
     catch (e) { console.error("ssr failed:", String(e?.message ?? e).slice(0, 160)); }
     return res.end(html);
   }
@@ -136,11 +138,11 @@ function serveStatic(res, url) {
 }
 
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, "http://x");
+  let url; try { url = new URL(req.url, "http://x"); } catch { res.writeHead(400, { "content-type": "text/plain" }); return res.end("bad request"); }
   if (req.method === "OPTIONS") return json(res, 204, {});
-  if (!url.pathname.startsWith("/api/")) return serveStatic(res, url);
   const p = url.pathname.slice(4);
   try {
+    if (!url.pathname.startsWith("/api/")) return serveStatic(res, url);
     if (p === "/health") return json(res, 200, { ok: true, cluster: CLUSTER, programId: ro.programId.toBase58(), faucet: !!faucet });
     if (p === "/stocks") return json(res, 200, { cluster: CLUSTER, stocks }, { "cache-control": "public, max-age=300" });
     if (p === "/prices") { try { return json(res, 200, { prices: await prices() }, { "cache-control": "public, max-age=60" }); } catch (e) { return json(res, 503, { error: "price source unavailable" }); } }
@@ -210,7 +212,12 @@ const server = http.createServer(async (req, res) => {
             tx.add(createAssociatedTokenAccountIdempotentInstruction(faucet.publicKey, to, address, mint, tp),
               createTransferCheckedInstruction(from, mint, to, faucet.publicKey, BigInt(FAUCET_SHARES) * 10n ** BigInt(t.decimals), t.decimals, [], tp));
           }
-          sigs.push(await sendAndConfirmTransaction(conn, tx, [faucet]));
+          // A busy public RPC sometimes hands out a blockhash its simulator has not seen yet; the transaction is then
+          // rejected before it lands, so a fresh blockhash and one more try cannot double-send.
+          for (let tries = 1; ; tries++) {
+            try { sigs.push(await sendAndConfirmTransaction(conn, tx, [faucet])); break; }
+            catch (e) { if (tries >= 3 || !/Blockhash not found/i.test(String(e?.message ?? e))) throw e; await new Promise((r) => setTimeout(r, 1500 * tries)); }
+          }
         }
         return json(res, 200, { ok: true, address: k, sent: `${FAUCET_SHARES} of each of ${tokens.length} test stocks${giveSol ? ` + ${FAUCET_SOL} SOL` : ""}`, signatures: sigs });
       } catch (e) { seenAddr.delete(k); faucetToday--; console.error("faucet failed", e?.message); return json(res, 503, { error: "faucet transaction failed, try again in a minute" }); }

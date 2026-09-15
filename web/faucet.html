@@ -1,0 +1,23 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="/favicon.svg"><meta name="theme-color" content="#ffffff"><title>SharePot · Test-network faucet</title>
+<link rel="stylesheet" href="/src/styles.css"></head><body>
+<header class="topbar"><div class="container tb">
+  <a class="brand" href="/"><svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16" fill="#5b4bdb"/><circle cx="32" cy="32" r="15" fill="none" stroke="#fff" stroke-width="6"/><path d="M32 17a15 15 0 0 1 15 15H32z" fill="#fff"/></svg><span>SharePot</span></a>
+  <label class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input id="q" type="search" placeholder="Search SpaceX, TSLA, Ondo…" aria-label="Search markets"></label>
+  <nav class="tb-right"><a class="navlink" id="faucetlink" href="/faucet.html" hidden>Faucet</a><a class="navlink" href="/portfolio.html">My bets</a><span id="netbadge"></span><div id="wallet" class="walletbox"></div></nav>
+</div><div class="container"><nav id="catnav" class="catnav" aria-label="Stocks"></nav></div></header>
+<main class="container">
+  <div class="pagehead"><h1>Test-network faucet</h1></div>
+  <div class="fwrap">
+    <div class="fcard">
+      <p style="margin:0">SharePot runs on Solana <b>devnet</b>. The stock tokens here are mock copies of the real ones — same issuers, same token settings, no real value — so anyone can try the whole flow: stake, wait for the close, get paid.</p>
+      <div><div class="tlabel">Every claim sends</div><div class="ftoks" id="ftokens"><span class="note">Loading…</span></div></div>
+      <ol class="fsteps">
+        <li>Switch your wallet to devnet (Phantom: Settings → Developer settings → Testnet mode → Solana Devnet), or use the built-in <b>Test wallet (browser)</b> from the Connect menu.</li>
+        <li>Press <b>Get test stocks</b> — once per wallet per day.</li>
+        <li><a href="/">Pick a market</a> and stake some shares before the opening bell.</li>
+      </ol>
+    </div>
+    <div class="fcard" id="faucet"><div class="note">Loading…</div></div>
+  </div>
+</main>
+<script type="module" src="/src/faucet.ts"></script></body></html>
