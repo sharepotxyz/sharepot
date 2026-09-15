@@ -697,6 +697,9 @@
         },
         {
           "name": "rent_dest",
+          "docs": [
+            "operator's hot key funds itself instead of draining into the admin; address enforced."
+          ],
           "writable": true
         },
         {

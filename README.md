@@ -147,7 +147,7 @@ Instruction | Who | What
 `finalize_resolution` | anyone after the window, admin any time | locks the outcome
 `void_market` | admin | refund everyone
 `settle_position` | anyone | pay one position in the stock, close it, refund its rent to the payer
-`sweep_market` | anyone | after all positions are settled: fees + dust to the treasury's account for that stock, close the vault
+`sweep_market` | anyone | after all positions are settled: fees + dust to the treasury's account for that stock, close the vault; market + vault rent back to the proposer that paid it
 
 Program id: `8TzdVXpqa52o3fBvYynSxHTWP4zuWfZmTvSkpdLT9rWW`
 

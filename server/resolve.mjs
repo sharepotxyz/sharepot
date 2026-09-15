@@ -158,7 +158,7 @@ async function settle(markets, cfg) {
     if (fresh.positionsOpen === 0 && fresh.status !== 4 && !DRY) {
       try {
         const treasury = (await getOrCreateAssociatedTokenAccount(conn, proposer, mint, cfg.treasuryOwner, false, "confirmed", undefined, tokenProgram)).address;
-        const sig = await program.methods.sweepMarket().accounts({ config: configPda, market: publicKey, vault: vaultPda(publicKey), mint, treasury, rentDest: cfg.admin, signer: proposer.publicKey, tokenProgram }).rpc();
+        const sig = await program.methods.sweepMarket().accounts({ config: configPda, market: publicKey, vault: vaultPda(publicKey), mint, treasury, rentDest: cfg.proposer, signer: proposer.publicKey, tokenProgram }).rpc();
         log(`market #${m.id}: swept ${sig}`);
       } catch (e) { log(`market #${m.id}: sweep failed: ${e.message?.split("\n")[0]}`); }
     }

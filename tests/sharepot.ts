@@ -112,7 +112,7 @@ describe("sharepot: parimutuel pools staked in tokenized stocks", () => {
   const settle = (k: Mk, owner: Keypair, cranker: Keypair, ownerToken?: PublicKey) =>
     program.methods.settlePosition().accounts({ market: k.m, position: posPda(k.m, owner.publicKey), payer: owner.publicKey, vault: k.v, mint: k.s.mint, ownerToken: ownerToken ?? k.s.ata[nameOf(owner)], cranker: cranker.publicKey, tokenProgram: k.s.prog }).signers([cranker]).rpc();
   const sweep = (k: Mk, signer: Keypair, treasury?: PublicKey) =>
-    program.methods.sweepMarket().accounts({ config: configPda, market: k.m, vault: k.v, mint: k.s.mint, treasury: treasury ?? k.s.ata.admin, rentDest: admin.publicKey, signer: signer.publicKey, tokenProgram: k.s.prog }).signers([signer]).rpc();
+    program.methods.sweepMarket().accounts({ config: configPda, market: k.m, vault: k.v, mint: k.s.mint, treasury: treasury ?? k.s.ata.admin, rentDest: proposer.publicKey, signer: signer.publicKey, tokenProgram: k.s.prog }).signers([signer]).rpc();
   const propose = (k: Mk, v: number, who = proposer) => program.methods.proposeResolution(new BN(v), qhash).accounts({ config: configPda, market: k.m, proposer: who.publicKey }).signers([who]).rpc();
   const finalize = (k: Mk, who: Keypair = admin) => program.methods.finalizeResolution().accounts({ config: configPda, market: k.m, signer: who.publicKey }).signers(who === admin ? [] : [who]).rpc();
 

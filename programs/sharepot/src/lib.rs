@@ -595,8 +595,9 @@ pub struct Sweep<'info> {
     pub mint: InterfaceAccount<'info, Mint>,
     #[account(mut, token::mint = mint, token::authority = config.treasury_owner, token::token_program = token_program)]
     pub treasury: InterfaceAccount<'info, TokenAccount>,
-    /// CHECK: vault rent is returned to the admin; address enforced.
-    #[account(mut, address = config.admin)]
+    /// CHECK: market + vault rent goes back to the proposer, the key that pays it when markets are opened, so the
+    /// operator's hot key funds itself instead of draining into the admin; address enforced.
+    #[account(mut, address = config.proposer)]
     pub rent_dest: UncheckedAccount<'info>,
     pub signer: Signer<'info>,
     pub token_program: Interface<'info, TokenInterface>,
