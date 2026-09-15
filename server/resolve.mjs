@@ -14,6 +14,9 @@ import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync, getOrCreateAssociatedTokenAccount } from "@solana/spl-token";
 import idlJson from "../idl/sharepot.json" with { type: "json" };
 import { closeMove, parseMetric, nasdaqMarketInfo, nyToUnix } from "./prices.mjs";
+import { notify } from "./notify.mjs";
+// A market still unproposed this long after resolve_after_ts is overdue: one Telegram alert per market per 6 h.
+const OVERDUE_SECS = Number(process.env.OVERDUE_SECS ?? 7200);
 
 // Latest New York session that has started, per Nasdaq: today once the bell has rung, else the previous trading day.
 // (If a day was closed without notice, the day after still reports the day before the closure as "previous", so the
@@ -80,13 +83,21 @@ async function propose(markets, now) {
     if (m.status !== 0 || now < m.resolveAfterTs.toNumber()) continue;
     const metric = tag(m.metric), spec = parseMetric(metric);
     if (!spec) { log(`market #${m.id}: unknown metric ${metric}`); continue; }
-    const ev = await closeMove(spec.symbol, spec.date);
+    const ev = await closeMove(spec.symbol, spec.date, now);
     if (!ev.ok) {
-      // No close for the session: either it is not published yet, or the session never traded (an unscheduled closure
-      // after this market was opened). In the second case the market can only be voided, which needs the admin key.
+      // No usable close for the session: not published / not final / sources disagree, or the session never traded
+      // (an unscheduled closure after this market was opened). In the last case the market can only be voided,
+      // which needs the admin key.
       const prevTraded = await lastTradedDate();
-      if (prevTraded && prevTraded > spec.date) log(`market #${m.id} (${metric}): ⚠ no close for ${spec.date} although a later session (${prevTraded}) has started — ${spec.date} likely DID NOT TRADE; VOID NEEDED: ANCHOR_WALLET=<admin> node scripts/void-markets.mjs ${m.id}`);
-      else log(`market #${m.id} (${metric}): cannot resolve yet — ${ev.reason}`);
+      const overdue = now >= m.resolveAfterTs.toNumber() + OVERDUE_SECS;
+      if (prevTraded && prevTraded > spec.date) {
+        log(`market #${m.id} (${metric}): ⚠ no close for ${spec.date} although a later session (${prevTraded}) has started — ${spec.date} likely DID NOT TRADE; VOID NEEDED: ANCHOR_WALLET=<admin> node scripts/void-markets.mjs ${m.id}`);
+        notify("⛔ 需要 void", `#${m.id} ${metric}:${spec.date} 沒有收盤價但後面的交易日已開始,這天可能沒交易 → 要用 admin 金鑰 void`, `void:${m.id}`, 360);
+      } else {
+        log(`market #${m.id} (${metric}): cannot resolve yet — ${ev.reason}`);
+        if (ev.alert) notify("⚠️ 結算暫停,兩個價源不一致", `#${m.id} ${metric}\n${ev.reason}\n結算器每 10 分鐘會再試;若持續不一致要人工判斷`, `hold:${m.id}`, 120);
+        else if (overdue) notify("⏳ 結算逾時", `#${m.id} ${metric} 收盤後 ${Math.round((now - m.resolveAfterTs.toNumber()) / 3600)} 小時仍未提案\n${ev.reason}`, `overdue:${m.id}`, 360);
+      }
       continue;
     }
     const n = m.nBuckets, thr = m.thresholds.slice(0, n - 1).map((t) => t.toNumber());
@@ -99,7 +110,10 @@ async function propose(markets, now) {
       .accounts({ config: configPda, market: publicKey, proposer: proposer.publicKey }).rpc();
     fs.writeFileSync(path.join(DATA, "evidence", `${m.id}.json`), JSON.stringify({ ...evidence, thresholds: thr, bucket, responseSha256: hash.toString("hex"), signature: sig, at: new Date().toISOString() }, null, 2));
     log(`  proposed ${sig}`);
-   } catch (e) { log(`market #${m.id}: propose failed: ${e?.message?.split("\n")[0]}`); }
+   } catch (e) {
+    log(`market #${m.id}: propose failed: ${e?.message?.split("\n")[0]}`);
+    if (now >= m.resolveAfterTs.toNumber() + OVERDUE_SECS) notify("⏳ 結算逾時(提案失敗)", `#${m.id} ${tag(m.metric)}\n${String(e?.message ?? e).split("\n")[0].slice(0, 300)}`, `overdue:${m.id}`, 360);
+   }
   }
 }
 async function finalize(markets, now, cfg) {
@@ -118,6 +132,7 @@ async function finalize(markets, now, cfg) {
 async function settle(markets, cfg) {
   for (const { publicKey, account: m } of markets) {
     if (m.status !== 2 && m.status !== 3) continue;
+   try {
     const mint = m.mint, tokenProgram = await tokenProgramOf(mint);
     if (m.positionsOpen > 0) {
       // positions of this market: memcmp on the market pubkey (offset 8 = after discriminator)
@@ -133,7 +148,10 @@ async function settle(markets, cfg) {
           const sig = await program.methods.settlePosition().accounts({ market: publicKey, position: ppk, payer: p.payer, vault: vaultPda(publicKey), mint, ownerToken, cranker: proposer.publicKey, tokenProgram }).rpc();
           fs.appendFileSync(SETTLEMENTS, JSON.stringify({ at: new Date().toISOString(), market: publicKey.toBase58(), id: m.id.toNumber(), metric: tag(m.metric), mint: mint.toBase58(), owner: p.owner.toBase58(), amounts: p.amounts.slice(0, fresh.nBuckets).map((x) => x.toString()), status: fresh.status, outcome: fresh.outcome, observed: fresh.proposedValue.toString(), kind, payout: payout.toString(), fee: fee.toString(), signature: sig }) + "\n");
           log(`  settled ${p.owner.toBase58()} ${kind} payout=${payout} ${sig}`);
-        } catch (e) { log(`  FAILED ${p.owner.toBase58()}: ${e.message?.split("\n")[0]}`); }
+        } catch (e) {
+          log(`  FAILED ${p.owner.toBase58()}: ${e.message?.split("\n")[0]}`);
+          notify("⚠️ 有倉位付不出去", `#${m.id} ${tag(m.metric)} owner ${p.owner.toBase58().slice(0, 8)}…\n${String(e.message ?? e).split("\n")[0].slice(0, 200)}\n(每輪重試;若持續失敗,該盤無法 sweep)`, `settle:${ppk.toBase58()}`, 360);
+        }
       }
     }
     const fresh = await program.account.market.fetch(publicKey);
@@ -144,6 +162,7 @@ async function settle(markets, cfg) {
         log(`market #${m.id}: swept ${sig}`);
       } catch (e) { log(`market #${m.id}: sweep failed: ${e.message?.split("\n")[0]}`); }
     }
+   } catch (e) { log(`market #${m.id}: settle step failed (next run retries): ${e?.message?.split("\n")[0]}`); }
   }
 }
 

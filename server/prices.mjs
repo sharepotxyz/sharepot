@@ -52,11 +52,20 @@ export async function sessions(startDate, endDate) {
   return out;
 }
 
+// Network errors, 429 and 5xx are retried in-process (3 attempts, 2 s / 4 s apart); anything else, or a still-failing
+// third attempt, throws and the caller's next cron run tries again.
 async function getJson(url, headers = {}) {
-  const r = await fetch(url, { headers, signal: AbortSignal.timeout(20_000) });
-  const raw = await r.text();
-  if (!r.ok) throw new Error(`${r.status} ${url.split("?")[0]}: ${raw.slice(0, 200)}`);
-  return { json: JSON.parse(raw), raw };
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const r = await fetch(url, { headers, signal: AbortSignal.timeout(20_000) });
+      const raw = await r.text();
+      if (!r.ok) { const e = new Error(`${r.status} ${url.split("?")[0]}: ${raw.slice(0, 200)}`); e.retryable = r.status === 429 || r.status >= 500; throw e; }
+      return { json: JSON.parse(raw), raw };
+    } catch (e) {
+      if (attempt >= 3 || e.retryable === false || (e.retryable === undefined && !(e instanceof TypeError || e.name === "TimeoutError" || e.name === "AbortError"))) throw e;
+      await new Promise((r) => setTimeout(r, 2000 * attempt));
+    }
+  }
 }
 
 // ---------- daily closes (bars: { date, close, dividend, split }) ----------
@@ -68,9 +77,11 @@ async function yahooDaily(symbol, start, end) {
   for (const d of Object.values(r.events?.dividends ?? {})) { const k = nyDate(d.date); divs[k] = (divs[k] ?? 0) + d.amount; }
   for (const s of Object.values(r.events?.splits ?? {})) splits[nyDate(s.date)] = s.splitRatio ?? `${s.numerator}:${s.denominator}`;
   const closes = r.indicators?.quote?.[0]?.close ?? [];
-  const bars = r.timestamp.map((t, i) => { const date = nyDate(t); return { date, close: closes[i], dividend: divs[date] ?? 0, split: splits[date] ?? null }; })
+  const bars = (r.timestamp ?? []).map((t, i) => { const date = nyDate(t); return { date, close: closes[i], dividend: divs[date] ?? 0, split: splits[date] ?? null }; })
     .filter((b) => typeof b.close === "number");
-  return { bars, raw, url };
+  // meta.regularMarketTime = time of the last regular-session trade Yahoo has seen; before it reaches the closing bell
+  // the newest bar is still a live intraday price, not the official close.
+  return { bars, raw, url, lastTradeTs: Number(r.meta?.regularMarketTime ?? 0) || null };
 }
 function alpacaHeaders() {
   let id = process.env.ALPACA_KEY_ID, secret = process.env.ALPACA_SECRET_KEY;
@@ -89,8 +100,33 @@ function alpacaHeaders() {
 async function alpacaDaily(symbol, start, end) {
   const url = `https://data.alpaca.markets/v2/stocks/bars?symbols=${symbol}&timeframe=1Day&start=${start}&end=${end}&adjustment=all&feed=sip&limit=100`;
   const { json, raw } = await getJson(url, alpacaHeaders());
-  return { bars: (json.bars?.[symbol] ?? []).map((b) => ({ date: b.t.slice(0, 10), close: b.c, dividend: 0, split: null })), raw, url };
+  return { bars: (json.bars?.[symbol] ?? []).map((b) => ({ date: b.t.slice(0, 10), close: b.c, dividend: 0, split: null })), raw, url, lastTradeTs: null };
 }
+
+// ---------- second source: Nasdaq's official close (no key), used only to confirm the primary ----------
+const NASDAQ_HEADERS = { "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128 Safari/537.36", accept: "application/json" };
+const usDate = (s) => { const m = String(s ?? "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/); return m ? `${m[3]}-${m[1]}-${m[2]}` : null; };
+/** Official close of `symbol` on `date` per Nasdaq: the historical table once it carries the day, else the last sale
+ *  of a closed session on that day. null when Nasdaq has nothing for the day yet; throws when Nasdaq is unreachable. */
+const nasdaqClass = new Map(); // symbol → asset class Nasdaq knows it under ("stocks" or "etf"; SPY is an etf)
+export async function nasdaqClose(symbol, date) {
+  const px = (v) => { const n = Number(String(v ?? "").replace(/[$,]/g, "")); return Number.isFinite(n) && n > 0 ? n : null; };
+  let hist = null;
+  for (const ac of nasdaqClass.has(symbol) ? [nasdaqClass.get(symbol)] : ["stocks", "etf"]) {
+    const { json } = await getJson(`https://api.nasdaq.com/api/quote/${symbol}/historical?assetclass=${ac}&fromdate=${addDays(date, -7)}&todate=${date}&limit=10`, NASDAQ_HEADERS);
+    if (json?.data?.tradesTable) { nasdaqClass.set(symbol, ac); hist = json.data.tradesTable.rows ?? []; break; }
+  }
+  if (hist === null) throw new Error(`nasdaq: ${symbol} unknown under stocks and etf`);
+  const row = hist.find((r) => usDate(r.date) === date);
+  if (row && px(row.close)) return { close: px(row.close), via: "historical" };
+  const info = (await getJson(`https://api.nasdaq.com/api/quote/${symbol}/info?assetclass=${nasdaqClass.get(symbol)}`, NASDAQ_HEADERS)).json?.data;
+  const pd = info?.primaryData ?? {}, closed = /closed/i.test(String(info?.marketStatus ?? ""));
+  const tsDate = (() => { const m = String(pd.lastTradeTimestamp ?? "").match(/^([A-Z][a-z]{2}) (\d{1,2}), (\d{4})/); return m && MONTHS[m[1]] ? `${m[3]}-${MONTHS[m[1]]}-${m[2].padStart(2, "0")}` : null; })();
+  if (closed && tsDate === date && px(pd.lastSalePrice)) return { close: px(pd.lastSalePrice), via: "last-sale" };
+  return null;
+}
+/** How long after the bell the resolver keeps waiting for the second source before it settles on the primary alone. */
+export const SECOND_SOURCE_GRACE_SECS = Number(process.env.SECOND_SOURCE_GRACE_SECS ?? 7200);
 
 /**
  * Total-return move of `symbol` for session `date` vs the previous session, in ppm (1 ppm = 0.01 bp):
@@ -98,18 +134,41 @@ async function alpacaDaily(symbol, start, end) {
  * Integer math on 1/10,000-dollar prices, floored: a fall of any size stays negative and never rounds up onto a
  * threshold. Returns the raw API response so the caller can publish and hash it as evidence.
  */
-export async function closeMove(symbol, date) {
-  const { bars, raw, url } = await (SOURCE === "alpaca" ? alpacaDaily : yahooDaily)(symbol, addDays(date, -10), date);
+export async function closeMove(symbol, date, now = Math.floor(Date.now() / 1000)) {
+  // Which sessions the calendar expects: the predicted one and the one before it.
+  const cal = await sessions(addDays(date, -10), date);
+  const session = cal.find((x) => x.date === date), prevSession = cal.filter((x) => x.date < date).pop();
+  if (!session || !prevSession) return { ok: false, reason: `${date} is not a trading day on the NYSE calendar` };
+  const { bars, raw, url, lastTradeTs } = await (SOURCE === "alpaca" ? alpacaDaily : yahooDaily)(symbol, addDays(date, -10), date);
   const i = bars.findIndex((b) => b.date === date);
   if (i < 1) return { ok: false, reason: `no ${symbol} daily close for ${date} yet (${SOURCE})` };
   const prev = bars[i - 1], cur = bars[i];
+  // Guards against a stale or garbled primary response — each one holds the market for the next run instead of
+  // proposing a wrong number (an alert:true hold is worth a human look):
+  //   1. the bar before the target must be the calendar's previous session (a dropped bar would slide "prev" back a day);
+  //   2. the target bar must be final: the source's last trade time has reached that session's closing bell;
+  //   3. the close must agree with Nasdaq's official close to the cent, or, if Nasdaq has nothing for the day yet,
+  //      the bell must be more than SECOND_SOURCE_GRACE_SECS ago before the primary is trusted alone.
+  if (prev.date !== prevSession.date) return { ok: false, alert: true, reason: `${SOURCE} bar before ${date} is ${prev.date}, calendar expects ${prevSession.date} — a session is missing from the response` };
+  if (lastTradeTs != null && lastTradeTs < session.close) return { ok: false, reason: `${SOURCE} bar for ${date} is not final yet (last trade ${new Date(lastTradeTs * 1000).toISOString()}, bell ${new Date(session.close * 1000).toISOString()})` };
+  let crossCheck;
+  try {
+    const nd = await nasdaqClose(symbol, date);
+    if (nd && Math.abs(nd.close - cur.close) > 0.005) return { ok: false, alert: true, reason: `${SOURCE} close ${cur.close} disagrees with Nasdaq ${nd.close} (${nd.via}) for ${symbol} ${date}` };
+    if (nd) crossCheck = { source: "nasdaq", via: nd.via, close: nd.close, agreed: true };
+    else if (now < session.close + SECOND_SOURCE_GRACE_SECS) return { ok: false, reason: `Nasdaq has no close for ${symbol} ${date} yet — waiting for the second source (until ${new Date((session.close + SECOND_SOURCE_GRACE_SECS) * 1000).toISOString()})` };
+    else crossCheck = { source: "nasdaq", agreed: null, note: "no second-source close within the grace period; primary used alone" };
+  } catch (e) {
+    if (now < session.close + SECOND_SOURCE_GRACE_SECS) return { ok: false, reason: `second source unreachable (${String(e?.message ?? e).slice(0, 80)}) — retrying until ${new Date((session.close + SECOND_SOURCE_GRACE_SECS) * 1000).toISOString()}` };
+    crossCheck = { source: "nasdaq", agreed: null, note: `second source unreachable after the grace period (${String(e?.message ?? e).slice(0, 80)}); primary used alone` };
+  }
   const p0 = BigInt(Math.round(prev.close * 10_000)), p1 = BigInt(Math.round((cur.close + cur.dividend) * 10_000));
   const num = (p1 - p0) * 1_000_000n;
   const q = num / p0, ppm = num % p0 !== 0n && num < 0n ? q - 1n : q; // floor division
   const r4 = (x) => Math.round(x * 10_000) / 10_000;
   return {
     ok: true, value: Number(ppm),
-    detail: { symbol, source: SOURCE, prevDate: prev.date, prevClose: r4(prev.close), date: cur.date, close: r4(cur.close), dividend: r4(cur.dividend), split: cur.split },
+    detail: { symbol, source: SOURCE, prevDate: prev.date, prevClose: r4(prev.close), date: cur.date, close: r4(cur.close), dividend: r4(cur.dividend), split: cur.split, lastTradeTs, crossCheck },
     evidence: { source: url, response: raw },
   };
 }

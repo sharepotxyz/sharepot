@@ -17,6 +17,7 @@ import bs58 from "bs58";
 import anchor from "@coral-xyz/anchor";
 import { xstockPrices } from "./prices.mjs";
 import { homeHtml, eventHtml } from "./ssr.mjs";
+import { notify } from "./notify.mjs";
 
 const PORT = Number(process.env.PORT ?? 5041);
 const CLUSTER = process.env.CLUSTER ?? "devnet";
@@ -181,6 +182,7 @@ const server = http.createServer(async (req, res) => {
       const rec = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), at: new Date().toISOString(), market, wallet, reason, claimedValue: claimed, status: "open" };
       fs.appendFileSync(DISPUTES, JSON.stringify(rec) + "\n");
       console.log("dispute", rec.id, market, reason.slice(0, 120));
+      notify("⚠️ 有人對結算提出異議", `market ${market.slice(0, 8)}… · ${wallet.slice(0, 6)}…${claimed ? ` · 主張值 ${claimed}` : ""}\n${reason.slice(0, 300)}\n爭議窗 6h 內可 re-propose / void(admin 金鑰在東京)`, "dispute:" + market, 5);
       return json(res, 200, { ok: true, id: rec.id });
     }
     if (p === "/disputes") {
