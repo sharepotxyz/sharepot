@@ -139,3 +139,11 @@ h2{font-size:17px;margin:28px 0 10px}
 .oname{flex-direction:column;align-items:flex-start;gap:0}.oname i{display:none}.oname b{white-space:nowrap;color:var(--c)}.oname small{font-size:11px}
 .ochance{font-size:15px}.pickbtn{padding:6px 4px}.wbtn .note{display:none}.evhdr h1{font-size:20px}.tick.big{width:44px;height:44px;font-size:12px}
 .menu{position:fixed;left:12px;right:12px;width:auto;top:64px}}
+
+/* docs page */
+.docs{max-width:860px;padding-bottom:40px}.docs .lead{font-size:17px;color:var(--dim);max-width:70ch;margin:0 0 18px}
+.docs .vid{padding:10px;margin-bottom:18px}.docs video{width:100%;aspect-ratio:16/9;border-radius:10px;background:#000;display:block}
+.docs .toc{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:14px;margin:0 0 6px}.docs .toc a{color:var(--dim)}.docs .toc a:hover{color:var(--accent)}
+.docs h2{font-size:19px;margin:30px 0 10px;scroll-margin-top:110px}.docs p,.docs li{font-size:15px;line-height:1.55}.docs ul{padding-left:20px;margin:0}.docs li{margin:0 0 8px}
+.docs .fsteps.big{font-size:15px;gap:10px}.docs code{background:var(--surface2);padding:1px 5px;border-radius:5px;font-size:13.5px}
+.docs .faq dt{font-weight:600;margin-top:12px}.docs .faq dd{margin:4px 0 0;color:var(--dim);font-size:15px;line-height:1.5}

@@ -103,7 +103,7 @@ const clientIp = (req) => String(req.headers["cf-connecting-ip"] ?? req.socket.r
 const json = (res, code, body, extra = {}) => { res.writeHead(code, { "content-type": "application/json", "access-control-allow-origin": "*", "access-control-allow-headers": "content-type", "access-control-allow-methods": "GET,POST,OPTIONS", ...extra }); res.end(JSON.stringify(body)); };
 const readBody = (req, max = 4096) => new Promise((ok, err) => { let b = ""; req.on("data", (c) => { b += c; if (b.length > max) { err(Object.assign(new Error("body too large"), { status: 413 })); req.destroy(); } }); req.on("end", () => ok(b)); req.on("error", err); });
 const DISPUTES = path.join(DATA, "disputes.jsonl");
-const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json", ".ico": "image/x-icon", ".woff2": "font/woff2" };
+const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json", ".ico": "image/x-icon", ".woff2": "font/woff2", ".mp4": "video/mp4", ".jpg": "image/jpeg" };
 // Pages ship with the data they render on first paint (markets, config, listed stocks, prices from the in-memory
 // caches) embedded as window.__BOOT__, so the browser needs no API round trip to Germany after the scripts load.
 const htmlCache = new Map();
@@ -117,7 +117,7 @@ function bootScript() {
     markets: chainCache.markets, config: chainCache.config, chainAt: chainCache.at };
   return `<script>window.__BOOT__=${JSON.stringify(boot).replace(/</g, "\\u003c")}</script>`;
 }
-function serveStatic(res, url) {
+function serveStatic(res, url, req) {
   const pathname = url.pathname;
   // A malformed percent-escape ("/%") throws here; answered as 404 instead of leaving the connection hanging.
   let rel; try { rel = pathname === "/" ? "/index.html" : decodeURIComponent(pathname); } catch { rel = null; }
@@ -134,7 +134,15 @@ function serveStatic(res, url) {
     catch (e) { console.error("ssr failed:", String(e?.message ?? e).slice(0, 160)); }
     return res.end(html);
   }
-  res.writeHead(200, { "content-type": TYPES[ext] ?? "application/octet-stream", "cache-control": rel.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache" });
+  const size = fs.statSync(file).size, range = String(req?.headers?.range ?? "").match(/^bytes=(\d*)-(\d*)$/);
+  const hdr = { "content-type": TYPES[ext] ?? "application/octet-stream", "accept-ranges": "bytes", "cache-control": rel.startsWith("/assets/") ? "public, max-age=31536000, immutable" : ext === ".mp4" ? "public, max-age=3600" : "no-cache" };
+  if (range && ext === ".mp4") {   // byte ranges so the video can seek
+    const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2])), end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+    if (!(start >= 0 && start <= end && end < size)) { res.writeHead(416, { "content-range": `bytes */${size}` }); return res.end(); }
+    res.writeHead(206, { ...hdr, "content-range": `bytes ${start}-${end}/${size}`, "content-length": end - start + 1 });
+    return fs.createReadStream(file, { start, end }).pipe(res);
+  }
+  res.writeHead(200, { ...hdr, "content-length": size });
   fs.createReadStream(file).pipe(res);
 }
 
@@ -143,7 +151,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") return json(res, 204, {});
   const p = url.pathname.slice(4);
   try {
-    if (!url.pathname.startsWith("/api/")) return serveStatic(res, url);
+    if (!url.pathname.startsWith("/api/")) return serveStatic(res, url, req);
     if (p === "/health") return json(res, 200, { ok: true, cluster: CLUSTER, programId: ro.programId.toBase58(), faucet: !!faucet });
     if (p === "/stocks") return json(res, 200, { cluster: CLUSTER, stocks }, { "cache-control": "public, max-age=300" });
     if (p === "/prices") { try { return json(res, 200, { prices: await prices() }, { "cache-control": "public, max-age=60" }); } catch (e) { return json(res, 503, { error: "price source unavailable" }); } }

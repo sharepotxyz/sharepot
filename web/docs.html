@@ -1,0 +1,88 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="/favicon.svg"><meta name="theme-color" content="#ffffff"><title>SharePot · How it works</title>
+<meta name="description" content="SharePot: daily parimutuel pools on US stocks, staked and paid in the tokenized stock itself. How markets, settlement, fees and the trust model work, with a two-minute demo.">
+<link rel="stylesheet" href="/src/styles.css"></head><body>
+<header class="topbar"><div class="container tb">
+  <a class="brand" href="/"><svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16" fill="#5b4bdb"/><circle cx="32" cy="32" r="15" fill="none" stroke="#fff" stroke-width="6"/><path d="M32 17a15 15 0 0 1 15 15H32z" fill="#fff"/></svg><span>SharePot</span></a>
+  <label class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input id="q" type="search" placeholder="Search SpaceX, TSLA, Ondo…" aria-label="Search markets"></label>
+  <nav class="tb-right"><a class="navlink" href="/docs.html">Docs</a><a class="navlink" id="faucetlink" href="/faucet.html" hidden>Faucet</a><a class="navlink" href="/portfolio.html">My bets</a><span id="netbadge"></span><div id="wallet" class="walletbox"></div></nav>
+</div><div class="container"><nav id="catnav" class="catnav" aria-label="Stocks"></nav></div></header>
+<main class="container docs">
+  <div class="pagehead"><h1>How SharePot works</h1></div>
+  <p class="lead">SharePot is a parimutuel pool on where a US stock closes today, where <b>the stake and the payout are the tokenized stock itself</b>. Holders of TSLAx, NVDAx, SPYx or SpaceX tokens hedge a bad day, or add upside on a good one, without ever selling.</p>
+
+  <div class="fcard vid"><video controls preload="metadata" playsinline src="/demo.mp4" poster="/demo-poster.jpg"></video>
+    <p class="note" style="margin:0">Two minutes: connect, get test stocks, stake on Tesla, and see a settled market with its price evidence checked against the on-chain hash. Recorded on devnet.</p></div>
+
+  <nav class="toc"><a href="#why">Why</a><a href="#market">A market</a><a href="#money">Money</a><a href="#settle">Settlement</a><a href="#trust">Trust model</a><a href="#tokens">Tokens</a><a href="#try">Try it</a><a href="#faq">FAQ</a></nav>
+
+  <h2 id="why">Why bet with the stock itself</h2>
+  <p>To protect a position against one bad day, or to lean into a good one, a holder of tokenized stock has to sell and buy back: spreads, slippage, and time out of the stock. SharePot lets the shares do the work instead.</p>
+  <ul>
+    <li><b>Hedge without selling.</b> Hold 10 TSLAx and worried about today? Stake 1 TSLAx on <i>Big drop</i>. If Tesla falls hard, you receive extra TSLAx on exactly the day your shares lose value.</li>
+    <li><b>Add upside without buying.</b> Stake on <i>Big gain</i> instead and a win adds shares on the day the price jumps.</li>
+    <li>A wrong call costs only what you staked. You never swap out of the stock, so you never leave your position.</li>
+  </ul>
+
+  <h2 id="market">A market, step by step</h2>
+  <ol class="fsteps big">
+    <li><b>One pool per stock per US trading session.</b> The market for session S opens at the previous session's opening bell and stops taking bets at S's opening bell (09:30 New York). There is always exactly one pool per stock you can bet into, around the clock.</li>
+    <li><b>Four ranges</b> for the close-to-close move: big drop, small drop, small gain, big gain. The cuts sit near each stock's quartiles over the last 12 weeks (TSLA −1.75 % / 0 / +2 %, NVDA −1.5 % / 0 / +2.25 %, SPY −0.5 % / 0 / +0.5 %), so every range starts out roughly equally likely. Odds then move with the pools.</li>
+    <li><b>Betting closes before any of the answer exists.</b> Bets stop at the opening bell of the session being predicted.</li>
+    <li><b>Settles on the official close</b> of S against the official close of the session before, as a total-return move (dividends added back, splits neutral).</li>
+    <li><b>Payouts are pushed to wallets</b> by a permissionless crank after the dispute window. Nobody has to claim.</li>
+  </ol>
+  <p>The same stock often trades on Solana as several tokens: SpaceX as SPCXx (xStocks), SPCX (Backpack Securities) and SPCXon (Ondo Global Markets); Tesla as TSLAx and TSLAon. The tokens are not interchangeable, so <b>each token gets its own pool</b>. All pools of a stock ask the same question and resolve on the same close; each is staked and paid in its own token.</p>
+
+  <h2 id="money">How the money works</h2>
+  <ul>
+    <li>Each range has its own pool in the market's stock token. <b>Winners get their stake back plus a pro-rata share of every losing pool</b>, in the same stock.</li>
+    <li><b>Fee: 3 % of what a winner takes from the losing pools</b>, never on the winner's own stake. Bets in the first quarter of the betting window (up to 6 h) pay 2 %. The rate is locked into the position when you bet.</li>
+    <li>The operator may <b>seed</b> a market with a fee-free prize in the stock; it goes to the winners. If nobody picked the winning range, everyone is refunded and the seed returns. A <b>voided</b> market refunds everyone in full.</li>
+  </ul>
+
+  <h2 id="settle">Settlement you can check</h2>
+  <ol class="fsteps big">
+    <li><b>The server never holds funds.</b> Stakes sit in a program-owned vault per market; only the program's payout math can move them.</li>
+    <li><b>The resolver submits a number, not a winner.</b> After the close it reads the official closing price, checks that the bar is final and that the previous bar is the calendar's previous session, and <b>cross-checks the close against Nasdaq's official close to the cent</b>. Any failed check holds the market for the next run instead of posting a wrong result.</li>
+    <li><b>Evidence on-chain.</b> The move is proposed together with the sha256 of the raw price response. The winning range is derived on-chain from the market's thresholds.</li>
+    <li><b>Anyone can verify.</b> The raw response is published byte for byte; the market page re-hashes it in your browser and shows whether it matches the hash stored on-chain.</li>
+    <li><b>Six-hour dispute window.</b> A proposal can be disputed with a wallet-signed message; the operator is paged and can re-propose or void. After the window anyone can finalize.</li>
+  </ol>
+
+  <h2 id="trust">Trust model, stated plainly</h2>
+  <ul>
+    <li><b>The proposer key can propose any number.</b> The checks above run off-chain, in the same process that holds the key. A compromised resolver could propose a wrong move; what stops it is the six-hour window, in which the admin can re-propose or void, and the alerts that make sure someone is looking.</li>
+    <li><b>The admin is trusted.</b> The admin can finalize inside the window, void any open or proposed market (full refund) and change the proposer, treasury and fee (capped at 10 %) for future markets. The admin cannot move vault funds anywhere but to winners or, after every position is settled, fees and dust to the treasury.</li>
+    <li><b>The issuer is trusted by construction.</b> Every xStock carries a permanent delegate and a pause switch; the vaults are ordinary token accounts to the issuer. Nothing on Solana can change that, so the site says it on every page.</li>
+    <li><b>Devnet today, multisig before mainnet.</b> On devnet both keys are single hot keys. Before mainnet the admin, the upgrade authority and the treasury move to a 2-of-3 Squads multisig the server is not a member of; the server keeps only the proposer key, which can never touch funds.</li>
+  </ul>
+
+  <h2 id="tokens">Built for xStocks and friends</h2>
+  <ul>
+    <li><b>Token-2022 throughout.</b> Every movement uses <code>transfer_checked</code>; classic SPL mints work through the same path.</li>
+    <li><b>One mint per market.</b> Bets, payouts and fee sweeps must use the market's mint and matching token accounts.</li>
+    <li><b>Only tokens that arrive in full.</b> Mints with a transfer fee or an active transfer hook are refused at market creation. xStocks, Ondo and Backpack tokens all pass.</li>
+    <li><b>Dividends and splits.</b> The issuers apply them as a <code>ScaledUiAmount</code> multiplier to every balance, vaults included; all accounting is in raw units, so every stake keeps its share of the pot. The predicted move is total return, so an ex-dividend day never counts as a drop.</li>
+  </ul>
+
+  <h2 id="try">Try it on devnet</h2>
+  <ol class="fsteps big">
+    <li>Connect Phantom, Solflare or Backpack set to devnet, or pick <b>Test wallet (browser)</b> from the Connect menu.</li>
+    <li>Open the <a href="/faucet.html">faucet</a>: two mock shares of each listed token plus a little SOL, once per wallet per day.</li>
+    <li><a href="/">Pick a market</a>, choose a range, stake, sign. After the close, check <a href="/portfolio.html">My bets</a>: payouts arrive on their own.</li>
+  </ol>
+  <p>Source, program and tests: <a href="https://github.com/sharepotxyz/sharepot" target="_blank" rel="noopener">github.com/sharepotxyz/sharepot</a>. Program id <span class="mono">8TzdVXpqa52o3fBvYynSxHTWP4zuWfZmTvSkpdLT9rWW</span>. Built for the Solana Foundation Stocklana hackathon, September 2026.</p>
+
+  <h2 id="faq">FAQ</h2>
+  <dl class="faq">
+    <dt>Is this an order book?</dt><dd>No. It is a parimutuel pool: payouts depend on the final pool sizes, and the quote you see while betting is what you would get if the pools stayed as they are.</dd>
+    <dt>What if the stock does not trade that day?</dt><dd>An unscheduled closure, a full-session halt, a spin-off or a delisting merger voids the market and refunds every stake in full.</dd>
+    <dt>Why not settle on an on-chain oracle?</dt><dd>These markets are defined on the official closing print, which equity oracles do not carry (they report the last trade before the bell). The official close is public and checkable, so it is published with its hash instead.</dd>
+    <dt>Do I need to claim?</dt><dd>No. A permissionless crank pays every position after the dispute window and closes it; the rent goes back to you.</dd>
+    <dt>Is there real money on devnet?</dt><dd>No. The tokens here are mock copies of the real ones with the same settings and no value.</dd>
+  </dl>
+</main>
+<footer class="container foot">
+  <p><b>Issuer controls.</b> Stock tokens are issued by xStocks (Backed), Backpack Securities and Ondo Global Markets, who can pause transfers of a token; xStocks and Backpack tokens also let the issuer move tokens in any account, these pools included. Tokenized stocks are not offered to US persons.</p>
+</footer>
+<script type="module" src="/src/docs.ts"></script></body></html>
