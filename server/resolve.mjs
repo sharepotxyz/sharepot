@@ -166,6 +166,8 @@ async function settle(markets, cfg) {
   }
 }
 
+const PROPOSER_LOW_SOL = Number(process.env.PROPOSER_LOW_SOL ?? 0.3);
+try { const b = await conn.getBalance(proposer.publicKey); if (b < PROPOSER_LOW_SOL * 1e9) notify("⛽ proposer 快沒 SOL", `剩 ${(b / 1e9).toFixed(3)} SOL;開盤租金+結算手續費約 0.04/天,見底後不開盤也不結算\n補:solana transfer ${proposer.publicKey.toBase58()} 1 -u devnet`, "proposer-low", 360); } catch {}
 const cfg = await program.account.config.fetch(configPda);
 const marketFilter = [{ dataSize: program.account.market.size }];
 const markets = await program.account.market.all(marketFilter);

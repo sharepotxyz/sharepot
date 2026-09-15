@@ -34,6 +34,7 @@ const FAUCET_ENABLED = CLUSTER !== "mainnet" && process.env.FAUCET_DISABLED !== 
 const FAUCET_SHARES = 2;
 const FAUCET_SOL = Number(process.env.FAUCET_SOL ?? 0.01);
 const FAUCET_DAILY_GLOBAL = Number(process.env.FAUCET_DAILY_GLOBAL ?? 300);
+const FAUCET_LOW_SOL = Number(process.env.FAUCET_LOW_SOL ?? 0.5);   // ≈ 15 more claims; alert the operator below this
 // The faucet pays from a dedicated low-balance key; the operator / mint authority never lives in this process.
 const faucetKeyFile = process.env.FAUCET_KEYPAIR ?? path.join(SECRETS, "faucet.json");
 const faucet = FAUCET_ENABLED && fs.existsSync(faucetKeyFile) ? Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(faucetKeyFile, "utf8")))) : null;
@@ -229,8 +230,13 @@ const server = http.createServer(async (req, res) => {
             catch (e) { if (tries >= 3 || !/Blockhash not found/i.test(String(e?.message ?? e))) throw e; await new Promise((r) => setTimeout(r, 1500 * tries)); }
           }
         }
+        conn.getBalance(faucet.publicKey).then((b) => { if (b < FAUCET_LOW_SOL * LAMPORTS_PER_SOL) notify("💧 水龍頭快沒 SOL", `剩 ${(b / LAMPORTS_PER_SOL).toFixed(2)} SOL(每次領水約 0.03)\n補:solana transfer ${faucet.publicKey.toBase58()} 2 -u devnet,或 solana airdrop`, "faucet-low", 360); }).catch(() => {});
         return json(res, 200, { ok: true, address: k, sent: `${FAUCET_SHARES} of each of ${tokens.length} test stocks${giveSol ? ` + ${FAUCET_SOL} SOL` : ""}`, signatures: sigs });
-      } catch (e) { seenAddr.delete(k); faucetToday--; console.error("faucet failed", e?.message); return json(res, 503, { error: "faucet transaction failed, try again in a minute" }); }
+      } catch (e) {
+        seenAddr.delete(k); faucetToday--; console.error("faucet failed", e?.message);
+        if (/insufficient|0x1\b/i.test(String(e?.message ?? e))) notify("💧 水龍頭發不出去", `餘額不足,使用者領水失敗:${String(e?.message ?? e).split("\n")[0].slice(0, 160)}\n補:solana transfer ${faucet.publicKey.toBase58()} 2 -u devnet`, "faucet-empty", 60);
+        return json(res, 503, { error: "faucet transaction failed, try again in a minute" });
+      }
     }
     json(res, 404, { error: "not found" });
   } catch (e) { console.error(e); json(res, 500, { error: "internal error" }); }
