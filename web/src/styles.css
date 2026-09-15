@@ -147,3 +147,4 @@ h2{font-size:17px;margin:28px 0 10px}
 .docs h2{font-size:19px;margin:30px 0 10px;scroll-margin-top:110px}.docs p,.docs li{font-size:15px;line-height:1.55}.docs ul{padding-left:20px;margin:0}.docs li{margin:0 0 8px}
 .docs .fsteps.big{font-size:15px;gap:10px}.docs code{background:var(--surface2);padding:1px 5px;border-radius:5px;font-size:13.5px}
 .docs .faq dt{font-weight:600;margin-top:12px}.docs .faq dd{margin:4px 0 0;color:var(--dim);font-size:15px;line-height:1.5}
+.docs .mono{overflow-wrap:anywhere;word-break:break-all}
