@@ -23,7 +23,6 @@ function fmtPoints(v: number) {
   return v.toFixed(0);
 }
 const short = (w: string) => w.slice(0, 4) + "…" + w.slice(-4);
-const signed = (v: number) => (v >= 0 ? "+" : "−") + fmtUsd(Math.abs(v));
 
 function renderWindows() {
   winEl.innerHTML = WINDOWS.map(([k, label]) => `<button class="tab${k === win ? " on" : ""}" data-w="${k}" role="tab">${esc(label)}</button>`).join("");
@@ -58,14 +57,13 @@ async function load() {
   if (!rows.length) {
     boardEl.innerHTML = `<div class="note">No settled markets in this window yet. Points appear once a market pays out.</div>`;
   } else {
-    boardEl.innerHTML = `<div class="scroll"><table class="tbl"><thead><tr><th>#</th><th>Wallet</th><th class="r">Points</th><th class="r">Markets</th><th class="r">Bets</th><th class="r">Net P&amp;L</th></tr></thead><tbody>${rows.map((e) => `
+    boardEl.innerHTML = `<div class="scroll"><table class="tbl"><thead><tr><th>#</th><th>Wallet</th><th class="r">Points</th><th class="r">Markets</th><th class="r">Won</th></tr></thead><tbody>${rows.map((e) => `
       <tr${e.wallet === me ? ` style="background:var(--ok-bg)"` : ""}>
         <td class="mono">${e.rank}</td>
         <td><a class="mono" href="${explorerAddress(e.wallet)}" target="_blank" rel="noopener">${esc(short(e.wallet))}</a>${e.wallet === me ? ` <b>you</b>` : ""}${e.bot ? ` <span class="note">demo bot</span>` : ""}</td>
         <td class="r mono"><b>${esc(fmtPoints(e.points))}</b></td>
         <td class="r mono">${e.markets}</td>
-        <td class="r mono">${e.bets}</td>
-        <td class="r mono" style="color:${e.pnlUsd >= 0 ? "var(--gain)" : "var(--drop)"}">${esc(signed(e.pnlUsd))}</td>
+        <td class="r mono">${e.won} / ${e.markets}</td>
       </tr>`).join("")}</tbody></table></div>
       ${t.approxRows ? `<div class="note" style="margin-top:8px">${t.approxRows} of ${t.rows} settlements were settled without an official close on file and are scored at the token's price instead.</div>` : ""}`;
   }
