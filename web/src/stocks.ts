@@ -67,8 +67,10 @@ export function bucketName(m: MarketView, i: number) {
 
 /** Raw on-chain units → what the holder's wallet shows (decimals and the dividend/split multiplier applied). */
 export const uiAmount = (m: MarketView, raw: number) => (raw / 10 ** m.decimals) * (m.multiplier || 1);
-/** Shares as typed by the user → raw units, rounded down so a stake never exceeds what was typed. */
-export const toRaw = (m: MarketView, ui: number) => Math.floor(((ui || 0) / (m.multiplier || 1)) * 10 ** m.decimals);
+/** Shares as typed by the user → raw units, rounded down so a stake never exceeds what was typed. The tiny nudge
+ *  before flooring absorbs binary float error (0.29 × 1e8 is 28999999.999999996 in JS, which floored to 0.28999999
+ *  shares on-chain); a millionth of a raw unit is far below anything a wallet can hold. */
+export const toRaw = (m: MarketView, ui: number) => Math.floor(((ui || 0) / (m.multiplier || 1)) * 10 ** m.decimals + 1e-6);
 export const fmtAmt = (m: MarketView, raw: number, digits = 4) => uiAmount(m, raw).toLocaleString("en-US", { maximumFractionDigits: digits });
 
 // Live token prices from the API (Jupiter), keyed by token symbol; used only for a dollar estimate next to share counts.
