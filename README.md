@@ -95,17 +95,10 @@ Both figures are frozen into the settlement record at payout time (`server/resol
 afterwards; `server/points.mjs` only adds up what the crank wrote. The board is at `/leaderboard.html`, backed by
 `GET /api/leaderboard?window=7d|30d|all`.
 
-**Betting both sides from two wallets is allowed, and nobody is banned for it.** On the ledger it is the same event
-as two honest players taking opposite ranges: the same fee is paid, the same pool depth is created, the same points
-are scored. Someone cycling their own money through a market is a paying customer — the fee lands in the treasury as
-real stock either way.
-
-What that does distort is concentration: their fee cost rises linearly with capital while points, being stake × pot,
-rise quadratically, because both factors are theirs. So `scripts/points-audit.mjs` reports it rather than punishing
-it — pairs that keep taking opposite ranges of the same thin market, and whether they were first funded by the same
-address (known funders like the faucet are excluded, or on devnet every player looks like every other player's sock
-puppet). The output is `data/points-audit.json`, for reading before any decision that spends the points. Nothing is
-excluded from the board unless a human writes `data/points-bans.json` by hand.
+Points are stake × pot, so one person cycling their own money through both sides of a market scores well. That is not
+treated as abuse: on the ledger it is the same event as two players taking opposite ranges — the same fee is paid, the
+same pool depth is created. It does concentrate the board, though, because a self-dealing pair owns both factors of
+the product, so `scripts/points-audit.mjs` reports what share of all points such pairs hold. It bans nobody.
 
 ## Why you can trust the settlement
 
