@@ -32,6 +32,7 @@ select{font:inherit;font-size:13.5px;color:var(--fg);background:var(--surface);b
 
 /* wallet menu */
 .walletbox{position:relative}
+.navmorebox{position:relative;display:none}.navmore{border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:6px 10px;font-size:16px;line-height:1;color:var(--fg)}.navmenu{width:200px}
 .wbtn{display:flex;align-items:center;gap:8px;font-weight:500}.wbtn .dot{width:8px;height:8px;border-radius:50%;background:var(--gain)}
 .menu{position:absolute;right:0;top:calc(100% + 8px);width:290px;background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:10px;display:grid;gap:6px;z-index:30}
 .menu .mh{font-size:12px;font-weight:600;color:var(--dim);padding:4px 6px}
@@ -133,7 +134,7 @@ h2{font-size:17px;margin:28px 0 10px}
 
 @media(max-width:900px){.evpage{grid-template-columns:1fr;grid-template-areas:"top" "trade" "bottom"}.trade{position:static;margin-top:16px}.hero{grid-template-columns:1fr}}
 @media(max-width:640px){.container{padding-inline:14px}.tb{gap:10px;height:56px}.search{display:none}.brand span.full{display:none}
-.hero h1{font-size:24px}.navlink{display:none}
+.hero h1{font-size:24px}.navlink{display:none}.navmorebox{display:block}
 .hero{padding-top:18px}.steps{display:none}
 .orow{grid-template-columns:minmax(0,1fr) 50px 62px 72px;gap:8px;padding:10px 12px}.orow .opool,.ohead .opool{display:none}
 .oname{flex-direction:column;align-items:flex-start;gap:0}.oname i{display:none}.oname b{white-space:nowrap;color:var(--c)}.oname small{font-size:11px}

@@ -44,6 +44,7 @@ export function mountTopbar(opts: TopbarOpts = {}) {
     ? `<a class="netbadge" href="/faucet.html" title="Test network: mock stock tokens, no real value. Free test stocks on the faucet page.">${esc(net)}</a>`
     : `<span class="netbadge" title="Test network: mock stock tokens, no real value">${esc(net)}</span>`;
   const fl = document.getElementById("faucetlink"); if (fl) fl.hidden = !faucetOn;
+  mountNavMenu();
   const q = document.getElementById("q") as HTMLInputElement | null;
   if (q) {
     q.value = opts.q ?? "";
@@ -52,6 +53,25 @@ export function mountTopbar(opts: TopbarOpts = {}) {
   }
   renderCatnav(opts.active ?? "");
   mountWallet();
+}
+/** Phones hide the text links in the top bar (styles.css, ≤640px), which left Docs / Faucet / Leaderboard / My bets
+ *  unreachable there. A ☰ button lists the same links in a dropdown; it is invisible on wider screens. */
+let navOpen = false;
+function mountNavMenu() {
+  const right = document.querySelector<HTMLElement>(".tb-right");
+  if (!right || document.getElementById("navmore")) return;
+  const links = [...right.querySelectorAll<HTMLAnchorElement>("a.navlink")].filter((a) => !a.hidden);
+  const box = document.createElement("div"); box.className = "navmorebox";
+  box.innerHTML = `<button class="navmore" id="navmore" aria-label="Menu" aria-expanded="false">\u2630</button>`;
+  right.insertBefore(box, document.getElementById("netbadge"));
+  const btn = box.querySelector<HTMLButtonElement>("#navmore")!;
+  const render = () => {
+    box.querySelector(".menu")?.remove();
+    if (navOpen) { const m = document.createElement("div"); m.className = "menu navmenu"; m.innerHTML = links.map((a) => `<a class="mi" href="${esc(a.getAttribute("href") ?? "/")}">${esc(a.textContent ?? "")}</a>`).join(""); box.appendChild(m); }
+    btn.setAttribute("aria-expanded", String(navOpen));
+  };
+  btn.onclick = (e) => { e.stopPropagation(); navOpen = !navOpen; render(); };
+  document.addEventListener("click", () => { if (navOpen) { navOpen = false; render(); } });
 }
 /** Stock tabs under the top bar. On the home page they filter in place; elsewhere they link home with the filter set. */
 export function renderCatnav(active: string) {
