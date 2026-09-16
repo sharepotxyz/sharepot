@@ -4,7 +4,7 @@
 <header class="topbar"><div class="container tb">
   <a class="brand" href="/"><svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16" fill="#5b4bdb"/><circle cx="32" cy="32" r="15" fill="none" stroke="#fff" stroke-width="6"/><path d="M32 17a15 15 0 0 1 15 15H32z" fill="#fff"/></svg><span>SharePot</span></a>
   <label class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input id="q" type="search" placeholder="Search SpaceX, TSLA, Ondo…" aria-label="Search markets"></label>
-  <nav class="tb-right"><a class="navlink" href="/docs.html">Docs</a><a class="navlink" id="faucetlink" href="/faucet.html" hidden>Faucet</a><a class="navlink" href="/portfolio.html">My bets</a><span id="netbadge"></span><div id="wallet" class="walletbox"></div></nav>
+  <nav class="tb-right"><a class="navlink" href="/docs.html">Docs</a><a class="navlink" id="faucetlink" href="/faucet.html" hidden>Faucet</a><a class="navlink" href="/leaderboard.html">Leaderboard</a><a class="navlink" href="/portfolio.html">My bets</a><span id="netbadge"></span><div id="wallet" class="walletbox"></div></nav>
 </div><div class="container"><nav id="catnav" class="catnav" aria-label="Stocks"></nav></div></header>
 <main class="container docs">
   <div class="pagehead"><h1>How SharePot works</h1></div>
@@ -13,7 +13,7 @@
   <div class="fcard vid"><video controls preload="metadata" playsinline src="/demo.mp4" poster="/demo-poster.jpg"></video>
     <p class="note" style="margin:0">Two minutes: connect, get test stocks, stake on Tesla, and see a settled market with its price evidence checked against the on-chain hash. Recorded on devnet.</p></div>
 
-  <nav class="toc"><a href="#why">Why</a><a href="#market">A market</a><a href="#money">Money</a><a href="#settle">Settlement</a><a href="#trust">Trust model</a><a href="#tokens">Tokens</a><a href="#try">Try it</a><a href="#faq">FAQ</a></nav>
+  <nav class="toc"><a href="#why">Why</a><a href="#market">A market</a><a href="#money">Money</a><a href="#points">Points</a><a href="#settle">Settlement</a><a href="#trust">Trust model</a><a href="#tokens">Tokens</a><a href="#try">Try it</a><a href="#faq">FAQ</a></nav>
 
   <h2 id="why">Why bet with the stock itself</h2>
   <p>To protect a position against one bad day, or to lean into a good one, a holder of tokenized stock has to sell and buy back: spreads, slippage, and time out of the stock. SharePot lets the shares do the work instead.</p>
@@ -37,7 +37,21 @@
   <ul>
     <li>Each range has its own pool in the market's stock token. <b>Winners get their stake back plus a pro-rata share of every losing pool</b>, in the same stock.</li>
     <li><b>Fee: 3 % of what a winner takes from the losing pools</b>, never on the winner's own stake. Bets in the first quarter of the betting window (up to 6 h) pay 2 %. The rate is locked into the position when you bet.</li>
-    <li>The operator may <b>seed</b> a market with a fee-free prize in the stock; it goes to the winners. If nobody picked the winning range, everyone is refunded and the seed returns. A <b>voided</b> market refunds everyone in full.</li>
+    <li><b>The fee is paid in the stock itself.</b> A pool staked in NVDAx pays its fee in NVDAx. Nine pools means fee income arrives as nine separate piles of stock, not as cash.</li>
+    <li><b>There is no house on the other side of your bet.</b> Winners are paid out of the losing ranges. If nobody takes another range, the losing pools are empty and every stake is returned; if nobody picks the winning range, everyone is refunded and no fee is charged. The worst case is a wasted session, not a loss.</li>
+    <li>On devnet each market opens with a small fee-free <b>house prize</b> so an empty pool looks alive. On mainnet there is none — a parimutuel does not need house money to pay out.</li>
+    <li>A <b>voided</b> market refunds everyone in full.</li>
+  </ul>
+
+  <h2 id="points">Leaderboard points</h2>
+  <p>Every settled market scores the wallets that were in it:</p>
+  <p><b>points = your stake in dollars × that market's player pot in dollars</b></p>
+  <ul>
+    <li>Dollars, not share counts: SPYx is worth about four times NVDAx, so scoring raw shares would make the cheapest token the best place to farm.</li>
+    <li>Stakes score whether they win or lose. Points pay for making a pool deep, which is what a parimutuel needs; profit is already its own reward.</li>
+    <li>Both figures are frozen when the market pays out, so a score never moves afterwards. The house prize is not counted.</li>
+    <li>Points are a record of participation. <b>There is no token and nothing is promised</b> — if a rewards programme ever exists, this is the history it would read.</li>
+    <li>Betting both sides of a thin market from two wallets is cheap and scores well, so it is audited after the fact: pairs that keep taking opposite ranges of the same thin market are reviewed, and wallets funded from a common address are removed from the board. Removals are listed on the <a href="/leaderboard.html">leaderboard</a>.</li>
   </ul>
 
   <h2 id="settle">Settlement you can check</h2>

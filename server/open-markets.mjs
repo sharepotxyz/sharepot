@@ -62,6 +62,12 @@ log(`next session ${S.date} opens ${iso(S.open)}; betting window ${iso(prev.open
 // one market per (session, token): key on metric + mint, since every token of a stock shares the metric
 const existing = new Map((await withRetry(() => program.account.market.all([{ dataSize: program.account.market.size }])))
   .map((x) => [`${tag(x.account.metric)}|${x.account.mint.toBase58()}`, x]));
+// House prize per market. On a test network a small seed makes an empty pool look alive; on mainnet there is none.
+// A parimutuel does not need house money — players are each other's counterparty, and a market nobody takes the other
+// side of refunds everyone in full (compute_payout: win_pool == 0 → refund). Seeding there would just be us paying
+// players out of the treasury. SEED_MARKETS=1 overrides, for a deliberate promotion funded from fee income.
+const SEED_ON = process.env.SEED_MARKETS === "1" || (process.env.SEED_MARKETS !== "0" && CLUSTER !== "mainnet");
+const seedShares = (t) => (SEED_ON ? t.seed ?? 0 : 0);
 const seedIx = (market, vault, mint, tokenProgram, amount) => program.methods.seedMarket(new BN(amount))
   .accounts({ market, vault, mint, funderToken: getAssociatedTokenAddressSync(mint, signer, false, tokenProgram), funder: signer, tokenProgram });
 const opened = [], seeded = [], skipped = [];
@@ -69,7 +75,7 @@ for (const s of tpl.stocks) for (const t of s.tokens) {
   const metric = `${s.symbol}.close:${S.date}`;
   try {
     const mint = mintOf(t);
-    const seedAmount = Math.round(t.seed * 10 ** t.decimals);
+    const seedAmount = Math.round(seedShares(t) * 10 ** t.decimals);
     const have = existing.get(`${metric}|${mint.toBase58()}`);
     if (have) {
       // already open: only make sure it carries its opening prize
@@ -92,11 +98,11 @@ for (const s of tpl.stocks) for (const t of s.tokens) {
       thresholds: Array.from({ length: 7 }, (_, i) => new BN(thresholds[i] ?? 0)), nBuckets: thresholds.length + 1,
       openTs: new BN(prev.open), closeTs: new BN(S.open), resolveAfterTs: new BN(S.close + tpl.resolveDelaySecs), baseline: new BN(0),
     };
-    log(`${DRY ? "would open" : "opening"} #${id} ${metric} in ${t.token} (${t.issuer}) thresholds ${s.thresholdsBps.join("/")} bps, seed ${t.seed} ${t.token}`);
+    log(`${DRY ? "would open" : "opening"} #${id} ${metric} in ${t.token} (${t.issuer}) thresholds ${s.thresholdsBps.join("/")} bps, seed ${seedShares(t)} ${t.token}`);
     if (DRY) { opened.push(`${metric} ${t.token}`); continue; }
     await withRetry(() => program.methods.createMarket(args).accounts({ config: configPda, market, vault, mint, signer, tokenProgram, systemProgram: SystemProgram.programId }).rpc());
     if (seedAmount > 0) await withRetry(() => seedIx(market, vault, mint, tokenProgram, seedAmount).rpc());
-    fs.appendFileSync(path.join(DATA, "markets-opened.jsonl"), JSON.stringify({ at: new Date().toISOString(), id: id.toNumber(), market: market.toBase58(), metric, symbol: s.symbol, token: t.token, issuer: t.issuer, mint: mint.toBase58(), session: S.date, question, thresholdsBps: s.thresholdsBps, openTs: prev.open, closeTs: S.open, resolveAfterTs: S.close + tpl.resolveDelaySecs, seed: t.seed }) + "\n");
+    fs.appendFileSync(path.join(DATA, "markets-opened.jsonl"), JSON.stringify({ at: new Date().toISOString(), id: id.toNumber(), market: market.toBase58(), metric, symbol: s.symbol, token: t.token, issuer: t.issuer, mint: mint.toBase58(), session: S.date, question, thresholdsBps: s.thresholdsBps, openTs: prev.open, closeTs: S.open, resolveAfterTs: S.close + tpl.resolveDelaySecs, seed: seedShares(t) }) + "\n");
     opened.push(`#${id} ${metric} ${t.token}`);
   } catch (e) { skipped.push(`${metric} ${t.token}: failed: ${String(e?.message ?? e).split("\n")[0].slice(0, 160)}`); }
   await sleep(700); // stay under public-RPC burst limits

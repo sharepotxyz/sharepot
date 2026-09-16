@@ -13,7 +13,7 @@ import anchor from "@coral-xyz/anchor";
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync, getOrCreateAssociatedTokenAccount } from "@solana/spl-token";
 import idlJson from "../idl/sharepot.json" with { type: "json" };
-import { closeMove, parseMetric, nasdaqMarketInfo, nyToUnix } from "./prices.mjs";
+import { closeMove, parseMetric, nasdaqMarketInfo, nyToUnix, xstockPrices } from "./prices.mjs";
 import { notify } from "./notify.mjs";
 // A market still unproposed this long after resolve_after_ts is overdue: one Telegram alert per market per 6 h.
 const OVERDUE_SECS = Number(process.env.OVERDUE_SECS ?? 7200);
@@ -76,6 +76,42 @@ function payoutFor(m, p) {
 }
 const SETTLEMENTS = path.join(DATA, "settlements.jsonl");
 
+// ---------- what a settled market was worth ----------
+// Leaderboard points are stake × pot in dollars (server/points.mjs), so both figures have to be frozen at settlement:
+// the pools as they finally stood, and the dollar price of one share at that moment. Looking the price up later would
+// silently re-score old markets every time the stock moves.
+const tpl = JSON.parse(fs.readFileSync(process.env.STOCKS ?? new URL("./stock-templates.json", import.meta.url), "utf8"));
+const mockState = CLUSTER === "mainnet" ? { mints: {} } : JSON.parse(fs.readFileSync(process.env.STATE ?? path.join(SECRETS, "state.json"), "utf8"));
+const tokenByMint = new Map(tpl.stocks.flatMap((s) => s.tokens.map((t) => {
+  const mint = CLUSTER === "mainnet" ? t.mainnetMint : mockState.mints[t.token];
+  return mint ? [mint, { ...t, symbol: s.symbol }] : null;
+}).filter(Boolean)));
+// Jupiter prices of the real tokens (devnet mocks borrow their mainnet twin's price), read once per run.
+let priceByMint = null;
+async function usdPerShare(mint) {
+  const t = tokenByMint.get(mint.toBase58()); if (!t) return null;
+  if (!priceByMint) {
+    try { priceByMint = await xstockPrices([...tokenByMint.values()].map((x) => x.mainnetMint)); }
+    catch (e) { log(`price lookup failed (${String(e?.message ?? e).slice(0, 80)}) — settlements recorded without a dollar price`); priceByMint = {}; }
+  }
+  return priceByMint[t.mainnetMint]?.usd ?? null;
+}
+// decimals + ScaledUiAmount multiplier, so raw units can be turned into the share count a wallet shows
+const mintMeta = new Map();
+async function metaOf(mint) {
+  const k = mint.toBase58();
+  if (!mintMeta.has(k)) {
+    let v = { decimals: tokenByMint.get(k)?.decimals ?? 0, multiplier: 1 };
+    try {
+      const info = (await conn.getParsedAccountInfo(mint)).value.data.parsed.info;
+      const sc = (info.extensions ?? []).find((e) => e.extension === "scaledUiAmountConfig")?.state;
+      v = { decimals: info.decimals, multiplier: sc ? Number(Date.now() / 1000 >= Number(sc.newMultiplierEffectiveTimestamp) ? sc.newMultiplier : sc.multiplier) : 1 };
+    } catch {}
+    mintMeta.set(k, v);
+  }
+  return mintMeta.get(k);
+}
+
 // ---------- on-chain steps ----------
 async function propose(markets, now) {
   for (const { publicKey, account: m } of markets) {
@@ -134,6 +170,8 @@ async function settle(markets, cfg) {
     if (m.status !== 2 && m.status !== 3) continue;
    try {
     const mint = m.mint, tokenProgram = await tokenProgramOf(mint);
+    // Frozen at settlement so the leaderboard can be recomputed from this log alone (see usdPerShare above).
+    const meta = await metaOf(mint), usd = await usdPerShare(mint), token = tokenByMint.get(mint.toBase58())?.token ?? null;
     if (m.positionsOpen > 0) {
       // positions of this market: memcmp on the market pubkey (offset 8 = after discriminator)
       const positions = await program.account.position.all([{ memcmp: { offset: 8, bytes: publicKey.toBase58() } }]);
@@ -146,7 +184,8 @@ async function settle(markets, cfg) {
           const fresh = await program.account.market.fetch(publicKey);
           const { payout, fee, kind } = payoutFor(fresh, p);
           const sig = await program.methods.settlePosition().accounts({ market: publicKey, position: ppk, payer: p.payer, vault: vaultPda(publicKey), mint, ownerToken, cranker: proposer.publicKey, tokenProgram }).rpc();
-          fs.appendFileSync(SETTLEMENTS, JSON.stringify({ at: new Date().toISOString(), market: publicKey.toBase58(), id: m.id.toNumber(), metric: tag(m.metric), mint: mint.toBase58(), owner: p.owner.toBase58(), amounts: p.amounts.slice(0, fresh.nBuckets).map((x) => x.toString()), status: fresh.status, outcome: fresh.outcome, observed: fresh.proposedValue.toString(), kind, payout: payout.toString(), fee: fee.toString(), signature: sig }) + "\n");
+          fs.appendFileSync(SETTLEMENTS, JSON.stringify({ at: new Date().toISOString(), market: publicKey.toBase58(), id: m.id.toNumber(), metric: tag(m.metric), mint: mint.toBase58(), owner: p.owner.toBase58(), amounts: p.amounts.slice(0, fresh.nBuckets).map((x) => x.toString()), status: fresh.status, outcome: fresh.outcome, observed: fresh.proposedValue.toString(), kind, payout: payout.toString(), fee: fee.toString(), signature: sig,
+            token, decimals: meta.decimals, multiplier: meta.multiplier, usdPerShare: usd, pools: fresh.pools.slice(0, fresh.nBuckets).map((x) => x.toString()), seed: fresh.seedAmount.toString() }) + "\n");
           log(`  settled ${p.owner.toBase58()} ${kind} payout=${payout} ${sig}`);
         } catch (e) {
           log(`  FAILED ${p.owner.toBase58()}: ${e.message?.split("\n")[0]}`);

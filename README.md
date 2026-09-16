@@ -56,9 +56,52 @@ resolve on the same official close; each is staked and paid in its own token.
 * **The fee (3 %) is charged only on what a winner takes from the losing pools**, never on the winner's own stake.
   Bets in the first quarter of the betting window (up to 6 h) pay 2 %. The rate is locked into the position when you
   bet, stake-weighted, so a late top-up cannot inherit an early rate.
-* The operator may **seed** a market with a fee-free prize in the stock; it goes to the winners. If nobody picked the
-  winning range, everyone is refunded and the seed returns to the treasury. A **voided** market refunds everyone in full.
+* **Fees are collected in the stock itself.** A pool staked in NVDAx pays its fee in NVDAx, swept to that token's
+  treasury account. There are nine pools, so fee income arrives as nine separate piles of stock, not as cash.
+* On a test network the operator **seeds** a market with a small fee-free prize so an empty pool looks alive. **On
+  mainnet there is no seed** (`SEED_MARKETS=1` overrides it for a deliberate promotion). If nobody picked the winning
+  range, everyone is refunded; a **voided** market refunds everyone in full.
 * Payouts are **pushed** to wallets by a permissionless crank after the dispute window. Nobody has to claim.
+
+## Why this works with no house money
+
+SharePot is parimutuel, so **there is no house on the other side of your bet** — the players are each other's
+counterparty. Three consequences worth stating plainly, because "who pays me if I win?" is the first question anyone
+asks:
+
+* **Nobody needs to fund the prize.** Winners are paid out of the losing ranges, which is money players put in
+  themselves. The program never owes more than the vault holds.
+* **A market with no counterparty cannot lose you money.** If everyone picks the same range, the losing pools are
+  empty and every stake comes back. If nobody picks the winning range, everyone is refunded and no fee is charged
+  (`compute_payout` in [`programs/sharepot/src/lib.rs`](programs/sharepot/src/lib.rs)). The worst case is a wasted
+  session, not a loss.
+* **The cold-start problem is about depth, not solvency.** Splitting a day's volume across 9 pools × 4 ranges makes
+  every range look thin, which is why a mainnet launch starts with one or two pools rather than all nine.
+
+Fee income accumulates as stock tokens in the treasury; the intended use is to seed the *next* session's pool in the
+same token, so the incentive budget comes from the product rather than from a balance sheet.
+
+## Leaderboard
+
+Every settled market scores the wallets that were in it:
+
+    points = your stake in dollars × that market's player pot in dollars
+
+Dollars rather than share counts, because SPYx is worth roughly four times NVDAx and scoring raw shares would make the
+cheapest token the best place to farm. The house seed is excluded. Stakes score whether they won or lost — points pay
+for making the pool deep, which is what a parimutuel actually needs, and profit is already its own reward.
+
+Both figures are frozen into the settlement record at payout time (`server/resolve.mjs`), so a score never moves
+afterwards; `server/points.mjs` only adds up what the crank wrote. The board is at `/leaderboard.html`, backed by
+`GET /api/leaderboard?window=7d|30d|all`.
+
+**Wash trading is not designed out; it is audited after the fact.** Betting both sides of a thin market from two
+wallets costs only the fee on the winning side and farms points quadratically. Tightening the formula would punish
+honest players in thin markets too, so instead `scripts/points-audit.mjs` looks for pairs that keep taking opposite
+ranges of the same thin market, checks whether they were first funded by the same address (known funders like the
+faucet are excluded — otherwise every devnet player looks like every other player's sock puppet), and writes
+`data/points-bans.json`, which the leaderboard subtracts. Only shared funding bans automatically; the structural
+signals raise a pair for a human to look at.
 
 ## Why you can trust the settlement
 

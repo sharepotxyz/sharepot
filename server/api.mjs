@@ -4,6 +4,7 @@
 //   /api/stocks                                     listed stocks, their tokens per issuer and each token's mint here
 //   /api/evidence/:id, /api/evidence/:id/raw        price evidence behind a proposed result (raw bytes hash to the on-chain hash)
 //   /api/positions/:owner                           settlement history of a wallet
+//   /api/leaderboard?window=7d|30d|all              points ranking (stake $ x pot $ per settled market)
 //   /api/faucet (POST, test networks)               2 shares of every mock token + a little SOL
 //   /api/dispute (POST), /api/disputes              signed disputes against a proposed result
 //   everything else                                 files from web/dist
@@ -16,6 +17,7 @@ import nacl from "tweetnacl";
 import bs58 from "bs58";
 import anchor from "@coral-xyz/anchor";
 import { xstockPrices } from "./prices.mjs";
+import { leaderboard, readSettlements, readBans } from "./points.mjs";
 import { homeHtml, eventHtml } from "./ssr.mjs";
 import { notify } from "./notify.mjs";
 
@@ -94,6 +96,30 @@ async function prices() {
 }
 setInterval(() => refreshPrices().catch((e) => console.error("price refresh failed:", String(e?.message ?? e).slice(0, 120))), 60_000).unref();
 refreshPrices().catch(() => {});
+
+// ---------- leaderboard ----------
+// Scored from the crank's settlement log, so it only ever counts markets that actually paid out. Recomputed when that
+// file grows (roughly once a day, after the close), not per request.
+const decimalsByMint = new Map(tokens.map((t) => [t.mint, t.decimals]));
+const tokenNameByMint = new Map(tokens.map((t) => [t.mint, t.token]));
+// Wallets of the demo bots that keep the devnet markets alive; listed so the board can say so out loud.
+const botWallets = new Set((() => {
+  const f = path.join(DATA, "bot-wallets.json");
+  try { return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : []; } catch { return []; }
+})());
+const boardCache = new Map();
+function leaderboardCached(key, since) {
+  const f = path.join(DATA, "settlements.jsonl"), bf = path.join(DATA, "points-bans.json");
+  const stamp = [f, bf].map((x) => { try { const s = fs.statSync(x); return `${s.size}:${s.mtimeMs}`; } catch { return "-"; } }).join("|");
+  const hit = boardCache.get(key);
+  // A window that ends "n days ago" slides, so a cached board also goes stale on its own after a few minutes.
+  if (hit && hit.stamp === stamp && Date.now() - hit.at < (since ? 300_000 : 3_600_000)) return hit;
+  const fallback = { decimals: (mint) => decimalsByMint.get(mint) ?? null, usd: (mint) => priceCache.prices[tokenNameByMint.get(mint)]?.usd ?? null };
+  const b = leaderboard(readSettlements(DATA), fallback, readBans(DATA), since);
+  const v = { ...b, at: Date.now(), stamp };
+  boardCache.set(key, v);
+  return v;
+}
 
 // ---------- helpers ----------
 const seenAddr = new Map(), seenIp = new Map(), seenDispute = new Map(); let seenDay = "", faucetToday = 0;
@@ -176,6 +202,19 @@ const server = http.createServer(async (req, res) => {
       const f = path.join(DATA, "settlements.jsonl");
       const rows = fs.existsSync(f) ? fs.readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.owner === po[1]) : [];
       return json(res, 200, { owner: po[1], settled: rows.reverse() }, { "cache-control": "no-store" });
+    }
+    // Leaderboard: points = your stake in dollars × the market's player pot in dollars, per settled market (points.mjs).
+    // ?window=7d|30d|all, ?limit=n. Recomputed only when the settlement log has grown.
+    if (p === "/leaderboard") {
+      const win = url.searchParams.get("window") ?? "all";
+      const days = win === "7d" ? 7 : win === "30d" ? 30 : 0;
+      const since = days ? Math.floor(Date.now() / 1000) - days * 86400 : 0;
+      const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") ?? 100) || 100));
+      const board = leaderboardCached(win, since);
+      return json(res, 200, { window: win, at: board.at, totals: board.totals, bots: [...botWallets],
+        entries: board.entries.slice(0, limit).map((e) => ({ ...e, bot: botWallets.has(e.wallet) })),
+        banned: board.banned.map((e) => ({ wallet: e.wallet, reason: e.banned, points: e.points })) },
+        { "cache-control": "public, max-age=30" });
     }
     // Public: raise a dispute on a proposed result. The wallet signs a canonical message so a dispute is attributable;
     // resolution happens on-chain (re-propose / void) inside the dispute window.

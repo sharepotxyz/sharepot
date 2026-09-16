@@ -109,6 +109,7 @@ function renderTrade() {
     ${s ? `<button class="primary big" id="go"${bucket < 0 ? " disabled" : ""}>${bucket < 0 ? "Pick a range" : `Stake on ${esc(name(bucket))}`}</button>` : `<button class="primary big" id="connect">Connect wallet</button>`}
     <div id="msg"></div>
     <p class="note" style="margin:0">Fee ${fee / 100}% of winnings${Date.now() / 1000 < earlyBirdUntil(cfg, m) ? " (early-bird rate)" : ""}, never on your stake; locked in when you bet. Payouts arrive automatically.</p>
+    <p class="note" style="margin:0">If nobody takes another range, every ${tok} staked is returned in full — there is no house on the other side of your bet.</p>
     ${IS_TEST && s && balances.loaded && !held ? `<p class="note" style="margin:0">No ${tok} yet? <a href="/faucet.html">Get free test stocks</a>.</p>` : ""}
   </div><div id="pos"></div>`;
   box.querySelectorAll<HTMLButtonElement>(".topts button").forEach((b) => (b.onclick = () => { bucket = Number(b.dataset.b); render(); }));
