@@ -65,7 +65,7 @@ async function load() {
         <td class="r mono">${e.markets}</td>
         <td class="r mono">${e.won} / ${e.markets}</td>
       </tr>`).join("")}</tbody></table></div>
-      ${t.approxRows ? `<div class="note" style="margin-top:8px">${t.approxRows} of ${t.rows} settlements were settled without an official close on file and are scored at the token's price instead.</div>` : ""}`;
+`;
   }
 }
 

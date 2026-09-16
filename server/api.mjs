@@ -101,7 +101,6 @@ refreshPrices().catch(() => {});
 // Scored from the crank's settlement log, so it only ever counts markets that actually paid out. Recomputed when that
 // file grows (roughly once a day, after the close), not per request.
 const decimalsByMint = new Map(tokens.map((t) => [t.mint, t.decimals]));
-const tokenNameByMint = new Map(tokens.map((t) => [t.mint, t.token]));
 // Wallets of the demo bots that keep the devnet markets alive; listed so the board can say so out loud.
 const botWallets = new Set((() => {
   const f = path.join(DATA, "bot-wallets.json");
@@ -114,7 +113,10 @@ function leaderboardCached(key, since) {
   const hit = boardCache.get(key);
   // A window that ends "n days ago" slides, so a cached board also goes stale on its own after a few minutes.
   if (hit && hit.stamp === stamp && Date.now() - hit.at < (since ? 300_000 : 3_600_000)) return hit;
-  const fallback = { decimals: (mint) => decimalsByMint.get(mint) ?? null, usd: (mint) => priceCache.prices[tokenNameByMint.get(mint)]?.usd ?? null };
+  // Rows from before the crank froze the close: read it from the evidence file the result came from.
+  const fallback = { decimals: (mint) => decimalsByMint.get(mint) ?? null, close: (id) => {
+    try { const c = JSON.parse(fs.readFileSync(path.join(DATA, "evidence", `${id}.json`), "utf8")).close; return Number.isFinite(c) && c > 0 ? c : null; } catch { return null; }
+  } };
   const v = { ...leaderboard(readSettlements(DATA), fallback, since), at: Date.now(), stamp };
   boardCache.set(key, v);
   return v;
