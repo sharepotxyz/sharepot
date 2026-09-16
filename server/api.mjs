@@ -101,11 +101,18 @@ refreshPrices().catch(() => {});
 // Scored from the crank's settlement log, so it only ever counts markets that actually paid out. Recomputed when that
 // file grows (roughly once a day, after the close), not per request.
 const decimalsByMint = new Map(tokens.map((t) => [t.mint, t.decimals]));
-// Wallets of the demo bots that keep the devnet markets alive; listed so the board can say so out loud.
-const botWallets = new Set((() => {
-  const f = path.join(DATA, "bot-wallets.json");
-  try { return fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : []; } catch { return []; }
-})());
+// Our own wallets: the demo bots that keep the devnet markets alive, plus the throwaway wallets the browser tests and
+// the video recording create (each run makes a fresh one, takes the faucet and stakes on TSLA). Listed so the board
+// can say so out loud instead of passing them off as players. data/test-wallets.json, re-read every few minutes.
+let testWallets = { at: 0, set: new Set() };
+function ownWallets() {
+  if (Date.now() - testWallets.at > 300_000) {
+    const f = path.join(DATA, "test-wallets.json");
+    let list = []; try { if (fs.existsSync(f)) list = JSON.parse(fs.readFileSync(f, "utf8")); } catch {}
+    testWallets = { at: Date.now(), set: new Set(list) };
+  }
+  return testWallets.set;
+}
 const boardCache = new Map();
 function leaderboardCached(key, since) {
   const f = path.join(DATA, "settlements.jsonl");
@@ -212,8 +219,9 @@ const server = http.createServer(async (req, res) => {
       const since = days ? Math.floor(Date.now() / 1000) - days * 86400 : 0;
       const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") ?? 100) || 100));
       const board = leaderboardCached(win, since);
-      return json(res, 200, { window: win, at: board.at, totals: board.totals, bots: [...botWallets],
-        entries: board.entries.slice(0, limit).map((e) => ({ ...e, bot: botWallets.has(e.wallet) })) },
+      const own = ownWallets();
+      return json(res, 200, { window: win, at: board.at, totals: board.totals,
+        entries: board.entries.slice(0, limit).map((e) => ({ ...e, test: own.has(e.wallet) })) },
         { "cache-control": "public, max-age=30" });
     }
     // Public: raise a dispute on a proposed result. The wallet signs a canonical message so a dispute is attributable;
