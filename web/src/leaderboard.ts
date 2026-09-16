@@ -1,7 +1,6 @@
 // Leaderboard. Points come from the API (server/points.mjs): for every market you were settled in,
 //   points = shares staked × the official close the market settled on
 // i.e. what the stake was worth in dollars at settlement. Every range you bet counts, won or lost.
-import { fmtUsd } from "./stocks";
 import { esc, mountTopbar, onSession } from "./ui";
 import { API_BASE, explorerAddress } from "./config";
 
@@ -50,7 +49,6 @@ async function load() {
     ["Players", String(t.players ?? 0)],
     ["Settled markets", String(t.markets ?? 0)],
     ["Points awarded", fmtPoints(t.points ?? 0)],
-    ["Fees to treasury", fmtUsd(t.feesUsd ?? 0)],
   ].map(([k, v]) => `<div><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join("");
 
   const rows: any[] = j.entries ?? [];
