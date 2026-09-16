@@ -3,7 +3,8 @@
 // loaded; once they run, the client re-renders the same markup and takes over (filters, wallet, betting).
 // Keep the markup in step with web/src/main.ts (card) and web/src/market.ts (render).
 const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const parseMetric = (tag) => { const m = String(tag).match(/^([A-Z]{1,5})\.close:(\d{4}-\d{2}-\d{2})$/); return m ? { symbol: m[1], date: m[2] } : null; };
+const parseMetric = (tag) => { const m = String(tag).match(/^([A-Za-z0-9$_\-]{1,20})\.(close|day):(\d{4}-\d{2}-\d{2})$/); return m ? { symbol: m[1], kind: m[2], date: m[3] } : null; };
+const CATEGORY_NAME = { stocks: "Stocks", preipo: "Pre-IPO", memes: "Memes" };
 const sessionLabel = (date) => new Date(date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
 const fmtThr = (ppm) => (ppm > 0 ? "+" : ppm < 0 ? "−" : "") + (Math.abs(ppm) / 10000).toFixed(2).replace(/\.?0+$/, "") + "%";
 const fmtMove = (ppm) => { const bps = Math.floor(ppm / 100); return (bps > 0 ? "+" : bps < 0 ? "−" : "") + (Math.abs(bps) / 100).toFixed(2) + "%"; };
@@ -11,7 +12,8 @@ const fmtUsd = (v) => "$" + (v >= 1e6 ? (v / 1e6).toFixed(1) + "m" : v >= 1e4 ? 
 const COLORS_4 = ["#e5484d", "#f5a524", "#6cc68e", "#12a150"];
 const COLORS = ["#e5484d", "#f08c3a", "#f5a524", "#c3c65a", "#6cc68e", "#12a150", "#3b9ede", "#5b4bdb"];
 const bucketColor = (m, i) => (m.nBuckets === 2 ? (i === 1 ? "var(--gain)" : "var(--drop)") : m.nBuckets === 4 ? COLORS_4[i] : COLORS[Math.round((i * (COLORS.length - 1)) / Math.max(1, m.nBuckets - 1))]);
-const bucketName = (m, i) => (m.nBuckets === 4 && m.thresholds[1] === 0 ? ["Big drop", "Small drop", "Small gain", "Big gain"][i] : "");
+const bucketName = (m, i, category) => (m.nBuckets === 4 && m.thresholds[1] === 0 ? ["Big drop", "Small drop", "Small gain", "Big gain"][i]
+  : m.nBuckets === 3 && m.thresholds[0] < 0 && m.thresholds[1] > 0 ? (category === "memes" ? ["Dump", "Flat", "Pump"] : ["Down", "Flat", "Up"])[i] : "");
 function bucketLabel(m, i) {
   const t = m.thresholds, n = m.nBuckets;
   if (n === 2 && t[0] === 0) return i === 1 ? "Up or flat" : "Down";
@@ -31,12 +33,12 @@ const RANK = { open: 0, trading: 1, proposed: 2, resolved: 3 };
 const total = (m) => m.pools.reduce((a, b) => a + b, 0);
 
 function context({ markets, stocks, prices }) {
-  const byMint = new Map(), names = {}, order = [];
-  for (const s of stocks) { names[s.symbol] = s.name; order.push(s.symbol); s.tokens.forEach((t, i) => t.mint && byMint.set(t.mint, { ...t, rank: i })); }
+  const byMint = new Map(), names = {}, cats = {}, order = [];
+  for (const s of stocks) { names[s.symbol] = s.name; cats[s.symbol] = s.category ?? "stocks"; order.push(s.symbol); s.tokens.forEach((t, i) => t.mint && byMint.set(t.mint, { ...t, rank: i })); }
   const tok = (m) => byMint.get(m.mint) ?? { token: "shares", issuer: "", rank: 99 };
   const ui = (m, raw) => (raw / 10 ** m.decimals) * (m.multiplier || 1);
   const px = (m) => prices?.[tok(m).token]?.usd ?? null;
-  return { markets: markets ?? [], names, order, tok, ui, px };
+  return { markets: markets ?? [], names, cats, order, tok, ui, px };
 }
 function buildEvents(c) {
   const by = new Map();
@@ -51,30 +53,30 @@ function buildEvents(c) {
       if (x) { priced = true; m.pools.forEach((v, i) => (usd[i] += c.ui(m, v) * x)); pot += c.ui(m, t + m.seed) * x; }
     }
     const ut = usd.reduce((a, b) => a + b, 0);
-    return { key, symbol: p?.symbol ?? "?", date: p?.date ?? "", markets: list, closeTs: Math.min(...list.map((m) => m.closeTs)),
+    return { key, symbol: p?.symbol ?? "?", kind: p?.kind ?? "close", category: c.cats[p?.symbol] ?? "stocks", date: p?.date ?? "", markets: list, closeTs: Math.min(...list.map((m) => m.closeTs)),
       status: list.map(statusOf).sort((a, b) => RANK[a] - RANK[b])[0], potUsd: priced ? pot : null, bettors: list.reduce((a, m) => a + m.positions, 0),
       dist: ut > 0 ? usd.map((v) => v / ut) : fc ? frac.map((v) => v / fc) : new Array(n).fill(0) };
   });
 }
-const question = (ev) => `Where does ${ev.symbol} close on ${sessionLabel(ev.date)}?`;
+const question = (ev) => `Where does ${ev.symbol} close on ${sessionLabel(ev.date)}${ev.kind === "day" ? " (UTC)" : ""}?`;
 
 /** Home: the default view (betting open, closing soon; all stocks or the ?stock= tab) as event cards + the summary line.
  *  Other filters in the URL are left to the browser. A stock tab hides the hero, as main.ts does. */
 export function homeHtml(data, html, url) {
-  const stock = url?.searchParams.get("stock") || "all";
-  if (stock !== "all") html = html.replace(`<section class="hero">`, `<section class="hero" hidden>`);
+  const stock = url?.searchParams.get("stock") || "all", cat = url?.searchParams.get("cat") || "all";
+  if (stock !== "all" || cat !== "all") html = html.replace(`<section class="hero">`, `<section class="hero" hidden>`);
   if (["issuer", "status", "sort", "q"].some((k) => url?.searchParams.get(k))) return html;
   const c = context(data); if (!c.markets.length) return html;
-  const evs = buildEvents(c).filter((e) => e.status === "open" && (stock === "all" || e.symbol === stock)).sort((a, b) => a.closeTs - b.closeTs || a.symbol.localeCompare(b.symbol));
+  const evs = buildEvents(c).filter((e) => e.status === "open" && (stock === "all" || e.symbol === stock) && (cat === "all" || e.category === cat)).sort((a, b) => a.closeTs - b.closeTs || a.symbol.localeCompare(b.symbol));
   if (!evs.length) return html;
   const cards = evs.map((ev) => {
-    const m0 = ev.markets[0], backed = ev.dist.some((x) => x > 0), label = (i) => bucketName(m0, i) || bucketLabel(m0, i);
+    const m0 = ev.markets[0], backed = ev.dist.some((x) => x > 0), label = (i) => bucketName(m0, i, ev.category) || bucketLabel(m0, i);
     const bar = backed ? ev.dist.map((f, i) => `<i style="width:${(f * 100).toFixed(1)}%;background:${bucketColor(m0, i)}"></i>`).join("") : `<i class="empty"></i>`;
     const i = ev.dist.indexOf(Math.max(...ev.dist));
     const lead = backed ? `Most backed: <b>${esc(label(i))}</b> ${Math.round(ev.dist[i] * 100)}%` : `<span class="note">No bets yet — the house prize goes to whoever picks right</span>`;
     return `<a class="ev" href="/market.html?e=${encodeURIComponent(ev.key)}">
     <div class="ev-top">${tickerBadge(ev.symbol)}<div><div class="ev-q">${esc(question(ev))}</div><div class="ev-s">${esc(c.names[ev.symbol] ?? ev.symbol)} · ${ev.markets.map((m) => esc(c.tok(m).token)).join(" · ")}</div></div></div>
-    <div class="dist" title="How the money is spread across the four ranges">${bar}</div>
+    <div class="dist" title="How the money is spread across the ranges">${bar}</div>
     <div class="ev-lead">${lead}</div>
     <div class="ev-foot"><span class="pill open">Open</span>${ev.potUsd != null ? `<span>${fmtUsd(ev.potUsd)} pot</span>` : ""}<span>${ev.bettors} bettor${ev.bettors === 1 ? "" : "s"}</span><span class="ev-when">${esc(timeLeft(ev.closeTs))} left</span></div>
   </a>`;
@@ -101,10 +103,10 @@ export function eventHtml(data, url, html) {
   const amt = (x, raw, d = 3) => c.ui(x, raw).toLocaleString("en-US", { maximumFractionDigits: d });
   const rows = m.pools.map((p, i) => {
     const win = m.pools[i], lose = t - win, mult = win ? 1 + (lose * (1 - fee / 10000) + m.seed) / win : null;
-    return `<div class="orow" style="--c:${bucketColor(m, i)}"><span class="oname"><i></i><b>${esc(bucketName(m, i) || bucketLabel(m, i))}</b>${bucketName(m, i) ? `<small>${esc(bucketLabel(m, i))}</small>` : ""}</span><span class="ochance">${t ? Math.round((p / t) * 100) + "%" : "—"}</span><span class="opays">${mult ? mult.toFixed(2) + "×" : st === "open" ? "whole pot" : "—"}</span><span class="opool">${amt(m, p)} ${esc(tok)}</span><span>${st === "open" ? `<button class="pickbtn" disabled>Pick</button>` : ""}</span></div>`;
+    return `<div class="orow" style="--c:${bucketColor(m, i)}"><span class="oname"><i></i><b>${esc(bucketName(m, i, ev.category) || bucketLabel(m, i))}</b>${bucketName(m, i, ev.category) ? `<small>${esc(bucketLabel(m, i))}</small>` : ""}</span><span class="ochance">${t ? Math.round((p / t) * 100) + "%" : "—"}</span><span class="opays">${mult ? mult.toFixed(2) + "×" : st === "open" ? "whole pot" : "—"}</span><span class="opool">${amt(m, p)} ${esc(tok)}</span><span>${st === "open" ? `<button class="pickbtn" disabled>Pick</button>` : ""}</span></div>`;
   }).join("");
   const body = `<div class="evpage"><div class="evtop">
-    <nav class="crumb"><a href="/">Markets</a><span>›</span><a href="/?stock=${encodeURIComponent(ev.symbol)}">${esc(c.names[ev.symbol] ?? ev.symbol)}</a><span>›</span><span>${esc(sessionLabel(ev.date))}</span></nav>
+    <nav class="crumb"><a href="/">Markets</a><span>›</span><a href="/?cat=${ev.category}">${esc(CATEGORY_NAME[ev.category] ?? ev.category)}</a><span>›</span><a href="/?cat=${ev.category}&stock=${encodeURIComponent(ev.symbol)}">${esc(c.names[ev.symbol] ?? ev.symbol)}</a><span>›</span><span>${esc(sessionLabel(ev.date))}</span></nav>
     <header class="evhdr">${tickerBadge(ev.symbol, true)}<div><h1>${esc(question(ev))}</h1><div class="evmeta"><span class="pill ${st}">${STATUS_LABEL[st]}</span>${st === "open" ? `<span>Bets close in ${timeLeft(m.closeTs)}</span>` : ""}${ev.potUsd != null ? `<span>${fmtUsd(ev.potUsd)} pot across ${ev.markets.length} pool${ev.markets.length === 1 ? "" : "s"}</span>` : ""}<span>${ev.bettors} bettor${ev.bettors === 1 ? "" : "s"}</span></div></div></header>
     <div class="toks">${ev.markets.map((x) => `<button class="tok${x.id === m.id ? " on" : ""}" disabled><b>${esc(c.tok(x).token)}</b><span>${esc(c.tok(x).issuer)}</span><em>${amt(x, total(x) + x.seed)} in pot</em></button>`).join("")}</div>
     <div class="otable"><div class="orow ohead"><span>Range (move vs previous close)</span><span>Chance</span><span>Pays</span><span class="opool">Pool</span><span></span></div>${rows}</div>

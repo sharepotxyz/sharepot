@@ -3,7 +3,7 @@
 import { bs58 } from "./wallet";
 import { NO_OUTCOME, buildPlaceBetTx, confirmBySig, currentFeeBps, earlyBirdUntil, fetchConfig, fetchMarkets, fetchPosition, impliedPayout, totalPool, type MarketView } from "./chain";
 import { STATUS_LABEL, buildEvents, eventKey, payoutMultiple, statusOf, type EventView } from "./events";
-import { bucketLabel, bucketName, fmtAmt, fmtMove, fmtUsd, issuerOf, loadPrices, loadStocks, question, sessionLabel, toRaw, tokenSymbol, uiAmount, usdOf } from "./stocks";
+import { CATEGORY_NAME, bucketLabel, bucketName, fmtAmt, fmtMove, fmtUsd, issuerOf, loadPrices, loadStocks, markOf, priceOf, question, sessionLabel, toRaw, tokenSymbol, uiAmount, usdOf } from "./stocks";
 import { balances, bucketColor, esc, fmtTs, getSession, mountTopbar, onSession, openWalletMenu, refreshBalances, shareBalance, tickerBadge, timeLeft, trackStocks } from "./ui";
 import { API_BASE, IS_TEST, explorerTx } from "./config";
 
@@ -20,7 +20,7 @@ async function load(fresh = false) {
   const key = qs.get("e") ?? (byId ? eventKey(byId) : "");
   ev = buildEvents(ms).find((e) => e.key === key);
   if (!ev) { root.innerHTML = `<div class="empty-state" style="margin-top:30px">This market does not exist. <a href="/">Back to all markets</a></div>`; return; }
-  mountTopbar({ active: ev.symbol });
+  mountTopbar({ active: ev.category });
   const want = qs.get("t") ?? (byId ? tokenSymbol(byId) : null);
   m = (m && ev.markets.find((x) => x.id === m.id)) || ev.markets.find((x) => tokenSymbol(x) === want) || ev.markets.find((x) => statusOf(x) === "open") || ev.markets[0];
   if (tab === "rules" && (m.status === 1 || m.status >= 2) && !fresh) tab = "resolution";
@@ -47,9 +47,9 @@ function render() {
     : m.status === 3 ? `Voided — every stake refunded.` : m.status === 1 ? `Proposed result: <b>${esc(full(m.proposedOutcome))}</b> · move ${fmtMove(m.proposedValue)} · final after ${fmtTs(m.proposedAt + cfg.disputeWindowSecs.toNumber())} unless disputed.` : "";
   root.innerHTML = `<div class="evpage">
     <div class="evtop">
-      <nav class="crumb"><a href="/">Markets</a><span>›</span><a href="/?stock=${encodeURIComponent(ev.symbol)}">${esc(ev.name)}</a><span>›</span><span>${esc(sessionLabel(ev.date))}</span></nav>
+      <nav class="crumb"><a href="/">Markets</a><span>›</span><a href="/?cat=${ev.category}">${esc(CATEGORY_NAME[ev.category] ?? ev.category)}</a><span>›</span><a href="/?cat=${ev.category}&stock=${encodeURIComponent(ev.symbol)}">${esc(ev.name)}</a><span>›</span><span>${esc(sessionLabel(ev.date))}</span></nav>
       <header class="evhdr">${tickerBadge(ev.symbol, true)}<div><h1>${esc(question(m))}</h1>
-        <div class="evmeta"><span class="pill ${st}">${STATUS_LABEL[st]}</span>${st === "open" ? `<span>Bets close in ${timeLeft(m.closeTs)}</span>` : ""}${ev.potUsd != null ? `<span>${fmtUsd(ev.potUsd)} pot across ${ev.markets.length} pool${ev.markets.length === 1 ? "" : "s"}</span>` : ""}<span>${ev.bettors} bettor${ev.bettors === 1 ? "" : "s"}</span></div></div></header>
+        <div class="evmeta"><span class="pill ${st}">${STATUS_LABEL[st]}</span>${st === "open" ? `<span>Bets close in ${timeLeft(m.closeTs)}</span>` : ""}${ev.potUsd != null ? `<span>${fmtUsd(ev.potUsd)} pot across ${ev.markets.length} pool${ev.markets.length === 1 ? "" : "s"}</span>` : ""}<span>${ev.bettors} bettor${ev.bettors === 1 ? "" : "s"}</span>${ev.kind === "day" && priceOf(m) ? `<span>on-chain $${priceOf(m)!.toLocaleString("en-US", { maximumFractionDigits: priceOf(m)! < 1 ? 6 : 2 })}${markOf(m) ? ` · issuer mark $${markOf(m)!.toLocaleString("en-US", { maximumFractionDigits: 2 })}` : ""}</span>` : ""}</div></div></header>
       <div class="toks" role="tablist" aria-label="Pool (token)">${ev.markets.map((x) => `<button role="tab" aria-selected="${x.id === m.id}" class="tok${x.id === m.id ? " on" : ""}" data-id="${x.id}"><b>${esc(tokenSymbol(x))}</b><span>${esc(issuerOf(x))}</span><em>${fmtAmt(x, totalPool(x) + x.seed, 3)} in pot ${usdOf(x, totalPool(x) + x.seed)}</em></button>`).join("")}</div>
       ${ev.markets.length > 1 ? `<p class="note">Each issuer's token has its own pool; all ${ev.markets.length} pools share these ranges and the same result.</p>` : ""}
       <div class="otable"><div class="orow ohead"><span>Range (move vs previous close)</span><span>Chance</span><span>Pays</span><span class="opool">Pool</span><span></span></div>${rows}</div>
@@ -72,7 +72,18 @@ function render() {
 const atBell = (ts: number) => new Date(ts * 1000).toLocaleTimeString("en-GB", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit" }) === "09:30";
 function renderTab() {
   const el = document.getElementById("tabpanel")!, tok = esc(tokenSymbol(m)), sym = esc(ev!.symbol);
-  if (tab === "rules") {
+  if (tab === "rules" && ev!.kind === "day") {
+    const top = Math.abs(m.thresholds[m.nBuckets - 2] ?? 0) / 10000, pct = top ? top.toFixed(top % 1 ? 1 : 0) + "%" : "";
+    const iss = issuerOf(m), issuerFee = iss === "Tessera" ? "0.2%" : iss === "PreStocks" ? "0.5%" : null;
+    el.innerHTML = `<ul>
+      <li><b>Question.</b> Where does ${sym} close on ${esc(sessionLabel(ev!.date))} (UTC), measured against the previous day's close? ${m.nBuckets} ranges; the one containing the move wins.</li>
+      <li><b>Betting</b> opens ${fmtTs(m.openTs)} (00:00 UTC) and stops ${fmtTs(m.closeTs)} (12:00 UTC) — halfway through the day, before most of the answer exists.</li>
+      <li><b>Result.</b> There is no exchange close for this token, so the day's close is the <b>median of one Jupiter quote per minute during the day's last hour</b> (23:00–24:00 UTC); the move is that close ÷ the previous day's close − 1. Proposed after ${fmtTs(m.resolveAfterTs)} with every sampled quote published and their hash on-chain; disputable for ${cfg.disputeWindowSecs.toNumber() / 3600} h. Fewer than 40 usable quotes (a delisted token, a dead feed) voids the market with a full refund.</li>
+      <li><b>Payouts</b> are in ${tok}: winners get their stake back plus a share of the losing ranges, pushed to wallets automatically. Fee ${(cfg.feeBps - cfg.earlyBirdDiscountBps) / 100}% of winnings until ${fmtTs(earlyBirdUntil(cfg, m))}, then ${cfg.feeBps / 100}% — never on your stake.</li>
+      ${issuerFee ? `<li><b>Issuer transfer fee.</b> ${esc(iss)} charges ${issuerFee} on every transfer of ${tok}, including into and out of this pool. Your stake counts as what actually arrives in the pool, and a payout lands net of that fee. That fee goes to ${esc(iss)}, not to SharePot.</li>` : ""}
+      ${ev!.category === "memes" ? `<li><b>Why this token.</b> Memes are picked every evening at 23:00 UTC: the ten Solana tokens with the most 24-hour traded volume whose mint and freeze authorities are gone, with at least $500k of liquidity and a first pool at least 3 days old. Tomorrow's list can differ from today's; an open market always settles.</li>` : `<li><b>Reference price.</b> The issuer publishes a mark price from private-market data; it moves rarely and is shown for context only. The pool settles on the on-chain price, which trades around it.</li>`}
+      <li><b>Ranges</b> are cut at ±${pct || "the token's typical daily move"}, the token's median absolute daily move over its last 60 days, so "flat" and the two tails started out about equally likely.</li></ul>`;
+  } else if (tab === "rules") {
     el.innerHTML = `<ul>
       <li><b>Question.</b> Where does ${sym} close on ${esc(sessionLabel(ev!.date))}, measured against the previous session's close? Four ranges; the one containing the move wins.</li>
       <li><b>Betting</b> opens ${fmtTs(m.openTs)}${atBell(m.openTs) ? " (previous opening bell)" : ""} and stops ${fmtTs(m.closeTs)}${atBell(m.closeTs) ? " — the opening bell, 09:30 New York — before any of the answer exists" : ""}.</li>
@@ -95,8 +106,8 @@ function renderTrade() {
   const box = document.getElementById("trade")!;
   const s = getSession(), st = statusOf(m), tok = esc(tokenSymbol(m)), held = shareBalance(m), fee = currentFeeBps(cfg, m), tot = totalPool(m);
   if (st !== "open") {
-    const next = `<a href="/?stock=${encodeURIComponent(ev!.symbol)}">See the open ${esc(ev!.symbol)} market →</a>`;
-    box.innerHTML = `<div class="tcard"><div class="thead"><b>${STATUS_LABEL[st]}</b></div><p class="note" style="margin:0">${st === "trading" ? `Bets closed at the opening bell; the result comes after ${fmtTs(m.resolveAfterTs)}.` : st === "proposed" ? "The result is in its dispute window; payouts follow automatically." : "This market is settled. Payouts have been sent."}</p>${next}</div><div id="pos"></div>`;
+    const next = `<a href="/?cat=${ev!.category}&stock=${encodeURIComponent(ev!.symbol)}">See the open ${esc(ev!.symbol)} market →</a>`;
+    box.innerHTML = `<div class="tcard"><div class="thead"><b>${STATUS_LABEL[st]}</b></div><p class="note" style="margin:0">${st === "trading" ? `Bets closed ${ev!.kind === "day" ? "at 12:00 UTC" : "at the opening bell"}; the result comes after ${fmtTs(m.resolveAfterTs)}.` : st === "proposed" ? "The result is in its dispute window; payouts follow automatically." : "This market is settled. Payouts have been sent."}</p>${next}</div><div id="pos"></div>`;
     showPosition(); return;
   }
   box.innerHTML = `<div class="tcard">
@@ -110,7 +121,7 @@ function renderTrade() {
     <div id="msg"></div>
     <p class="note" style="margin:0">Fee ${fee / 100}% of winnings${Date.now() / 1000 < earlyBirdUntil(cfg, m) ? " (early-bird rate)" : ""}, never on your stake; locked in when you bet. Payouts arrive automatically.</p>
     <p class="note" style="margin:0">If nobody takes another range, every ${tok} staked is returned in full — there is no house on the other side of your bet.</p>
-    ${IS_TEST && s && balances.loaded && !held ? `<p class="note" style="margin:0">No ${tok} yet? <a href="/faucet.html">Get free test stocks</a>.</p>` : ""}
+    ${IS_TEST && s && balances.loaded && !held ? `<p class="note" style="margin:0">No ${tok} yet? <a href="/faucet.html">Get free test tokens</a>.</p>` : ""}
   </div><div id="pos"></div>`;
   box.querySelectorAll<HTMLButtonElement>(".topts button").forEach((b) => (b.onclick = () => { bucket = Number(b.dataset.b); render(); }));
   const amtEl = box.querySelector<HTMLInputElement>("#amt")!, quote = box.querySelector("#quote")!;
@@ -177,8 +188,12 @@ async function loadEvidence() {
     const sha = [...new Uint8Array(await crypto.subtle.digest("SHA-256", raw))].map((b) => b.toString(16).padStart(2, "0")).join("");
     const match = sha === m.snapshotHash;
     const div = Number(e.dividend) > 0 ? ` + $${esc(e.dividend)} dividend going ex` : "";
-    el.innerHTML = `<div><b>${esc(e.symbol)}</b> close ${esc(e.prevDate)} <span class="mono">$${esc(e.prevClose)}</span> → ${esc(e.date)} <span class="mono">$${esc(e.close)}</span>${div} = <span class="mono">${fmtMove(e.movePpm)}</span>${e.split ? ` · split ${esc(e.split)} that day` : ""}</div>
-      <div><a href="${API_BASE}/evidence/${m.id}/raw" target="_blank" rel="noopener">raw price response</a> · sha256 <span class="hash">${sha.slice(0, 16)}…</span> · <span class="${match ? "" : "warn"}">${match ? "✓ matches the hash stored on-chain" : "✗ does not match the on-chain hash"}</span></div>
+    const fp = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString("en-US", { maximumFractionDigits: n < 1 ? 8 : 4 }) : esc(v); };
+    el.innerHTML = e.samples != null
+      ? `<div><b>${esc(e.symbol)}</b> previous close <span class="mono">$${fp(e.baseline)}</span> → ${esc(e.date)} close <span class="mono">$${fp(e.close)}</span> (median of ${esc(e.samples)} quotes, 23:00–24:00 UTC) = <span class="mono">${fmtMove(e.movePpm)}</span></div>`
+      : `<div><b>${esc(e.symbol)}</b> close ${esc(e.prevDate)} <span class="mono">$${esc(e.prevClose)}</span> → ${esc(e.date)} <span class="mono">$${esc(e.close)}</span>${div} = <span class="mono">${fmtMove(e.movePpm)}</span>${e.split ? ` · split ${esc(e.split)} that day` : ""}</div>`;
+    el.innerHTML +=
+      `<div><a href="${API_BASE}/evidence/${m.id}/raw" target="_blank" rel="noopener">${e.samples != null ? "sampled quotes" : "raw price response"}</a> · sha256 <span class="hash">${sha.slice(0, 16)}…</span> · <span class="${match ? "" : "warn"}">${match ? "✓ matches the hash stored on-chain" : "✗ does not match the on-chain hash"}</span></div>
       ${e.signature ? `<div><a href="${explorerTx(e.signature)}" target="_blank" rel="noopener">proposal transaction</a></div>` : ""}`;
   } catch { el.textContent = "not published yet"; }
 }

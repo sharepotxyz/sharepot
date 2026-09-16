@@ -16,7 +16,8 @@ import { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentIn
 import nacl from "tweetnacl";
 import bs58 from "bs58";
 import anchor from "@coral-xyz/anchor";
-import { xstockPrices } from "./prices.mjs";
+import { xstockPrices, utcDate, addDays } from "./prices.mjs";
+import { readRegistry, asStock, REGISTRY_FILE } from "./chain-tokens.mjs";
 import { leaderboard, readSettlements } from "./points.mjs";
 import { homeHtml, eventHtml } from "./ssr.mjs";
 import { notify } from "./notify.mjs";
@@ -29,11 +30,29 @@ const SECRETS = process.env.SHAREPOT_SECRETS ?? path.join("/root/stocklana/secre
 const STATIC = path.resolve(process.env.STATIC_DIR ?? new URL("../web/dist", import.meta.url).pathname);
 const tpl = JSON.parse(fs.readFileSync(new URL("./stock-templates.json", import.meta.url), "utf8"));
 const state = CLUSTER === "mainnet" ? { mints: {} } : JSON.parse(fs.readFileSync(path.join(SECRETS, "state.json"), "utf8"));
-const stocks = tpl.stocks.map((s) => ({ symbol: s.symbol, name: s.name, thresholdsBps: s.thresholdsBps,
-  tokens: s.tokens.map((t) => ({ token: t.token, issuer: t.issuer, decimals: t.decimals, mint: CLUSTER === "mainnet" ? t.mainnetMint : state.mints[t.token] ?? null, mainnetMint: t.mainnetMint })) }));
-const tokens = stocks.flatMap((s) => s.tokens.filter((t) => t.mint).map((t) => ({ ...t, symbol: s.symbol })));
+// Listed tokens: the stocks and pre-IPO tokens of stock-templates.json plus the memes in data/chain-tokens.json (the
+// registry select-chain.mjs maintains; re-read whenever that file changes). A meme is "active" on the days it was
+// selected for (today / tomorrow UTC): only active tokens come out of the faucet; every known token is listed so old
+// markets keep their names.
+const FAUCET_SHARES = 2;   // devnet faucet: shares of each stock token per claim (pre-IPO / memes carry their own faucetUi)
+let stocks = [], tokens = [], listingStamp = null;
+function refreshListing() {
+  let stamp = "-"; try { const st = fs.statSync(REGISTRY_FILE(DATA)); stamp = `${st.size}:${st.mtimeMs}`; } catch {}
+  if (stamp === listingStamp) return;
+  listingStamp = stamp;
+  const today = utcDate(Date.now() / 1000), activeDays = [today, addDays(today, 1)];
+  const fromTpl = tpl.stocks.map((s) => ({ symbol: s.symbol, name: s.name, category: s.category ?? "stocks", kind: s.kind ?? "close", thresholdsBps: s.thresholdsBps, mark: s.mark ?? null, icon: null, active: true,
+    tokens: s.tokens.map((t) => ({ token: t.token, issuer: t.issuer, decimals: t.decimals, mint: CLUSTER === "mainnet" ? t.mainnetMint : state.mints[t.token] ?? null, mainnetMint: t.mainnetMint, faucetUi: t.faucetUi ?? FAUCET_SHARES })) }));
+  const reg = readRegistry(DATA);
+  const memes = Object.entries(reg.tokens).map(([mint, t]) => ({ ...asStock(mint, t, CLUSTER), mark: null, active: (t.selectedFor ?? []).some((d) => activeDays.includes(d)), selectedFor: t.selectedFor ?? [], liquidity: t.liquidity ?? null, volume24h: t.volume24h ?? null, holders: t.holders ?? null }))
+    .filter((s) => s.tokens[0].mint).sort((a, b) => Number(b.active) - Number(a.active) || (b.volume24h ?? 0) - (a.volume24h ?? 0));
+  stocks = [...fromTpl, ...memes];
+  tokens = stocks.flatMap((s) => s.tokens.filter((t) => t.mint).map((t) => ({ ...t, symbol: s.symbol, active: s.active })));
+  decimalsByMint = new Map(tokens.map((t) => [t.mint, t.decimals]));
+}
+let decimalsByMint = new Map();
+refreshListing(); setInterval(() => { try { refreshListing(); } catch (e) { console.error("listing refresh failed:", String(e?.message ?? e).slice(0, 120)); } }, 60_000).unref();
 const FAUCET_ENABLED = CLUSTER !== "mainnet" && process.env.FAUCET_DISABLED !== "1";
-const FAUCET_SHARES = 2;
 const FAUCET_SOL = Number(process.env.FAUCET_SOL ?? 0.01);
 const FAUCET_DAILY_GLOBAL = Number(process.env.FAUCET_DAILY_GLOBAL ?? 300);
 const FAUCET_LOW_SOL = Number(process.env.FAUCET_LOW_SOL ?? 0.5);   // ≈ 15 more claims; alert the operator below this
@@ -83,12 +102,22 @@ process.on("unhandledRejection", (e) => console.error("unhandled rejection:", St
 setInterval(() => chainState().catch(() => {}), CHAIN_TTL_MS).unref(); chainState().catch(() => {});
 
 // Jupiter prices of the real (mainnet) tokens, keyed by token symbol; devnet mocks borrow them for dollar estimates.
-// Refreshed in the background every minute, so no page view ever waits on the price source.
-let priceCache = { at: 0, prices: {} };
+// Refreshed in the background every minute, so no page view ever waits on the price source. Pre-IPO tokens also carry
+// the issuer's official mark price (Tessera / PreStocks APIs, every 10 min) next to the on-chain quote.
+let priceCache = { at: 0, prices: {} }, markCache = { at: 0, marks: {} };
+async function refreshMarks() {
+  if (Date.now() - markCache.at < 600_000) return;
+  const marks = {};
+  try { for (const t of await (await fetch("https://rest-api.tessera.pe/v1/public/token-details", { signal: AbortSignal.timeout(15_000) })).json()) if (t.symbol && t.markPrice > 0) marks[`tessera:${t.symbol}`] = t.markPrice; } catch (e) { console.error("tessera marks:", String(e?.message ?? e).slice(0, 80)); }
+  try { for (const t of await (await fetch("https://prestocks.com/api/prestocks", { headers: { "user-agent": "Mozilla/5.0 (SharePot)" }, signal: AbortSignal.timeout(15_000) })).json()) if (t.symbol && t.markPrice > 0) marks[`prestocks:${t.symbol}`] = t.markPrice; } catch (e) { console.error("prestocks marks:", String(e?.message ?? e).slice(0, 80)); }
+  if (Object.keys(marks).length) markCache = { at: Date.now(), marks };
+}
 async function refreshPrices() {
-  const all = stocks.flatMap((s) => s.tokens);
-  const byMint = await xstockPrices(all.map((t) => t.mainnetMint));
-  priceCache = { at: Date.now(), prices: Object.fromEntries(all.map((t) => [t.token, byMint[t.mainnetMint]])) };
+  await refreshMarks().catch(() => {});
+  const all = stocks.flatMap((s) => s.tokens.map((t) => ({ ...t, mark: s.mark })));
+  const mints = [...new Set(all.map((t) => t.mainnetMint))], byMint = {};
+  for (let i = 0; i < mints.length; i += 50) Object.assign(byMint, await xstockPrices(mints.slice(i, i + 50)));
+  priceCache = { at: Date.now(), prices: Object.fromEntries(all.map((t) => [t.token, byMint[t.mainnetMint] ? { ...byMint[t.mainnetMint], mark: t.mark ? markCache.marks[t.mark] ?? null : null } : null])) };
 }
 async function prices() {
   if (!priceCache.at) await refreshPrices();
@@ -100,7 +129,6 @@ refreshPrices().catch(() => {});
 // ---------- leaderboard ----------
 // Scored from the crank's settlement log, so it only ever counts markets that actually paid out. Recomputed when that
 // file grows (roughly once a day, after the close), not per request.
-const decimalsByMint = new Map(tokens.map((t) => [t.mint, t.decimals]));
 // Our own wallets: the demo bots that keep the devnet markets alive, plus the throwaway wallets the browser tests and
 // the video recording create (each run makes a fresh one, takes the faucet and stakes on TSLA). Listed so the board
 // can say so out loud instead of passing them off as players. data/test-wallets.json, re-read every few minutes.
@@ -188,7 +216,7 @@ const server = http.createServer(async (req, res) => {
   try {
     if (!url.pathname.startsWith("/api/")) return serveStatic(res, url, req);
     if (p === "/health") return json(res, 200, { ok: true, cluster: CLUSTER, programId: ro.programId.toBase58(), faucet: !!faucet });
-    if (p === "/stocks") return json(res, 200, { cluster: CLUSTER, stocks }, { "cache-control": "public, max-age=300" });
+    if (p === "/stocks") return json(res, 200, { cluster: CLUSTER, stocks }, { "cache-control": "public, max-age=60" });
     if (p === "/prices") { try { return json(res, 200, { prices: await prices() }, { "cache-control": "public, max-age=60" }); } catch (e) { return json(res, 503, { error: "price source unavailable" }); } }
     if (p === "/markets" || p === "/config" || /^\/markets\/\d+$/.test(p)) {
       let st; try { st = await chainState(); } catch (e) { return json(res, 503, { error: "chain read failed: " + String(e?.message ?? e).slice(0, 120) }); }
@@ -260,15 +288,15 @@ const server = http.createServer(async (req, res) => {
       try {
         const giveSol = (await conn.getBalance(address)) < FAUCET_SOL * LAMPORTS_PER_SOL;
         // Every token needs an account-create + a transfer; three tokens per transaction stay well under the size limit.
-        const sigs = [];
-        for (let i = 0; i < tokens.length; i += 3) {
+        const sigs = [], give = tokens.filter((t) => t.active);
+        for (let i = 0; i < give.length; i += 3) {
           const tx = new Transaction();
           if (i === 0 && giveSol) tx.add(SystemProgram.transfer({ fromPubkey: faucet.publicKey, toPubkey: address, lamports: Math.round(FAUCET_SOL * LAMPORTS_PER_SOL) }));
-          for (const t of tokens.slice(i, i + 3)) {
+          for (const t of give.slice(i, i + 3)) {
             const mint = new PublicKey(t.mint), { tokenProgram } = await mintInfo(mint), tp = new PublicKey(tokenProgram);
             const to = getAssociatedTokenAddressSync(mint, address, false, tp), from = getAssociatedTokenAddressSync(mint, faucet.publicKey, false, tp);
             tx.add(createAssociatedTokenAccountIdempotentInstruction(faucet.publicKey, to, address, mint, tp),
-              createTransferCheckedInstruction(from, mint, to, faucet.publicKey, BigInt(FAUCET_SHARES) * 10n ** BigInt(t.decimals), t.decimals, [], tp));
+              createTransferCheckedInstruction(from, mint, to, faucet.publicKey, BigInt(Math.round((t.faucetUi ?? FAUCET_SHARES) * 10 ** t.decimals)), t.decimals, [], tp));
           }
           // A busy public RPC sometimes hands out a blockhash its simulator has not seen yet; the transaction is then
           // rejected before it lands, so a fresh blockhash and one more try cannot double-send.
@@ -278,7 +306,7 @@ const server = http.createServer(async (req, res) => {
           }
         }
         conn.getBalance(faucet.publicKey).then((b) => { if (b < FAUCET_LOW_SOL * LAMPORTS_PER_SOL) notify("💧 水龍頭快沒 SOL", `剩 ${(b / LAMPORTS_PER_SOL).toFixed(2)} SOL(每次領水約 0.03)\n補:solana transfer ${faucet.publicKey.toBase58()} 2 -u devnet,或 solana airdrop`, "faucet-low", 360); }).catch(() => {});
-        return json(res, 200, { ok: true, address: k, sent: `${FAUCET_SHARES} of each of ${tokens.length} test stocks${giveSol ? ` + ${FAUCET_SOL} SOL` : ""}`, signatures: sigs });
+        return json(res, 200, { ok: true, address: k, sent: `test tokens of ${give.length} pools${giveSol ? ` + ${FAUCET_SOL} SOL` : ""}`, signatures: sigs });
       } catch (e) {
         seenAddr.delete(k); faucetToday--; console.error("faucet failed", e?.message);
         if (/insufficient|0x1\b/i.test(String(e?.message ?? e))) notify("💧 水龍頭發不出去", `餘額不足,使用者領水失敗:${String(e?.message ?? e).split("\n")[0].slice(0, 160)}\n補:solana transfer ${faucet.publicKey.toBase58()} 2 -u devnet`, "faucet-empty", 60);

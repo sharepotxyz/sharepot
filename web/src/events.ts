@@ -2,11 +2,11 @@
 // stock has its own pool (an on-chain market); they share the thresholds and the result. The home page shows events;
 // the event page lets you pick the token and see its pool.
 import { NO_OUTCOME, totalPool, type MarketView } from "./chain";
-import { STOCK_NAMES, parseMetric, priceOf, tokenSymbol, tokensOf, uiAmount } from "./stocks";
+import { STOCK_NAMES, categoryOf, parseMetric, priceOf, tokenSymbol, tokensOf, uiAmount, type Category } from "./stocks";
 
 export type EventStatus = "open" | "trading" | "proposed" | "resolved";
 export type EventView = {
-  key: string; symbol: string; name: string; date: string; markets: MarketView[]; nBuckets: number;
+  key: string; symbol: string; name: string; date: string; markets: MarketView[]; nBuckets: number; category: Category; kind: "close" | "day";
   closeTs: number; resolveAfterTs: number; status: EventStatus;
   potUsd: number | null; bettors: number;
   dist: number[];                 // share of the money on each range (dollar-weighted across tokens), sums to 1 or all 0
@@ -43,7 +43,7 @@ export function buildEvents(ms: MarketView[]): EventView[] {
     const final = list.find((m) => (m.status === 2 || m.status === 4) && m.outcome !== NO_OUTCOME);
     const prop = list.find((m) => m.status === 1);
     out.push({
-      key, symbol, name: STOCK_NAMES[symbol] ?? symbol, date: p?.date ?? "", markets: list, nBuckets: n,
+      key, symbol, name: STOCK_NAMES[symbol] ?? symbol, date: p?.date ?? "", markets: list, nBuckets: n, category: categoryOf(symbol), kind: p?.kind ?? "close",
       closeTs: Math.min(...list.map((m) => m.closeTs)), resolveAfterTs: Math.max(...list.map((m) => m.resolveAfterTs)),
       status: list.map(statusOf).sort((a, b) => RANK[a] - RANK[b])[0],
       potUsd: priced ? potUsd : null, bettors: list.reduce((a, m) => a + m.positions, 0), dist,

@@ -32,7 +32,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{self, CloseAccount, Mint, TokenAccount, TokenInterface, TransferChecked};
 use anchor_spl::token_2022::spl_token_2022::{
-    extension::{transfer_hook::TransferHook, BaseStateWithExtensions, ExtensionType, StateWithExtensions},
+    extension::{transfer_hook::TransferHook, BaseStateWithExtensions, StateWithExtensions},
     state::Mint as MintState,
 };
 
@@ -94,14 +94,15 @@ pub mod sharepot {
         for i in 1..(n - 1) {
             require!(args.thresholds[i] > args.thresholds[i - 1], PotError::BadBuckets);
         }
-        // Pools are booked at the amount sent. A transfer fee would land less than that in the vault (it could not pay
-        // everyone), and an active transfer hook needs extra accounts this program does not pass: refuse both here.
+        // Pools are booked at what the vault actually receives (place_bet / seed_market read the vault balance before
+        // and after the transfer), so a mint with a transfer fee (Tessera 0.2 %, PreStocks 0.5 %) is fine: the fee
+        // the issuer withholds never enters the pools, and payouts are sent from a vault that holds exactly the pools.
+        // An active transfer hook needs extra accounts this program does not pass: still refused here.
         {
             let info = ctx.accounts.mint.to_account_info();
             if *info.owner == anchor_spl::token_2022::ID {
                 let data = info.try_borrow_data()?;
                 let mint = StateWithExtensions::<MintState>::unpack(&data)?;
-                require!(!mint.get_extension_types()?.contains(&ExtensionType::TransferFeeConfig), PotError::UnsupportedMint);
                 if let Ok(hook) = mint.get_extension::<TransferHook>() {
                     require!(hook.program_id == Default::default(), PotError::UnsupportedMint);
                 }
@@ -138,9 +139,13 @@ pub mod sharepot {
             require!(m.status == MarketStatus::Open as u8, PotError::MarketNotOpen);
             require!(Clock::get()?.unix_timestamp < m.close_ts, PotError::BettingClosed);
         }
+        let before = ctx.accounts.vault.amount;
         token_interface::transfer_checked(ctx.accounts.transfer_ctx(), amount, ctx.accounts.mint.decimals)?;
+        ctx.accounts.vault.reload()?;
+        let credited = ctx.accounts.vault.amount.checked_sub(before).ok_or(PotError::MathOverflow)?;
+        require!(credited > 0, PotError::ZeroAmount);
         let m = &mut ctx.accounts.market;
-        m.seed_amount = m.seed_amount.checked_add(amount).unwrap();
+        m.seed_amount = m.seed_amount.checked_add(credited).unwrap();
         Ok(())
     }
 
@@ -163,8 +168,14 @@ pub mod sharepot {
             }
             fee_bps
         };
-        // Move the tokens first, then book-keep (borrow checker: CPI needs &ctx.accounts).
+        // Move the tokens first, then book-keep (borrow checker: CPI needs &ctx.accounts). The stake is what the
+        // vault received: on a mint with a transfer fee that is less than `amount`, and only the credited part can
+        // ever be paid back out, so only that part joins the pool.
+        let before = ctx.accounts.vault.amount;
         token_interface::transfer_checked(ctx.accounts.transfer_ctx(), amount, ctx.accounts.mint.decimals)?;
+        ctx.accounts.vault.reload()?;
+        let amount = ctx.accounts.vault.amount.checked_sub(before).ok_or(PotError::MathOverflow)?;
+        require!(amount > 0, PotError::ZeroAmount);
         let user_key = ctx.accounts.user.key();
         let position_bump = ctx.bumps.position;
         let m = &mut ctx.accounts.market;
@@ -652,5 +663,5 @@ pub enum PotError {
     #[msg("positions still outstanding")] PositionsOutstanding,
     #[msg("bad bucket definition or index")] BadBuckets,
     #[msg("arithmetic overflow")] MathOverflow,
-    #[msg("stock token not supported: it charges a transfer fee or has an active transfer hook")] UnsupportedMint,
+    #[msg("token not supported: it has an active transfer hook")] UnsupportedMint,
 }

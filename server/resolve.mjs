@@ -11,9 +11,11 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import anchor from "@coral-xyz/anchor";
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
-import { getAssociatedTokenAddressSync, getOrCreateAssociatedTokenAccount } from "@solana/spl-token";
+import { getAssociatedTokenAddressSync, getOrCreateAssociatedTokenAccount, createHarvestWithheldTokensToMintInstruction, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
+import { Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
 import idlJson from "../idl/sharepot.json" with { type: "json" };
-import { closeMove, parseMetric, nasdaqMarketInfo, nyToUnix } from "./prices.mjs";
+import { closeMove, chainMove, parseMetric, nasdaqMarketInfo, nyToUnix } from "./prices.mjs";
+import { readRegistry } from "./chain-tokens.mjs";
 import { notify } from "./notify.mjs";
 // A market still unproposed this long after resolve_after_ts is overdue: one Telegram alert per market per 6 h.
 const OVERDUE_SECS = Number(process.env.OVERDUE_SECS ?? 7200);
@@ -85,8 +87,13 @@ const tpl = JSON.parse(fs.readFileSync(process.env.STOCKS ?? new URL("./stock-te
 const mockState = CLUSTER === "mainnet" ? { mints: {} } : JSON.parse(fs.readFileSync(process.env.STATE ?? path.join(SECRETS, "state.json"), "utf8"));
 const tokenByMint = new Map(tpl.stocks.flatMap((s) => s.tokens.map((t) => {
   const mint = CLUSTER === "mainnet" ? t.mainnetMint : mockState.mints[t.token];
-  return mint ? [mint, { ...t, symbol: s.symbol }] : null;
+  return mint ? [mint, { ...t, symbol: s.symbol, kind: s.kind ?? "close" }] : null;
 }).filter(Boolean)));
+// memes: registry entries (mainnet mint → devnet mock), so a settled market of a token no longer listed still resolves
+for (const [mainnetMint, t] of Object.entries(readRegistry(DATA).tokens)) {
+  const mint = CLUSTER === "mainnet" ? mainnetMint : t.mock;
+  if (mint) tokenByMint.set(mint, { token: t.symbol, issuer: t.issuer, decimals: t.decimals, mainnetMint, symbol: t.symbol, kind: "day" });
+}
 function officialClose(id) {
   try { const c = JSON.parse(fs.readFileSync(path.join(DATA, "evidence", `${id}.json`), "utf8")).close; return Number.isFinite(c) && c > 0 ? c : null; } catch { return null; }
 }
@@ -95,11 +102,12 @@ const mintMeta = new Map();
 async function metaOf(mint) {
   const k = mint.toBase58();
   if (!mintMeta.has(k)) {
-    let v = { decimals: tokenByMint.get(k)?.decimals ?? 0, multiplier: 1 };
+    let v = { decimals: tokenByMint.get(k)?.decimals ?? 0, multiplier: 1, transferFee: false };
     try {
       const info = (await conn.getParsedAccountInfo(mint)).value.data.parsed.info;
       const sc = (info.extensions ?? []).find((e) => e.extension === "scaledUiAmountConfig")?.state;
-      v = { decimals: info.decimals, multiplier: sc ? Number(Date.now() / 1000 >= Number(sc.newMultiplierEffectiveTimestamp) ? sc.newMultiplier : sc.multiplier) : 1 };
+      v = { decimals: info.decimals, multiplier: sc ? Number(Date.now() / 1000 >= Number(sc.newMultiplierEffectiveTimestamp) ? sc.newMultiplier : sc.multiplier) : 1,
+        transferFee: (info.extensions ?? []).some((e) => e.extension === "transferFeeConfig") };
     } catch {}
     mintMeta.set(k, v);
   }
@@ -113,7 +121,19 @@ async function propose(markets, now) {
     if (m.status !== 0 || now < m.resolveAfterTs.toNumber()) continue;
     const metric = tag(m.metric), spec = parseMetric(metric);
     if (!spec) { log(`market #${m.id}: unknown metric ${metric}`); continue; }
-    const ev = await closeMove(spec.symbol, spec.date, now);
+    const onChain = spec.kind === "day";
+    const ev = onChain
+      ? chainMove(DATA, tokenByMint.get(m.mint.toBase58())?.mainnetMint ?? m.mint.toBase58(), spec.symbol, spec.date, m.baseline.toString(), now)
+      : await closeMove(spec.symbol, spec.date, now);
+    if (!ev.ok && onChain) {
+      // Not enough closing-hour quotes (sampler outage, or the token's price feed disappeared): hold; a market still
+      // unresolved long after its day ended can only be voided (admin key).
+      const overdue = now >= m.resolveAfterTs.toNumber() + OVERDUE_SECS;
+      log(`market #${m.id} (${metric}): cannot resolve yet — ${ev.reason}`);
+      if (ev.alert) notify("⚠️ 鏈上盤無法結算", `#${m.id} ${metric}\n${ev.reason}`, `hold:${m.id}`, 120);
+      else if (overdue) notify("⏳ 鏈上盤結算逾時", `#${m.id} ${metric} 日結束後 ${Math.round((now - m.resolveAfterTs.toNumber()) / 3600)} 小時仍未提案\n${ev.reason}\n若報價來源已消失要 void:ANCHOR_WALLET=<admin> node scripts/void-markets.mjs ${m.id}`, `overdue:${m.id}`, 360);
+      continue;
+    }
     if (!ev.ok) {
       // No usable close for the session: not published / not final / sources disagree, or the session never traded
       // (an unscheduled closure after this market was opened). In the last case the market can only be voided,
@@ -132,7 +152,7 @@ async function propose(markets, now) {
     }
     const n = m.nBuckets, thr = m.thresholds.slice(0, n - 1).map((t) => t.toNumber());
     const bucket = thr.filter((t) => ev.value >= t).length; // same rule as on-chain Market::bucket_of
-    log(`market #${m.id} (${metric}): move ${ev.value} ppm (${ev.detail.prevClose} → ${ev.detail.close}); thresholds ${thr.join("/")} → bucket ${bucket} of ${n}`);
+    log(`market #${m.id} (${metric}): move ${ev.value} ppm (${onChain ? ev.detail.baseline : ev.detail.prevClose} → ${ev.detail.close}${onChain ? `, median of ${ev.detail.samples} quotes` : ""}); thresholds ${thr.join("/")} → bucket ${bucket} of ${n}`);
     if (DRY) continue;
     const evidence = { market: publicKey.toBase58(), id: m.id.toNumber(), metric, ...ev.detail, movePpm: ev.value, source: ev.evidence.source, response: ev.evidence.response };
     const hash = createHash("sha256").update(ev.evidence.response).digest();
@@ -191,6 +211,12 @@ async function settle(markets, cfg) {
     const fresh = await program.account.market.fetch(publicKey);
     if (fresh.positionsOpen === 0 && fresh.status !== 4 && !DRY) {
       try {
+        // A mint with a transfer fee (Tessera, PreStocks) leaves the issuer's withheld fees sitting in the vault account,
+        // and Token-2022 refuses to close an account holding any; harvesting them to the mint is permissionless.
+        if (meta.transferFee && tokenProgram.equals(TOKEN_2022_PROGRAM_ID)) {
+          const hsig = await sendAndConfirmTransaction(conn, new Transaction().add(createHarvestWithheldTokensToMintInstruction(mint, [vaultPda(publicKey)], TOKEN_2022_PROGRAM_ID)), [proposer]);
+          log(`market #${m.id}: harvested withheld issuer fees to the mint ${hsig}`);
+        }
         const treasury = (await getOrCreateAssociatedTokenAccount(conn, proposer, mint, cfg.treasuryOwner, false, "confirmed", undefined, tokenProgram)).address;
         const sig = await program.methods.sweepMarket().accounts({ config: configPda, market: publicKey, vault: vaultPda(publicKey), mint, treasury, rentDest: cfg.proposer, signer: proposer.publicKey, tokenProgram }).rpc();
         log(`market #${m.id}: swept ${sig}`);

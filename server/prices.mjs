@@ -12,10 +12,13 @@ import fs from "node:fs";
 
 const SOURCE = process.env.PRICE_SOURCE ?? "yahoo";
 
-/** Metric tag "<SYMBOL>.close:<YYYY-MM-DD>" = the New York session whose close is being predicted. */
+/** Metric tag. "<SYMBOL>.close:<YYYY-MM-DD>" = the New York session whose official close is being predicted (stocks).
+ *  "<SYMBOL>.day:<YYYY-MM-DD>" = a UTC day whose on-chain close is being predicted (pre-IPO tokens, memes): the close
+ *  of a day is the median of the Jupiter quotes sampled every minute during its last hour (23:00–24:00 UTC), and the
+ *  move is measured against the previous day's close, stored on the market as its baseline (see chainMove). */
 export function parseMetric(tag) {
-  const m = tag.match(/^([A-Z]{1,5})\.close:(\d{4}-\d{2}-\d{2})$/);
-  return m ? { symbol: m[1], date: m[2] } : null;
+  const m = String(tag).match(/^([A-Za-z0-9$_\-]{1,20})\.(close|day):(\d{4}-\d{2}-\d{2})$/);
+  return m ? { symbol: m[1], kind: m[2], date: m[3] } : null;
 }
 
 /** New York calendar date (YYYY-MM-DD) of a unix timestamp. */
@@ -199,4 +202,51 @@ export async function nextSessionLive(now = Math.floor(Date.now() / 1000)) {
 export async function xstockPrices(mints) {
   const { json } = await getJson(`https://lite-api.jup.ag/price/v3?ids=${mints.join(",")}`);
   return Object.fromEntries(mints.map((m) => [m, json[m] ? { usd: json[m].usdPrice, stock: json[m].stockData?.price ?? null, multiplier: json[m].scaledUiConfig?.multiplier ?? 1 } : null]));
+}
+
+// ---------- on-chain closes (pre-IPO tokens, memes) ----------
+// sample-prices.mjs writes one line per minute to data/ticks/<UTC date>.jsonl: {"t":<unix>,"p":{"<mainnet mint>":<usd>}}.
+// Prices are handled as integers in picodollars (1e-12 $) so a meme at $0.000004 and a pre-IPO token at $1,000 both
+// keep their precision; anything above $9,000 is out of range for the double → integer step and is not listed.
+export const PICO = 1_000_000_000_000n;
+export const toPico = (usd) => BigInt(Math.round(usd * 1e12));
+export const fromPico = (p) => Number(p) / 1e12;
+/** Minimum number of one-minute samples in the closing hour before a close is trusted (60 possible). */
+export const MIN_CLOSE_SAMPLES = Number(process.env.MIN_CLOSE_SAMPLES ?? 40);
+export const utcDate = (ts) => new Date(ts * 1000).toISOString().slice(0, 10);
+export const utcMidnight = (date) => Math.floor(Date.parse(date + "T00:00:00Z") / 1000);
+
+/** The sampled quotes of `mint` in the closing hour of UTC day `date`, oldest first, plus the exact bytes they came from. */
+export function closingSamples(dataDir, mint, date) {
+  const f = `${dataDir}/ticks/${date}.jsonl`;
+  const start = utcMidnight(date) + 23 * 3600, end = utcMidnight(date) + 24 * 3600;
+  const lines = [];
+  try { for (const l of fs.readFileSync(f, "utf8").split("\n")) { if (!l) continue; const r = JSON.parse(l); if (r.t >= start && r.t < end && typeof r.p?.[mint] === "number" && r.p[mint] > 0) lines.push(l); } } catch {}
+  return { samples: lines.map((l) => { const r = JSON.parse(l); return { t: r.t, usd: r.p[mint] }; }), raw: lines.join("\n") + (lines.length ? "\n" : ""), file: f };
+}
+const median = (xs) => { const s = [...xs].sort((a, b) => a - b); const n = s.length; return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2; };
+/** Close of `mint` for UTC day `date`: median of its closing-hour samples, in USD; null until enough samples exist. */
+export function chainClose(dataDir, mint, date) {
+  const { samples, raw, file } = closingSamples(dataDir, mint, date);
+  if (samples.length < MIN_CLOSE_SAMPLES) return { ok: false, reason: `${samples.length} of ${MIN_CLOSE_SAMPLES} closing-hour samples for ${date}`, samples: samples.length };
+  return { ok: true, close: median(samples.map((s) => s.usd)), samples: samples.length, first: samples[0].t, last: samples.at(-1).t, raw, file };
+}
+/**
+ * Move of `mint` for UTC day `date` vs the baseline price (picodollars, as stored on the market), in ppm, floored.
+ * Same shape as closeMove(): ok/value/detail/evidence; the evidence is the sample lines themselves.
+ */
+export function chainMove(dataDir, mint, symbol, date, baselinePico, now = Math.floor(Date.now() / 1000)) {
+  if (now < utcMidnight(date) + 24 * 3600) return { ok: false, reason: `${date} has not ended yet (UTC)` };
+  const b = BigInt(baselinePico);
+  if (b <= 0n) return { ok: false, alert: true, reason: `market has no baseline price` };
+  const c = chainClose(dataDir, mint, date);
+  if (!c.ok) return { ok: false, reason: `not enough closing-hour quotes: ${c.reason}` };
+  const p1 = toPico(c.close);
+  const num = (p1 - b) * 1_000_000n;
+  const q = num / b, ppm = num % b !== 0n && num < 0n ? q - 1n : q; // floor division
+  return {
+    ok: true, value: Number(ppm),
+    detail: { symbol, source: "jupiter-price-v3", mint, date, baseline: fromPico(b), close: c.close, samples: c.samples, window: `${date}T23:00:00Z–${date}T24:00:00Z`, firstSample: c.first, lastSample: c.last },
+    evidence: { source: `sampled quotes ${date} 23:00–24:00 UTC (lite-api.jup.ag/price/v3, one per minute)`, response: c.raw },
+  };
 }

@@ -11,14 +11,20 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import anchor from "@coral-xyz/anchor";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
-import { getAssociatedTokenAddressSync } from "@solana/spl-token";
-import { sessions, nyDate, addDays, nextSessionLive } from "./prices.mjs";
+import { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction, createMintToInstruction, createInitializeMintInstruction, createInitializeMetadataPointerInstruction, getMintLen, ExtensionType, TYPE_SIZE, LENGTH_SIZE, TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID, MINT_SIZE } from "@solana/spl-token";
+import { createInitializeInstruction as createInitializeMetadataInstruction, pack as packMetadata } from "@solana/spl-token-metadata";
+import { Keypair, Transaction } from "@solana/web3.js";
+import { sessions, nyDate, addDays, nextSessionLive, chainClose, toPico, utcDate, utcMidnight } from "./prices.mjs";
+import { readRegistry, writeRegistry, selectedFor, asStock } from "./chain-tokens.mjs";
 
 const { BN } = anchor;
 const CLUSTER = process.env.CLUSTER ?? "devnet";
 const DATA = process.env.DATA_DIR ?? path.join(process.cwd(), "data");
 const DRY = process.env.DRY_RUN === "1";
-const tpl = JSON.parse(fs.readFileSync(process.env.STOCKS ?? new URL("./stock-templates.json", import.meta.url), "utf8"));
+const tplAll = JSON.parse(fs.readFileSync(process.env.STOCKS ?? new URL("./stock-templates.json", import.meta.url), "utf8"));
+// stocks (New York sessions) vs tokens that settle on their on-chain price (UTC days): two schedules, handled below in turn
+const tpl = { ...tplAll, stocks: tplAll.stocks.filter((s) => s.kind !== "day") };
+const preIpo = tplAll.stocks.filter((s) => s.kind === "day");
 const idl = JSON.parse(fs.readFileSync(new URL("../idl/sharepot.json", import.meta.url), "utf8"));
 const state = CLUSTER === "mainnet" ? null : JSON.parse(fs.readFileSync(process.env.STATE ?? "/root/stocklana/secrets/devnet/state.json", "utf8"));
 const mintOf = (t) => new PublicKey(CLUSTER === "mainnet" ? t.mainnetMint : state.mints[t.token]);
@@ -109,3 +115,90 @@ for (const s of tpl.stocks) for (const t of s.tokens) {
 }
 log(`opened ${opened.length}: ${opened.join(", ") || "-"}${seeded.length ? ` · prize added to ${seeded.join(", ")}` : ""}`);
 for (const x of skipped) log("skipped", x);
+
+// ---------- on-chain price markets: pre-IPO tokens every day, plus the memes selected for today ----------
+// One market per token per UTC day: opens 00:00, stops taking bets 12:00, resolves after 00:05 the next day on the
+// median of the closing-hour quotes (prices.mjs chainMove) against the previous day's close, which is written on the
+// market as its baseline. No previous close (a token selected last night whose closing hour was not sampled, or a
+// sampler outage) → the market is not opened; there is nothing to measure against.
+{
+  const D = utcDate(now), lock = utcMidnight(D) + 12 * 3600;
+  const reg = readRegistry(DATA);
+  const memes = selectedFor(reg, D).map((t) => asStock(t.mainnetMint, t, CLUSTER));
+  const chainStocks = [...preIpo, ...memes];
+  const copened = [], cskipped = [];
+  const faucetPk = state?.faucet ? new PublicKey(state.faucet) : null;
+  /** Devnet stand-in for a meme: same decimals and token program as the real mint (plus name/symbol metadata on
+   *  Token-2022), minted by the proposer, which also stocks the faucet and keeps a seed supply. Recorded in the registry. */
+  async function createMock(mainnetMint, t) {
+    const kp = Keypair.generate(), mint = kp.publicKey, decimals = t.decimals;
+    const t22 = t.tokenProgram === TOKEN_2022_PROGRAM_ID.toBase58();
+    const prog = t22 ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+    const tx = new Transaction();
+    if (t22) {
+      const name = `${t.name} (devnet mock)`.slice(0, 32), symbol = t.symbol.slice(0, 10), uri = "";
+      const mintLen = getMintLen([ExtensionType.MetadataPointer]);
+      const metaLen = TYPE_SIZE + LENGTH_SIZE + packMetadata({ mint, name, symbol, uri, updateAuthority: signer, additionalMetadata: [] }).length;
+      tx.add(SystemProgram.createAccount({ fromPubkey: signer, newAccountPubkey: mint, space: mintLen, lamports: await conn.getMinimumBalanceForRentExemption(mintLen + metaLen), programId: prog }),
+        createInitializeMetadataPointerInstruction(mint, signer, mint, prog),
+        createInitializeMintInstruction(mint, decimals, signer, null, prog),
+        createInitializeMetadataInstruction({ programId: prog, metadata: mint, updateAuthority: signer, mint, mintAuthority: signer, name, symbol, uri }));
+    } else {
+      tx.add(SystemProgram.createAccount({ fromPubkey: signer, newAccountPubkey: mint, space: MINT_SIZE, lamports: await conn.getMinimumBalanceForRentExemption(MINT_SIZE), programId: prog }),
+        createInitializeMintInstruction(mint, decimals, signer, null, prog));
+    }
+    const unit = 10n ** BigInt(decimals);
+    const mine = getAssociatedTokenAddressSync(mint, signer, false, prog);
+    tx.add(createAssociatedTokenAccountIdempotentInstruction(signer, mine, signer, mint, prog), createMintToInstruction(mint, mine, signer, BigInt(Math.round((t.seedUi ?? 1) * 400)) * unit, [], prog));
+    if (faucetPk) {
+      const fa = getAssociatedTokenAddressSync(mint, faucetPk, false, prog);
+      tx.add(createAssociatedTokenAccountIdempotentInstruction(signer, fa, faucetPk, mint, prog), createMintToInstruction(mint, fa, signer, BigInt(Math.round((t.faucetUi ?? 1) * 5000)) * unit, [], prog));
+    }
+    await withRetry(() => provider.sendAndConfirm(tx, [kp]));
+    reg.tokens[mainnetMint].mock = mint.toBase58(); writeRegistry(DATA, reg);
+    log(`created devnet mock ${t.symbol} ${mint.toBase58()} (${t22 ? "Token-2022" : "SPL"}, ${decimals} decimals); faucet stocked`);
+    return mint;
+  }
+  for (const s of chainStocks) for (const t of s.tokens) {
+    const metric = `${s.symbol}.day:${D}`;
+    try {
+      if (now >= lock) { cskipped.push(`${metric}: past today's 12:00 UTC lock`); continue; }
+      let mint = CLUSTER === "mainnet" ? new PublicKey(t.mainnetMint) : t.mint ? new PublicKey(t.mint) : state?.mints?.[t.token] ? new PublicKey(state.mints[t.token]) : null;
+      if (!mint && CLUSTER !== "mainnet" && s.category === "memes") { if (DRY) { cskipped.push(`${metric}: would create a devnet mock first`); continue; } mint = await createMock(t.mainnetMint, { ...t, name: s.name, symbol: s.symbol }); }
+      if (!mint) { cskipped.push(`${metric}: no mint on ${CLUSTER}`); continue; }
+      const seedAmount = Math.round(seedShares(t) * 10 ** t.decimals);
+      const have = existing.get(`${metric}|${mint.toBase58()}`);
+      if (have) {
+        const m = have.account;
+        if (m.status === 0 && now < m.closeTs.toNumber() && m.seedAmount.isZero() && seedAmount > 0 && !DRY) {
+          const tokenProgram = (await withRetry(() => conn.getAccountInfo(mint))).owner;
+          await withRetry(() => seedIx(have.publicKey, m.vault, mint, tokenProgram, seedAmount).rpc());
+          seeded.push(`#${m.id} ${t.token}`);
+        } else cskipped.push(`${metric}: already open`);
+        continue;
+      }
+      const prevClose = chainClose(DATA, t.mainnetMint, addDays(D, -1));
+      if (!prevClose.ok) { cskipped.push(`${metric}: no baseline — ${prevClose.reason}`); continue; }
+      const tokenProgram = (await withRetry(() => conn.getAccountInfo(mint))).owner;
+      const thresholds = s.thresholdsBps.map((b) => b * 100);
+      const id = (await withRetry(() => program.account.config.fetch(configPda))).marketCount;
+      const [market] = PublicKey.findProgramAddressSync([Buffer.from("market"), id.toArrayLike(Buffer, "le", 8)], program.programId);
+      const [vault] = PublicKey.findProgramAddressSync([Buffer.from("vault"), market.toBuffer()], program.programId);
+      const question = `${s.symbol} on ${D} (UTC): on-chain close vs the previous day's close — which range? (staked in ${t.token})`;
+      const args = {
+        metric: Array.from(Buffer.from(metric.padEnd(32, "\0").slice(0, 32))), questionHash: Array.from(createHash("sha256").update(question).digest()),
+        thresholds: Array.from({ length: 7 }, (_, i) => new BN(thresholds[i] ?? 0)), nBuckets: thresholds.length + 1,
+        openTs: new BN(utcMidnight(D)), closeTs: new BN(lock), resolveAfterTs: new BN(utcMidnight(D) + 86400 + 300), baseline: new BN(toPico(prevClose.close).toString()),
+      };
+      log(`${DRY ? "would open" : "opening"} #${id} ${metric} in ${t.token} (${t.issuer}) thresholds ${s.thresholdsBps.join("/")} bps, baseline $${prevClose.close} (${prevClose.samples} samples), seed ${seedShares(t)} ${t.token}`);
+      if (DRY) { copened.push(`${metric}`); continue; }
+      await withRetry(() => program.methods.createMarket(args).accounts({ config: configPda, market, vault, mint, signer, tokenProgram, systemProgram: SystemProgram.programId }).rpc());
+      if (seedAmount > 0) await withRetry(() => seedIx(market, vault, mint, tokenProgram, seedAmount).rpc());
+      fs.appendFileSync(path.join(DATA, "markets-opened.jsonl"), JSON.stringify({ at: new Date().toISOString(), id: id.toNumber(), market: market.toBase58(), metric, symbol: s.symbol, category: s.category, token: t.token, issuer: t.issuer, mint: mint.toBase58(), mainnetMint: t.mainnetMint, day: D, question, thresholdsBps: s.thresholdsBps, baseline: prevClose.close, openTs: utcMidnight(D), closeTs: lock, resolveAfterTs: utcMidnight(D) + 86400 + 300, seed: seedShares(t) }) + "\n");
+      copened.push(`#${id} ${metric}`);
+    } catch (e) { cskipped.push(`${metric}: failed: ${String(e?.message ?? e).split("\n")[0].slice(0, 160)}`); }
+    await sleep(700);
+  }
+  log(`on-chain price markets for ${D}: opened ${copened.length}: ${copened.join(", ") || "-"}`);
+  for (const x of cskipped) log("skipped", x);
+}

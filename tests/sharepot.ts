@@ -7,7 +7,7 @@ import {
   createInitializeDefaultAccountStateInstruction, createInitializeScaledUiAmountConfigInstruction, createInitializePausableConfigInstruction,
   createInitializeTransferHookInstruction, createPauseInstruction, createResumeInstruction, createUpdateMultiplierDataInstruction,
   getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction, createMintToInstruction,
-  createInitializeTransferFeeConfigInstruction,
+  createInitializeTransferFeeConfigInstruction, createHarvestWithheldTokensToMintInstruction,
 } from "@solana/spl-token";
 import { assert } from "chai";
 import { Sharepot } from "../target/types/sharepot";
@@ -299,7 +299,7 @@ describe("sharepot: parimutuel pools staked in tokenized stocks", () => {
     await sweep(k, dave);
   });
 
-  it("refuses stock tokens with a transfer fee (PreStocks-style) or an active transfer hook", async () => {
+  it("transfer-fee mints (Tessera / PreStocks-style): pools book what the vault received; harvest, then sweep", async () => {
     const mintWith = async (ix: (mint: PublicKey) => any, ext: ExtensionType) => {
       const kp = Keypair.generate(); const len = getMintLen([ext]);
       await provider.sendAndConfirm(new Transaction().add(
@@ -307,11 +307,39 @@ describe("sharepot: parimutuel pools staked in tokenized stocks", () => {
         ix(kp.publicKey), createInitializeMintInstruction(kp.publicKey, 9, issuer.publicKey, issuer.publicKey, T22)), [kp]);
       return { mint: kp.publicKey, prog: T22, ata: {} } as Stock;
     };
-    const fee = await mintWith((m) => createInitializeTransferFeeConfigInstruction(m, issuer.publicKey, issuer.publicKey, 50, BigInt(1e12), T22), ExtensionType.TransferFeeConfig);
-    await expectErr(createMarket(fee, -1, 60), "UnsupportedMint");
+    // 50 bps like PreStocks (Tessera charges 20). Minting to a wallet carries no fee, transfers do.
+    const feeMint = await mintWith((m) => createInitializeTransferFeeConfigInstruction(m, issuer.publicKey, issuer.publicKey, 50, BigInt(1e12), T22), ExtensionType.TransferFeeConfig);
+    const fee = await fund(feeMint.mint, T22, issuer);
+    const feeOn = (x: number) => Math.ceil((x * 50) / 10000);
+    const k = await createMarket(fee, -1, 8);
+    await bet(k, alice, "up", 1000 * T); await bet(k, bob, "down", 1000 * T);
+    const credited = 1000 * T - feeOn(1000 * T);
+    let mk = await program.account.market.fetch(k.m);
+    assert.equal(mk.pools[1].toNumber(), credited, "pool = what the vault received, not what was sent");
+    assert.equal(mk.pools[0].toNumber(), credited);
+    assert.equal((await program.account.position.fetch(posPda(k.m, alice.publicKey))).amounts[1].toNumber(), credited);
+    assert.equal(await bal(fee, k.v), 2 * credited, "vault balance equals the pools exactly");
+    await sleep(9500);
+    await propose(k, 42); await finalize(k);
+    const a0 = await bal(fee, fee.ata.alice);
+    const bpsLocked = await lockedBps(k.m, alice, 1, credited);
+    await settle(k, alice, dave); await settle(k, bob, dave);
+    // alice is paid stake + losing pool − her locked fee rate on the losing pool; the issuer takes its 50 bps on the way out
+    const gross = credited + credited - Math.floor((credited * bpsLocked) / 10000);
+    assert.equal((await bal(fee, fee.ata.alice)) - a0, gross - feeOn(gross));
+    mk = await program.account.market.fetch(k.m);
+    const remaining = await bal(fee, k.v);
+    assert.equal(remaining, mk.feeCollected.toNumber(), "only the protocol fee is left in the vault");
+    // the vault holds withheld issuer fees from the bets; Token-2022 refuses to close it until they are harvested
+    await expectErr(sweep(k, dave, getAssociatedTokenAddressSync(fee.mint, admin.publicKey, false, T22)), "withheld");
+    await provider.sendAndConfirm(new Transaction().add(createHarvestWithheldTokensToMintInstruction(fee.mint, [k.v], T22)));
+    const t0 = await bal(fee, fee.ata.admin);
+    await sweep(k, dave, fee.ata.admin);
+    assert.equal((await bal(fee, fee.ata.admin)) - t0, remaining - feeOn(remaining));
+    await expectErr(getAccount(conn, k.v, undefined, T22) as any, "TokenAccountNotFoundError");
+    // an active transfer hook is still refused; an Ondo-style empty hook slot is fine
     const hooked = await mintWith((m) => createInitializeTransferHookInstruction(m, issuer.publicKey, Keypair.generate().publicKey, T22), ExtensionType.TransferHook);
     await expectErr(createMarket(hooked, -1, 60), "UnsupportedMint");
-    // an Ondo-style mint (9 decimals, hook slot empty, no permanent delegate) is fine
     const ondo = await mintWith((m) => createInitializeTransferHookInstruction(m, issuer.publicKey, PublicKey.default, T22), ExtensionType.TransferHook);
     await createMarket(ondo, -1, 60);
   });

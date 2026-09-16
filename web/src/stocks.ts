@@ -6,8 +6,14 @@
 import type { MarketView } from "./chain";
 import { API_BASE } from "./config";
 
-type TokenInfo = { token: string; issuer: string; decimals: number; symbol: string; name: string };
+type TokenInfo = { token: string; issuer: string; decimals: number; symbol: string; name: string; faucetUi?: number; mainnetMint?: string };
+export type Category = "stocks" | "preipo" | "memes";
+export const CATEGORIES: [Category, string][] = [["stocks", "Stocks"], ["preipo", "Pre-IPO"], ["memes", "Memes"]];
+export const CATEGORY_NAME: Record<string, string> = Object.fromEntries(CATEGORIES);
 export const STOCK_NAMES: Record<string, string> = { SPCX: "SpaceX", TSLA: "Tesla", NVDA: "NVIDIA", SPY: "S&P 500 ETF" };
+/** Per listed symbol: which category it belongs to, how it settles ("close" = official close, "day" = on-chain price
+ *  over a UTC day), whether it currently has a daily pool, and the issuer's mark-price key for pre-IPO tokens. */
+export const STOCK_META: Record<string, { category: Category; kind: "close" | "day"; active: boolean; icon: string | null; mark: string | null; thresholdsBps: number[] }> = {};
 export let STOCK_ORDER = Object.keys(STOCK_NAMES);
 const byMint = new Map<string, TokenInfo>();
 const tokensByStock = new Map<string, TokenInfo[]>();
@@ -22,6 +28,7 @@ export async function loadStocks() {
     STOCK_ORDER = j.stocks.map((s: any) => s.symbol);
     for (const s of j.stocks) {
       STOCK_NAMES[s.symbol] = s.name;
+      STOCK_META[s.symbol] = { category: s.category ?? "stocks", kind: s.kind ?? "close", active: s.active !== false, icon: s.icon ?? null, mark: s.mark ?? null, thresholdsBps: s.thresholdsBps ?? [] };
       const list = s.tokens.filter((t: any) => t.mint).map((t: any) => ({ ...t, symbol: s.symbol, name: s.name }));
       tokensByStock.set(s.symbol, list);
       for (const t of list) byMint.set(t.mint, t);
@@ -30,18 +37,21 @@ export async function loadStocks() {
 }
 export const tokensOf = (symbol: string) => tokensByStock.get(symbol) ?? [];
 export const tokenInfo = (m: MarketView) => byMint.get(m.mint.toBase58());
+/** "<SYMBOL>.close:<date>" = official close of a New York session; "<SYMBOL>.day:<date>" = on-chain close of a UTC day. */
 export function parseMetric(tag: string) {
-  const m = tag.match(/^([A-Z]{1,5})\.close:(\d{4}-\d{2}-\d{2})$/);
-  return m ? { symbol: m[1], date: m[2] } : null;
+  const m = tag.match(/^([A-Za-z0-9$_\-]{1,20})\.(close|day):(\d{4}-\d{2}-\d{2})$/);
+  return m ? { symbol: m[1], kind: m[2] as "close" | "day", date: m[3] } : null;
 }
 export const symbolOf = (m: MarketView) => parseMetric(m.metric)?.symbol ?? "?";
+export const kindOf = (m: MarketView) => parseMetric(m.metric)?.kind ?? "close";
+export const categoryOf = (symbol: string): Category => STOCK_META[symbol]?.category ?? "stocks";
 export const stockName = (m: MarketView) => STOCK_NAMES[symbolOf(m)] ?? symbolOf(m);
 export const tokenSymbol = (m: MarketView) => tokenInfo(m)?.token ?? "shares";
 export const issuerOf = (m: MarketView) => tokenInfo(m)?.issuer ?? "";
 export const sessionLabel = (date: string) => new Date(date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
 export function question(m: MarketView) {
   const p = parseMetric(m.metric); if (!p) return m.metric;
-  return `Where does ${p.symbol} close on ${sessionLabel(p.date)}?`;
+  return p.kind === "day" ? `Where does ${p.symbol} close on ${sessionLabel(p.date)} (UTC)?` : `Where does ${p.symbol} close on ${sessionLabel(p.date)}?`;
 }
 
 /** A move in ppm as a signed percentage, floored to whole basis points. Thresholds are whole basis points, so the
@@ -59,9 +69,11 @@ export function bucketLabel(m: MarketView, i: number) {
   if (i === n - 1) return `≥ ${fmtThr(t[n - 2])}`;
   return `${fmtThr(t[i - 1])} to ${fmtThr(t[i])}`;
 }
-/** Plain-words name for the common 4-range layout (middle cut at 0). */
+/** Plain-words name for the common layouts: four ranges with the middle cut at 0 (stocks), or three ranges cut
+ *  symmetrically around 0 (on-chain price markets: down / flat / up; memes say dump / flat / pump). */
 export function bucketName(m: MarketView, i: number) {
   if (m.nBuckets === 4 && m.thresholds[1] === 0) return ["Big drop", "Small drop", "Small gain", "Big gain"][i];
+  if (m.nBuckets === 3 && m.thresholds[0] < 0 && m.thresholds[1] > 0) return (categoryOf(symbolOf(m)) === "memes" ? ["Dump", "Flat", "Pump"] : ["Down", "Flat", "Up"])[i];
   return "";
 }
 
@@ -74,7 +86,7 @@ export const toRaw = (m: MarketView, ui: number) => Math.floor(((ui || 0) / (m.m
 export const fmtAmt = (m: MarketView, raw: number, digits = 4) => uiAmount(m, raw).toLocaleString("en-US", { maximumFractionDigits: digits });
 
 // Live token prices from the API (Jupiter), keyed by token symbol; used only for a dollar estimate next to share counts.
-let prices: Record<string, { usd: number; stock: number | null } | null> = {};
+let prices: Record<string, { usd: number; stock: number | null; mark?: number | null } | null> = {};
 let pricesFromBoot = !!boot?.prices;
 if (pricesFromBoot) prices = boot.prices;
 export async function loadPrices() {
@@ -89,4 +101,6 @@ export function usdOf(m: MarketView, raw: number) {
 }
 /** Dollar price of one share of this market's token (Jupiter, mainnet token), or null when unknown. */
 export const priceOf = (m: MarketView) => prices[tokenSymbol(m)]?.usd ?? null;
+/** The issuer's official mark price of a pre-IPO token (Tessera / PreStocks), or null. */
+export const markOf = (m: MarketView) => prices[tokenSymbol(m)]?.mark ?? null;
 export const fmtUsd = (v: number) => "$" + (v >= 1e6 ? (v / 1e6).toFixed(1) + "m" : v >= 1e4 ? (v / 1e3).toFixed(1) + "k" : v.toLocaleString("en-US", { maximumFractionDigits: v < 100 ? 2 : 0 }));

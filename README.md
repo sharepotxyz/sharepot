@@ -12,8 +12,8 @@ TSLAon, NVDAon, SPYon). Holders put their shares to work without selling them:
 Built for the Solana Foundation **Stocklana** hackathon (September 2026).
 
 **Try it (devnet): <https://devnet.sharepot.xyz>** — connect Phantom / Solflare / Backpack set to devnet, or use the built-in
-browser test wallet, then press "Get test stocks": every wallet gets 2 mock shares of each listed token plus a little
-SOL for fees. A new pool opens for every token at each US opening bell.
+browser test wallet, then press "Get test tokens": every wallet gets mock tokens of every pool open today plus a little
+SOL for fees. A new stock pool opens for every token at each US opening bell; pre-IPO and meme pools open at 00:00 UTC.
 
 ## How a market works
 
@@ -144,15 +144,36 @@ xStocks are Token-2022 mints with several extensions. The program and the tests 
 * **One mint per market.** Each market records its stock mint; bets, payouts and fee sweeps must use that mint and the
   matching token accounts (wrong mint, wrong wallet or wrong treasury account are rejected).
 * **Extension-aware vaults.** Vault accounts are sized for whatever account extensions the mint requires.
-* **Only tokens that arrive in full.** Pools are booked at the amount sent, so `create_market` refuses mints with a
-  transfer fee (some pre-IPO tokens on Solana carry one) or an active transfer hook. xStocks, Ondo Global Markets and
-  Backpack Securities tokens all pass; the program itself is issuer-agnostic.
+* **Booked at what arrives.** `place_bet` and `seed_market` record the vault's balance change, not the amount sent,
+  so mints with a transfer fee (Tessera, PreStocks) run pools that never exceed their vault. Only an active transfer
+  hook is refused at `create_market`. xStocks, Ondo Global Markets and Backpack Securities tokens carry neither; the
+  program itself is issuer-agnostic.
 * **Dividends and splits.** All accounting is in raw units, so a `ScaledUiAmount` multiplier change scales every pool,
   stake and payout alike (tested mid-market).
 * **Issuer controls, disclosed.** The issuer holds a permanent delegate, a pause switch and an (empty) transfer-hook
   slot on every xStock. It can move or freeze tokens in any account, these vaults included; while a mint is paused no
   bet, payout or sweep for it can move. The tests pause and resume a mint mid-market and show that everything settles
   correctly afterwards. The site states this on every page.
+
+## Pre-IPO tokens and memes: the same pool, an on-chain close
+
+Two more token classes run on the same program. There is no exchange for them, so **a day's close is read on-chain**:
+
+* **Pre-IPO**: T-OpenAI and T-Kalshi (Tessera) and OpenAI (PreStocks), one pool per token per UTC day. The issuers'
+  mark price (from private-market data) moves rarely and is shown for context; the pool settles on the on-chain price.
+* **Memes**: `server/select-chain.mjs` runs at 23:00 UTC and picks the ten Solana tokens with the most 24-hour traded
+  volume (Jupiter's top-traded list) for the next day, subject to filters: mint and freeze authority given up, liquidity
+  ≥ $500k, first pool ≥ 3 days old, no wrapped/bridged assets, no tokenized stocks, DeFi or "strict"-list tokens.
+  They are recorded in `data/chain-tokens.json`; on devnet the opener mints a mock per token and stocks the faucet.
+* **Close** = median of one Jupiter quote per minute during the day's last hour (23:00–24:00 UTC), sampled by
+  `server/sample-prices.mjs` into `data/ticks/<date>.jsonl`. Metric tag `<SYMBOL>.day:<date>`; the previous day's close
+  is written on the market as its baseline (picodollars). Fewer than 40 usable quotes voids the day (full refund).
+* **Three ranges** (down / flat / up) cut at ± the token's median absolute daily move over 60 days (GeckoTerminal);
+  betting 00:00–12:00 UTC, resolution after 00:05 the next day, same dispute window and crank as the stock pools.
+* **Transfer fees.** Tessera (0.2 %) and PreStocks (0.5 %) mints charge on every transfer. `place_bet` and `seed_market`
+  book what the vault actually received (balance before/after the transfer), so the pools never exceed the vault and a
+  payout simply lands net of the issuer's fee. Before a fee-mint vault is closed the crank harvests the withheld fees to
+  the mint (`HarvestWithheldTokensToMint`, permissionless); Token-2022 refuses to close an account holding any.
 
 ## Layout
 

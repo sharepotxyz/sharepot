@@ -2,7 +2,7 @@ import { PublicKey } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { API_BASE, CLUSTER, IS_TEST } from "./config";
 import { STATUS, connection, type MarketView } from "./chain";
-import { STOCK_NAMES, STOCK_ORDER, issuerOf, priceOf, symbolOf, tokenSymbol, uiAmount } from "./stocks";
+import { CATEGORIES, STOCK_NAMES, STOCK_ORDER, issuerOf, priceOf, symbolOf, tokenSymbol, uiAmount } from "./stocks";
 import { connectWallet, devWallet, listWallets, type Session } from "./wallet";
 
 /** HTML-escape anything that did not originate in our own source. */
@@ -73,13 +73,14 @@ function mountNavMenu() {
   btn.onclick = (e) => { e.stopPropagation(); navOpen = !navOpen; render(); };
   document.addEventListener("click", () => { if (navOpen) { navOpen = false; render(); } });
 }
-/** Stock tabs under the top bar. On the home page they filter in place; elsewhere they link home with the filter set. */
+/** Category tabs under the top bar (Stocks · Pre-IPO · Memes). On the home page they filter in place; elsewhere they
+ *  link home with the category set. The stock picker within a category lives in the home page's filter row. */
 export function renderCatnav(active: string) {
   const el = document.getElementById("catnav"); if (!el) return;
-  const items = [["all", "All markets"], ...STOCK_ORDER.map((s) => [s, STOCK_NAMES[s] ?? s])];
+  const items: [string, string][] = [["all", "All markets"], ...CATEGORIES];
   el.innerHTML = items.map(([k, label]) => topOpts.onStock
     ? `<button data-s="${esc(k)}" class="${active === k ? "on" : ""}">${esc(label)}</button>`
-    : `<a href="/${k === "all" ? "" : "?stock=" + encodeURIComponent(k)}" class="${active === k ? "on" : ""}">${esc(label)}</a>`).join("");
+    : `<a href="/${k === "all" ? "" : "?cat=" + encodeURIComponent(k)}" class="${active === k ? "on" : ""}">${esc(label)}</a>`).join("");
   if (topOpts.onStock) el.querySelectorAll<HTMLButtonElement>("button[data-s]").forEach((b) => (b.onclick = () => topOpts.onStock!(b.dataset.s!)));
 }
 

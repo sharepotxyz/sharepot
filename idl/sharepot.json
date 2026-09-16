@@ -1039,7 +1039,7 @@
     {
       "code": 6017,
       "name": "UnsupportedMint",
-      "msg": "stock token not supported: it charges a transfer fee or has an active transfer hook"
+      "msg": "token not supported: it has an active transfer hook"
     }
   ],
   "types": [

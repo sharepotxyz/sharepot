@@ -17,7 +17,7 @@ import {
   createInitializeMintInstruction, createInitializeMetadataPointerInstruction, createInitializePermanentDelegateInstruction,
   createInitializeDefaultAccountStateInstruction, createInitializeScaledUiAmountConfigInstruction, createInitializePausableConfigInstruction,
   createInitializeTransferHookInstruction, getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction, createMintToInstruction,
-  createTransferCheckedInstruction,
+  createTransferCheckedInstruction, createInitializeTransferFeeConfigInstruction,
 } from "@solana/spl-token";
 import { createInitializeInstruction, pack } from "@solana/spl-token-metadata";
 import * as fs from "fs";
@@ -31,7 +31,9 @@ const SUPPLY_SHARES = 1_000_000n, FAUCET_SHARES = 100_000n;
 const tokens = templates.stocks.flatMap((s) => s.tokens.map((t) => ({ ...t, stock: s })));
 const unit = (decimals: number) => 10n ** BigInt(decimals);
 const mockName = (t: (typeof tokens)[number]) =>
-  (t.issuer === "xStocks" ? `${t.stock.name} xStock` : t.issuer === "Ondo" ? `${t.stock.name} (Ondo Tokenized)` : `${t.stock.name} - Backpack Securities`) + " (devnet mock)";
+  (t.issuer === "xStocks" ? `${t.stock.name} xStock` : t.issuer === "Ondo" ? `${t.stock.name} (Ondo Tokenized)` : t.issuer === "Tessera" ? `T-${t.stock.name}` : t.issuer === "PreStocks" ? `${t.stock.name} PreStocks` : `${t.stock.name} - Backpack Securities`) + " (devnet mock)";
+// Transfer fee the real mints charge (checked on mainnet 2026-09-16): Tessera 20 bps, PreStocks 50 bps, no maximum.
+const feeBps = (profile: string) => (profile === "tessera" ? 20 : profile === "prestocks" ? 50 : 0);
 const loadOrCreateKeypair = (file: string) => {
   const p = path.join(SECRETS, file);
   if (fs.existsSync(p)) return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(p, "utf8"))));
@@ -59,19 +61,29 @@ async function main() {
     else {
       const kp = Keypair.generate(); mint = kp.publicKey;
       const name = mockName(t), symbol = t.token, uri = "";
-      const exts = [ExtensionType.MetadataPointer, ExtensionType.DefaultAccountState, ExtensionType.ScaledUiAmountConfig, ExtensionType.PausableConfig, ExtensionType.TransferHook];
-      if (t.profile !== "ondo") exts.push(ExtensionType.PermanentDelegate);
+      // Extension sets per issuer profile (mainnet, 2026-09-14/16):
+      //   xstocks / backpack: metadata, permanent delegate, default state, scaled UI amount, pausable, empty hook
+      //   ondo:               the same without the permanent delegate
+      //   tessera:            metadata + transfer fee 20 bps (T-OpenAI, T-Kalshi)
+      //   prestocks:          metadata, permanent delegate, default state, scaled UI amount, pausable, transfer fee 50 bps
+      const tessera = t.profile === "tessera", pre = t.profile === "prestocks";
+      const exts = [ExtensionType.MetadataPointer];
+      if (!tessera) exts.push(ExtensionType.DefaultAccountState, ExtensionType.ScaledUiAmountConfig, ExtensionType.PausableConfig);
+      if (!tessera && !pre) exts.push(ExtensionType.TransferHook);
+      if (t.profile !== "ondo" && !tessera) exts.push(ExtensionType.PermanentDelegate);
+      if (feeBps(t.profile)) exts.push(ExtensionType.TransferFeeConfig);
       const mintLen = getMintLen(exts);
       const metaLen = TYPE_SIZE + LENGTH_SIZE + pack({ mint, name, symbol, uri, updateAuthority: admin.publicKey, additionalMetadata: [] }).length;
       const tx = new Transaction().add(
         SystemProgram.createAccount({ fromPubkey: admin.publicKey, newAccountPubkey: mint, space: mintLen, lamports: await conn.getMinimumBalanceForRentExemption(mintLen + metaLen), programId: T22 }),
         createInitializeMetadataPointerInstruction(mint, admin.publicKey, mint, T22));
-      if (t.profile !== "ondo") tx.add(createInitializePermanentDelegateInstruction(mint, admin.publicKey, T22));
+      if (exts.includes(ExtensionType.PermanentDelegate)) tx.add(createInitializePermanentDelegateInstruction(mint, admin.publicKey, T22));
+      if (exts.includes(ExtensionType.TransferFeeConfig)) tx.add(createInitializeTransferFeeConfigInstruction(mint, admin.publicKey, admin.publicKey, feeBps(t.profile), BigInt("18446744073709551615"), T22));
+      if (exts.includes(ExtensionType.DefaultAccountState)) tx.add(createInitializeDefaultAccountStateInstruction(mint, AccountState.Initialized, T22));
+      if (exts.includes(ExtensionType.ScaledUiAmountConfig)) tx.add(createInitializeScaledUiAmountConfigInstruction(mint, admin.publicKey, 1, T22));
+      if (exts.includes(ExtensionType.PausableConfig)) tx.add(createInitializePausableConfigInstruction(mint, admin.publicKey, T22));
+      if (exts.includes(ExtensionType.TransferHook)) tx.add(createInitializeTransferHookInstruction(mint, admin.publicKey, PublicKey.default, T22));
       tx.add(
-        createInitializeDefaultAccountStateInstruction(mint, AccountState.Initialized, T22),
-        createInitializeScaledUiAmountConfigInstruction(mint, admin.publicKey, 1, T22),
-        createInitializePausableConfigInstruction(mint, admin.publicKey, T22),
-        createInitializeTransferHookInstruction(mint, admin.publicKey, PublicKey.default, T22),
         createInitializeMintInstruction(mint, t.decimals, admin.publicKey, admin.publicKey, T22),
         createInitializeInstruction({ programId: T22, metadata: mint, updateAuthority: admin.publicKey, mint, mintAuthority: admin.publicKey, name, symbol, uri }));
       await provider.sendAndConfirm(tx, [kp]);
