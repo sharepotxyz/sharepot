@@ -85,20 +85,13 @@ Markets do not need them.
 
 Every settled market scores the wallets that were in it:
 
-    points = your stake in dollars × that market's player pot in dollars
+    points = shares staked × the official close the market settled on
 
-Dollars rather than share counts, because SPYx is worth roughly four times NVDAx and scoring raw shares would make the
-cheapest token the best place to farm. The house seed is excluded. Stakes score whether they won or lost — points pay
-for making the pool deep, which is what a parimutuel actually needs, and profit is already its own reward.
-
-Both figures are frozen into the settlement record at payout time (`server/resolve.mjs`), so a score never moves
-afterwards; `server/points.mjs` only adds up what the crank wrote. The board is at `/leaderboard.html`, backed by
-`GET /api/leaderboard?window=7d|30d|all`.
-
-Points are stake × pot, so one person cycling their own money through both sides of a market scores well. That is not
-treated as abuse: on the ledger it is the same event as two players taking opposite ranges — the same fee is paid, the
-same pool depth is created. It does concentrate the board, though, because a self-dealing pair owns both factors of
-the product, so `scripts/points-audit.mjs` reports what share of all points such pairs hold. It bans nobody.
+That is what the stake was worth, in dollars, at settlement. Every range you bet counts, won or lost: one share on
+each of the four ranges of a $212 close is 848 points, and only one of them can pay. The close is the one in the
+evidence file the result was derived from, so NVDAx and NVDAon score alike and no token quote is involved. It is
+frozen into the settlement record at payout time (`server/resolve.mjs`); `server/points.mjs` only adds up what the
+crank wrote. The board is at `/leaderboard.html`, backed by `GET /api/leaderboard?window=7d|30d|all`.
 
 ## Why you can trust the settlement
 

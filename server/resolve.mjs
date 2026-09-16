@@ -77,22 +77,26 @@ function payoutFor(m, p) {
 const SETTLEMENTS = path.join(DATA, "settlements.jsonl");
 
 // ---------- what a settled market was worth ----------
-// Leaderboard points are stake × pot in dollars (server/points.mjs), so both figures have to be frozen at settlement:
-// the pools as they finally stood, and the dollar price of one share at that moment. Looking the price up later would
-// silently re-score old markets every time the stock moves.
+// Leaderboard points are shares staked × the official close the market settled on (server/points.mjs), so the close
+// is frozen into every settlement row. It is read from the evidence file the proposer published for this market — the
+// same number the result was derived from — so NVDAx and NVDAon score identically and nothing depends on a token quote.
+// A voided market has no evidence (the session never traded); those rows fall back to the token's live price and are
+// flagged as such.
 const tpl = JSON.parse(fs.readFileSync(process.env.STOCKS ?? new URL("./stock-templates.json", import.meta.url), "utf8"));
 const mockState = CLUSTER === "mainnet" ? { mints: {} } : JSON.parse(fs.readFileSync(process.env.STATE ?? path.join(SECRETS, "state.json"), "utf8"));
 const tokenByMint = new Map(tpl.stocks.flatMap((s) => s.tokens.map((t) => {
   const mint = CLUSTER === "mainnet" ? t.mainnetMint : mockState.mints[t.token];
   return mint ? [mint, { ...t, symbol: s.symbol }] : null;
 }).filter(Boolean)));
-// Jupiter prices of the real tokens (devnet mocks borrow their mainnet twin's price), read once per run.
+function officialClose(id) {
+  try { const c = JSON.parse(fs.readFileSync(path.join(DATA, "evidence", `${id}.json`), "utf8")).close; return Number.isFinite(c) && c > 0 ? c : null; } catch { return null; }
+}
 let priceByMint = null;
-async function usdPerShare(mint) {
+async function livePrice(mint) {
   const t = tokenByMint.get(mint.toBase58()); if (!t) return null;
   if (!priceByMint) {
     try { priceByMint = await xstockPrices([...tokenByMint.values()].map((x) => x.mainnetMint)); }
-    catch (e) { log(`price lookup failed (${String(e?.message ?? e).slice(0, 80)}) — settlements recorded without a dollar price`); priceByMint = {}; }
+    catch (e) { log(`price lookup failed (${String(e?.message ?? e).slice(0, 80)}) — settlement recorded without a dollar price`); priceByMint = {}; }
   }
   return priceByMint[t.mainnetMint]?.usd ?? null;
 }
@@ -171,7 +175,8 @@ async function settle(markets, cfg) {
    try {
     const mint = m.mint, tokenProgram = await tokenProgramOf(mint);
     // Frozen at settlement so the leaderboard can be recomputed from this log alone (see usdPerShare above).
-    const meta = await metaOf(mint), usd = await usdPerShare(mint), token = tokenByMint.get(mint.toBase58())?.token ?? null;
+    const meta = await metaOf(mint), token = tokenByMint.get(mint.toBase58())?.token ?? null;
+    const close = officialClose(m.id.toNumber()), usd = close ?? await livePrice(mint), priceSource = close ? "close" : usd ? "token" : null;
     if (m.positionsOpen > 0) {
       // positions of this market: memcmp on the market pubkey (offset 8 = after discriminator)
       const positions = await program.account.position.all([{ memcmp: { offset: 8, bytes: publicKey.toBase58() } }]);
@@ -185,7 +190,7 @@ async function settle(markets, cfg) {
           const { payout, fee, kind } = payoutFor(fresh, p);
           const sig = await program.methods.settlePosition().accounts({ market: publicKey, position: ppk, payer: p.payer, vault: vaultPda(publicKey), mint, ownerToken, cranker: proposer.publicKey, tokenProgram }).rpc();
           fs.appendFileSync(SETTLEMENTS, JSON.stringify({ at: new Date().toISOString(), market: publicKey.toBase58(), id: m.id.toNumber(), metric: tag(m.metric), mint: mint.toBase58(), owner: p.owner.toBase58(), amounts: p.amounts.slice(0, fresh.nBuckets).map((x) => x.toString()), status: fresh.status, outcome: fresh.outcome, observed: fresh.proposedValue.toString(), kind, payout: payout.toString(), fee: fee.toString(), signature: sig,
-            token, decimals: meta.decimals, multiplier: meta.multiplier, usdPerShare: usd, pools: fresh.pools.slice(0, fresh.nBuckets).map((x) => x.toString()), seed: fresh.seedAmount.toString() }) + "\n");
+            token, decimals: meta.decimals, multiplier: meta.multiplier, usdPerShare: usd, priceSource, pools: fresh.pools.slice(0, fresh.nBuckets).map((x) => x.toString()), seed: fresh.seedAmount.toString() }) + "\n");
           log(`  settled ${p.owner.toBase58()} ${kind} payout=${payout} ${sig}`);
         } catch (e) {
           log(`  FAILED ${p.owner.toBase58()}: ${e.message?.split("\n")[0]}`);
