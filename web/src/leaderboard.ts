@@ -1,7 +1,8 @@
 // Leaderboard. Points come from the API (server/points.mjs): for every market you were settled in,
 //   points = your stake in dollars × that market's player pot in dollars.
 // Dollars, not share counts, so no pool is cheaper to farm than another; the house seed is excluded, so bootstrap
-// money never inflates a score. Wallets the wash-trading audit has flagged are listed separately, not ranked.
+// money never inflates a score. Betting both sides from two wallets is not excluded — it pays the same fee and builds
+// the same pool depth as two players disagreeing. Only what an operator puts in points-bans.json is held out.
 import { fmtUsd } from "./stocks";
 import { esc, mountTopbar, onSession } from "./ui";
 import { API_BASE, explorerAddress } from "./config";
@@ -73,7 +74,7 @@ async function load() {
 
   const flagged: any[] = j.banned ?? [];
   flagEl.innerHTML = flagged.length
-    ? `<h2>Excluded by the wash-trading audit</h2><div class="scroll"><table class="tbl"><thead><tr><th>Wallet</th><th>Reason</th><th class="r">Points forfeited</th></tr></thead><tbody>${flagged.map((e) => `<tr><td class="mono">${esc(short(e.wallet))}</td><td>${esc(e.reason ?? "")}</td><td class="r mono">${esc(fmtPoints(e.points))}</td></tr>`).join("")}</tbody></table></div>`
+    ? `<h2>Excluded from the ranking</h2><div class="scroll"><table class="tbl"><thead><tr><th>Wallet</th><th>Reason</th><th class="r">Points forfeited</th></tr></thead><tbody>${flagged.map((e) => `<tr><td class="mono">${esc(short(e.wallet))}</td><td>${esc(e.reason ?? "")}</td><td class="r mono">${esc(fmtPoints(e.points))}</td></tr>`).join("")}</tbody></table></div>`
     : "";
 }
 

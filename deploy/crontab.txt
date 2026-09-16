@@ -12,6 +12,6 @@ S=/home/sharepot
 # propose results after the close, finalize after the dispute window, pay out and sweep
 */10 * * * * cd $S/apps/sharepot && CLUSTER=devnet CLUSTER_RPC=https://api.devnet.solana.com DATA_DIR=$S/data SHAREPOT_SECRETS=$S/secrets/devnet node server/resolve.mjs >> $S/logs/resolve.log 2>&1
 
-# leaderboard wash-trading audit: writes data/points-audit.json every day; --apply only bans pairs with hard evidence
-# (two wallets first funded by the same address), everything else is left in the report for a human to read
-40 5 * * * cd $S/apps/sharepot && CLUSTER=devnet CLUSTER_RPC=https://api.devnet.solana.com DATA_DIR=$S/data SHAREPOT_SECRETS=$S/secrets/devnet node scripts/points-audit.mjs --apply >> $S/logs/points-audit.log 2>&1
+# leaderboard concentration report: how much of the board is one person cycling their own money through both sides.
+# Reports only — it bans nobody, and the leaderboard excludes only what a human puts in data/points-bans.json.
+40 5 * * * cd $S/apps/sharepot && CLUSTER=devnet CLUSTER_RPC=https://api.devnet.solana.com DATA_DIR=$S/data SHAREPOT_SECRETS=$S/secrets/devnet node scripts/points-audit.mjs >> $S/logs/points-audit.log 2>&1

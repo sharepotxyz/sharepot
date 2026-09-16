@@ -78,8 +78,8 @@ asks:
 * **The cold-start problem is about depth, not solvency.** Splitting a day's volume across 9 pools × 4 ranges makes
   every range look thin, which is why a mainnet launch starts with one or two pools rather than all nine.
 
-Fee income accumulates as stock tokens in the treasury; the intended use is to seed the *next* session's pool in the
-same token, so the incentive budget comes from the product rather than from a balance sheet.
+Fee income accumulates as stock tokens in the treasury and stays there — it is not recycled into house prizes.
+Markets do not need them.
 
 ## Leaderboard
 
@@ -95,13 +95,17 @@ Both figures are frozen into the settlement record at payout time (`server/resol
 afterwards; `server/points.mjs` only adds up what the crank wrote. The board is at `/leaderboard.html`, backed by
 `GET /api/leaderboard?window=7d|30d|all`.
 
-**Wash trading is not designed out; it is audited after the fact.** Betting both sides of a thin market from two
-wallets costs only the fee on the winning side and farms points quadratically. Tightening the formula would punish
-honest players in thin markets too, so instead `scripts/points-audit.mjs` looks for pairs that keep taking opposite
-ranges of the same thin market, checks whether they were first funded by the same address (known funders like the
-faucet are excluded — otherwise every devnet player looks like every other player's sock puppet), and writes
-`data/points-bans.json`, which the leaderboard subtracts. Only shared funding bans automatically; the structural
-signals raise a pair for a human to look at.
+**Betting both sides from two wallets is allowed, and nobody is banned for it.** On the ledger it is the same event
+as two honest players taking opposite ranges: the same fee is paid, the same pool depth is created, the same points
+are scored. Someone cycling their own money through a market is a paying customer — the fee lands in the treasury as
+real stock either way.
+
+What that does distort is concentration: their fee cost rises linearly with capital while points, being stake × pot,
+rise quadratically, because both factors are theirs. So `scripts/points-audit.mjs` reports it rather than punishing
+it — pairs that keep taking opposite ranges of the same thin market, and whether they were first funded by the same
+address (known funders like the faucet are excluded, or on devnet every player looks like every other player's sock
+puppet). The output is `data/points-audit.json`, for reading before any decision that spends the points. Nothing is
+excluded from the board unless a human writes `data/points-bans.json` by hand.
 
 ## Why you can trust the settlement
 

@@ -1,34 +1,33 @@
-// Wash-trading audit for the leaderboard.
+// Concentration report for the leaderboard. It bans nobody.
 //
-// Points reward stake × pot, so the cheapest way to farm them is to bet both sides of a thin market from two wallets
-// you control: the money comes back minus the fee on the winning side, and both wallets score. The formula is not
-// tightened to stop that — it would punish honest players in thin markets too. Instead this runs after the fact and
-// flags clusters, exactly like the referral audit on our other site.
+// Points are stake × pot, so cycling your own money through a market from two wallets scores well. That is NOT treated
+// as abuse: on the ledger it is indistinguishable from two honest players taking opposite ranges — the same fee is
+// paid into the treasury, the same pool depth is created, the same points are scored. Someone washing their own money
+// is a paying customer, and the fee arrives as real stock either way.
 //
-// Three signals, all from data we already have plus one RPC lookup:
-//   1. recurring opposition — wallets X and Y take different ranges of the SAME market, again and again. Two honest
-//      players disagree once or twice; a pair that mirrors each other in market after market is one person.
-//   2. shared funding — the wallets were first funded by the same address. KNOWN FUNDERS ARE EXCLUDED: on devnet the
-//      faucet funds everybody, so without that exclusion every player looks like every other player's sock puppet.
-//   3. private markets — the pair WAS the whole market (nobody else was in it), repeatedly. Real users do not keep
-//      finding a public market whose only other player is the same person.
+// What it does distort is concentration. Their fee cost grows linearly with capital, while points grow quadratically,
+// because a self-dealing pair owns BOTH the stake and the pot; an honest player only owns the stake. So this report
+// exists to show how much of the board is self-dealt, to be read before any decision that spends the points.
+//
+// Two signals:
+//   1. recurring opposition — wallets X and Y take different ranges of the SAME thin market, again and again.
+//   2. shared funding — both were first funded by the same address. KNOWN FUNDERS ARE EXCLUDED: on devnet the faucet
+//      funds everybody, so without that exclusion every player looks like every other player's sock puppet.
+//   3. private markets — the pair WAS the whole market, repeatedly.
 //
 // A fourth signal was tried and dropped: "their combined net P&L is about zero". In a parimutuel any two opposing
 // players are zero-sum minus the fee, so an honest pair scores identically to a wash pair — it separates nothing.
-// Verified against synthetic data before it went in.
 //
-// Only shared funding is hard evidence, so only that bans. The structural signals raise a pair to `review` for a human
-// to look at: two honest players CAN be the only two in a thin market. `--apply` writes the bans to
-// data/points-bans.json, which the leaderboard subtracts.
+// Output is data/points-audit.json. The leaderboard only ever excludes wallets listed in data/points-bans.json, which
+// nothing writes automatically — a human writes it, for an actual exploit, not for cycling one's own money.
 //
-//   node scripts/points-audit.mjs [--apply] [--min-pairs=3] [--data=DIR] [--rpc=URL] [--include-bots]
+//   node scripts/points-audit.mjs [--min-pairs=3] [--data=DIR] [--rpc=URL] [--include-bots]
 import fs from "node:fs";
 import path from "node:path";
 import { Connection, PublicKey } from "@solana/web3.js";
-import { leaderboard, readSettlements, readBans } from "../server/points.mjs";
+import { leaderboard, readSettlements } from "../server/points.mjs";
 
 const arg = (k, d) => { const a = process.argv.find((x) => x.startsWith(`--${k}=`)); return a ? a.slice(k.length + 3) : d; };
-const APPLY = process.argv.includes("--apply");
 const DATA = arg("data", process.env.DATA_DIR ?? path.join(process.cwd(), "data"));
 const RPC = arg("rpc", process.env.CLUSTER_RPC ?? "https://api.devnet.solana.com");
 const MIN_PAIRS = Number(arg("min-pairs", 3));           // markets a pair must mirror each other in
@@ -127,23 +126,19 @@ for (const s2 of suspect) {
     wallets: s2.wallets, markets: s2.markets.length, aloneMarkets: alone, marketIds: s2.markets.slice(0, 20),
     sharedFunder,
     points: s2.wallets.map((w) => stats.get(w)?.points ?? 0),
-    verdict: sharedFunder ? "ban" : alone >= MIN_PAIRS ? "review" : "watch",
+    verdict: sharedFunder ? "self-dealt" : alone >= MIN_PAIRS ? "likely self-dealt" : "noted",
     why: [`opposed each other in ${s2.markets.length} thin markets`, alone ? `were the only two players in ${alone} of them` : null, sharedFunder ? `both first funded by ${sharedFunder}` : null].filter(Boolean).join("; "),
   });
 }
-const RANK = { ban: 0, review: 1, watch: 2 };
+const RANK = { "self-dealt": 0, "likely self-dealt": 1, noted: 2 };
 findings.sort((x, y) => RANK[x.verdict] - RANK[y.verdict] || y.markets - x.markets);
 
 const out = { at: new Date().toISOString(), rows: rows.length, markets: byMarket.size, pairsChecked: pairs.size, ignoredFunders: [...ignore], findings };
 fs.writeFileSync(path.join(DATA, "points-audit.json"), JSON.stringify(out, null, 2));
-console.log(`${rows.length} settlements · ${byMarket.size} markets · ${findings.length} suspicious pairs (${findings.filter((f) => f.verdict === "ban").length} would be banned)`);
+console.log(`${rows.length} settlements · ${byMarket.size} markets · ${findings.length} opposing pairs (${findings.filter((f) => f.verdict !== "noted").length} look self-dealt)`);
 for (const f of findings) console.log(`  [${f.verdict}] ${f.wallets.map((w) => w.slice(0, 6) + "…").join(" ↔ ")}  ${f.why}`);
-
-if (APPLY) {
-  const bans = readBans(DATA);
-  for (const f of findings.filter((x) => x.verdict === "ban")) for (const w of f.wallets) bans[w] = bans[w] ?? f.why;
-  fs.writeFileSync(path.join(DATA, "points-bans.json"), JSON.stringify({ at: new Date().toISOString(), wallets: bans }, null, 2));
-  console.log(`applied: ${Object.keys(bans).length} wallets excluded from the leaderboard`);
-} else if (findings.some((f) => f.verdict === "ban")) {
-  console.log("re-run with --apply to exclude them from the leaderboard");
-}
+// How much of the board this accounts for: points held by wallets in a self-dealt pair, against the whole board.
+const selfDealt = new Set(findings.filter((f) => f.verdict !== "noted").flatMap((f) => f.wallets));
+const totalPoints = board.entries.reduce((a, e) => a + e.points, 0);
+const theirPoints = board.entries.filter((e) => selfDealt.has(e.wallet)).reduce((a, e) => a + e.points, 0);
+if (totalPoints > 0) console.log(`self-dealt wallets hold ${((theirPoints / totalPoints) * 100).toFixed(1)}% of all points`);
