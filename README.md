@@ -78,8 +78,6 @@ asks:
 * **The cold-start problem is about depth, not solvency.** Splitting a day's volume across 9 pools × 4 ranges makes
   every range look thin, which is why a mainnet launch starts with one or two pools rather than all nine.
 
-Fee income is not recycled into house prizes. Markets do not need them.
-
 ## Leaderboard
 
 Every settled market scores the wallets that were in it:
