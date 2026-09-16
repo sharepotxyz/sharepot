@@ -29,7 +29,7 @@ export const bucketColor = (m: MarketView, i: number) => (m.nBuckets === 2 ? (i 
 /** Ticker monogram in a colour derived from the symbol (no third-party logos). */
 export function tickerBadge(symbol: string, big = false, small = false) {
   let h = 0; for (const c of symbol) h = (h * 31 + c.charCodeAt(0)) % 360;
-  return `<span class="tick${big ? " big" : small ? " sm" : ""}" style="--h:${h}">${esc(symbol)}</span>`;
+  return `<span class="tick${big ? " big" : small ? " sm" : ""}${symbol.length > 5 ? " long" : ""}" style="--h:${h}">${esc(symbol)}</span>`;
 }
 
 // ---------- top bar: brand, search, stock tabs, network badge, wallet ----------

@@ -21,7 +21,7 @@ function bucketLabel(m, i) {
   if (i === n - 1) return `≥ ${fmtThr(t[n - 2])}`;
   return `${fmtThr(t[i - 1])} to ${fmtThr(t[i])}`;
 }
-function tickerBadge(symbol, big = false) { let h = 0; for (const c of symbol) h = (h * 31 + c.charCodeAt(0)) % 360; return `<span class="tick${big ? " big" : ""}" style="--h:${h}">${esc(symbol)}</span>`; }
+function tickerBadge(symbol, big = false) { let h = 0; for (const c of symbol) h = (h * 31 + c.charCodeAt(0)) % 360; return `<span class="tick${big ? " big" : ""}${symbol.length > 5 ? " long" : ""}" style="--h:${h}">${esc(symbol)}</span>`; }
 function timeLeft(ts) {
   const s = ts - Date.now() / 1000; if (s <= 0) return "closed";
   const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
