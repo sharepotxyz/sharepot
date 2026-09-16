@@ -86,7 +86,7 @@ export const toRaw = (m: MarketView, ui: number) => Math.floor(((ui || 0) / (m.m
 export const fmtAmt = (m: MarketView, raw: number, digits = 4) => uiAmount(m, raw).toLocaleString("en-US", { maximumFractionDigits: digits });
 
 // Live token prices from the API (Jupiter), keyed by token symbol; used only for a dollar estimate next to share counts.
-let prices: Record<string, { usd: number; stock: number | null; mark?: number | null } | null> = {};
+let prices: Record<string, { usd: number; stock: number | null; mark?: number | null; prevClose?: { date: string; close: number; samples: number } | null } | null> = {};
 let pricesFromBoot = !!boot?.prices;
 if (pricesFromBoot) prices = boot.prices;
 export async function loadPrices() {
@@ -103,4 +103,7 @@ export function usdOf(m: MarketView, raw: number) {
 export const priceOf = (m: MarketView) => prices[tokenSymbol(m)]?.usd ?? null;
 /** The issuer's official mark price of a pre-IPO token (Tessera / PreStocks), or null. */
 export const markOf = (m: MarketView) => prices[tokenSymbol(m)]?.mark ?? null;
+/** Latest known daily on-chain close of this token ({ date, close }), or null. */
+export const prevCloseOf = (m: MarketView) => prices[tokenSymbol(m)]?.prevClose ?? null;
+export const fmtPx = (v: number) => "$" + v.toLocaleString("en-US", { maximumFractionDigits: v < 1 ? 6 : 2 });
 export const fmtUsd = (v: number) => "$" + (v >= 1e6 ? (v / 1e6).toFixed(1) + "m" : v >= 1e4 ? (v / 1e3).toFixed(1) + "k" : v.toLocaleString("en-US", { maximumFractionDigits: v < 100 ? 2 : 0 }));

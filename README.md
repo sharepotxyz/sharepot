@@ -161,15 +161,18 @@ Two more token classes run on the same program. There is no exchange for them, s
 
 * **Pre-IPO**: T-OpenAI and T-Kalshi (Tessera) and OpenAI (PreStocks), one pool per token per UTC day. The issuers'
   mark price (from private-market data) moves rarely and is shown for context; the pool settles on the on-chain price.
-* **Memes**: `server/select-chain.mjs` runs at 23:00 UTC and picks the ten Solana tokens with the most 24-hour traded
+* **Memes**: `server/select-chain.mjs` runs at 11:00 UTC and picks the ten Solana tokens with the most 24-hour traded
   volume (Jupiter's top-traded list) for the next day, subject to filters: mint and freeze authority given up, liquidity
   ≥ $500k, first pool ≥ 3 days old, no wrapped/bridged assets, no tokenized stocks, DeFi or "strict"-list tokens.
   They are recorded in `data/chain-tokens.json`; on devnet the opener mints a mock per token and stocks the faucet.
 * **Close** = median of one Jupiter quote per minute during the day's last hour (23:00–24:00 UTC), sampled by
-  `server/sample-prices.mjs` into `data/ticks/<date>.jsonl`. Metric tag `<SYMBOL>.day:<date>`; the previous day's close
-  is written on the market as its baseline (picodollars). Fewer than 40 usable quotes voids the day (full refund).
-* **Three ranges** (down / flat / up) cut at ± the token's median absolute daily move over 60 days (GeckoTerminal);
-  betting 00:00–12:00 UTC, resolution after 00:05 the next day, same dispute window and crank as the stock pools.
+  `server/sample-prices.mjs` into `data/ticks/<date>.jsonl`. Metric tag `<SYMBOL>.day:<date>`; the move is that day's
+  close against the previous day's, both read from the samples at resolution and published together as evidence.
+  Fewer than 40 usable quotes on either day voids the market (full refund).
+* **Three ranges** (down / flat / up) cut at ± the token's median absolute daily move over 60 days (GeckoTerminal).
+  A day's pool opens at 11:00 UTC the day before and locks at 12:00 UTC on the day, so there is always one to bet into
+  (tomorrow's opens before today's locks); resolution after 00:05 the next day, same dispute window and crank as the
+  stock pools.
 * **Transfer fees.** Tessera (0.2 %) and PreStocks (0.5 %) mints charge on every transfer. `place_bet` and `seed_market`
   book what the vault actually received (balance before/after the transfer), so the pools never exceed the vault and a
   payout simply lands net of the issuer's fee. Before a fee-mint vault is closed the crank harvests the withheld fees to

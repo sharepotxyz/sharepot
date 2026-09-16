@@ -54,6 +54,9 @@ const [configPda] = PublicKey.findProgramAddressSync([Buffer.from("config")], pr
 const vaultPda = (m) => PublicKey.findProgramAddressSync([Buffer.from("vault"), m.toBuffer()], programId)[0];
 const tag = (b) => Buffer.from(b).toString("utf8").replace(/\0+$/, "");
 const log = (...a) => console.log(new Date().toISOString(), ...a);
+// web3.js confirms transactions with racing promises; when the public RPC answers 429 to one of them the loser rejects
+// with nobody awaiting it, and Node 22 would exit on that. The awaited path retries on its own; just log the stray one.
+process.on("unhandledRejection", (e) => log(`unhandled rejection (ignored): ${String(e?.message ?? e).slice(0, 160)}`));
 fs.mkdirSync(path.join(DATA, "evidence"), { recursive: true });
 
 // Token program (classic SPL or Token-2022) owning each mint, looked up once.
@@ -123,7 +126,7 @@ async function propose(markets, now) {
     if (!spec) { log(`market #${m.id}: unknown metric ${metric}`); continue; }
     const onChain = spec.kind === "day";
     const ev = onChain
-      ? chainMove(DATA, tokenByMint.get(m.mint.toBase58())?.mainnetMint ?? m.mint.toBase58(), spec.symbol, spec.date, m.baseline.toString(), now)
+      ? chainMove(DATA, tokenByMint.get(m.mint.toBase58())?.mainnetMint ?? m.mint.toBase58(), spec.symbol, spec.date, now)
       : await closeMove(spec.symbol, spec.date, now);
     if (!ev.ok && onChain) {
       // Not enough closing-hour quotes (sampler outage, or the token's price feed disappeared): hold; a market still

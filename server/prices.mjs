@@ -232,21 +232,23 @@ export function chainClose(dataDir, mint, date) {
   return { ok: true, close: median(samples.map((s) => s.usd)), samples: samples.length, first: samples[0].t, last: samples.at(-1).t, raw, file };
 }
 /**
- * Move of `mint` for UTC day `date` vs the baseline price (picodollars, as stored on the market), in ppm, floored.
- * Same shape as closeMove(): ok/value/detail/evidence; the evidence is the sample lines themselves.
+ * Move of `mint` for UTC day `date` vs the previous day's close, in ppm, floored. Both closes come from the sampled
+ * quotes (prices.mjs closingSamples), so the evidence is self-contained: the sample lines of both closing hours.
+ * Same shape as closeMove(): ok/value/detail/evidence.
  */
-export function chainMove(dataDir, mint, symbol, date, baselinePico, now = Math.floor(Date.now() / 1000)) {
+export function chainMove(dataDir, mint, symbol, date, now = Math.floor(Date.now() / 1000)) {
   if (now < utcMidnight(date) + 24 * 3600) return { ok: false, reason: `${date} has not ended yet (UTC)` };
-  const b = BigInt(baselinePico);
-  if (b <= 0n) return { ok: false, alert: true, reason: `market has no baseline price` };
+  const prevDate = addDays(date, -1);
+  const b = chainClose(dataDir, mint, prevDate);
+  if (!b.ok) return { ok: false, alert: true, reason: `no previous close: ${b.reason} (${prevDate})` };
   const c = chainClose(dataDir, mint, date);
   if (!c.ok) return { ok: false, reason: `not enough closing-hour quotes: ${c.reason}` };
-  const p1 = toPico(c.close);
-  const num = (p1 - b) * 1_000_000n;
-  const q = num / b, ppm = num % b !== 0n && num < 0n ? q - 1n : q; // floor division
+  const p0 = toPico(b.close), p1 = toPico(c.close);
+  const num = (p1 - p0) * 1_000_000n;
+  const q = num / p0, ppm = num % p0 !== 0n && num < 0n ? q - 1n : q; // floor division
   return {
     ok: true, value: Number(ppm),
-    detail: { symbol, source: "jupiter-price-v3", mint, date, baseline: fromPico(b), close: c.close, samples: c.samples, window: `${date}T23:00:00Z–${date}T24:00:00Z`, firstSample: c.first, lastSample: c.last },
-    evidence: { source: `sampled quotes ${date} 23:00–24:00 UTC (lite-api.jup.ag/price/v3, one per minute)`, response: c.raw },
+    detail: { symbol, source: "jupiter-price-v3", mint, prevDate, baseline: b.close, prevSamples: b.samples, date, close: c.close, samples: c.samples, window: "23:00–24:00 UTC of each day, one quote per minute, median" },
+    evidence: { source: `sampled quotes ${prevDate} and ${date}, 23:00–24:00 UTC (lite-api.jup.ag/price/v3, one per minute)`, response: b.raw + c.raw },
   };
 }

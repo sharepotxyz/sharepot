@@ -1,8 +1,9 @@
 // Picks the memes that get a pool for the next UTC day: the ten Solana tokens with the most 24-hour traded volume
 // (Jupiter's top-traded list) that pass the safety filters, and records them in data/chain-tokens.json (registry).
-// Run every evening at 23:00 UTC; the sampler then covers the token's closing hour, so its first market can open at
-// 00:00 with a baseline (open-markets.mjs). Idempotent: a re-run for the same day re-selects and overwrites.
-//   env: DATA_DIR, N (10), FOR_DATE (YYYY-MM-DD, default: the UTC day that starts within 2 h), DRY_RUN=1
+// Runs at 11:00 UTC for the NEXT day, so open-markets.mjs can open tomorrow's pools at 11:30, before today's lock at
+// 12:00 (there is always a pool to bet into), and the sampler covers today's closing hour for the new tokens (the
+// baseline of tomorrow's market). Idempotent: a re-run for the same day re-selects and overwrites.
+//   env: DATA_DIR, N (10), FOR_DATE (YYYY-MM-DD, default: tomorrow UTC), DRY_RUN=1
 //
 // Filters — heat is the point, but a pool in a token that rugs mid-day is worthless, so:
 //   * no tag from the non-meme families (tokenized stocks / RWA, DeFi, LST, stablecoins, Jupiter's "strict" list of
@@ -15,7 +16,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { readRegistry, writeRegistry, niceAmount } from "./chain-tokens.mjs";
-import { utcDate } from "./prices.mjs";
+import { utcDate, addDays } from "./prices.mjs";
 
 const DATA = process.env.DATA_DIR ?? path.join(process.cwd(), "data");
 const N = Number(process.env.N ?? 10), DRY = process.env.DRY_RUN === "1";
@@ -24,7 +25,7 @@ const FAUCET_USD = 25, SEED_USD = 3;
 const EXCLUDED_TAGS = new Set(["stocks", "rwa", "xstocks", "backpack", "ondo", "prestocks", "equities", "etf", "commodities", "defi", "strict", "lst", "stablecoin", "perps", "bridged", "wormhole", "infra"]);
 const WRAPPED = /^(w|cb|x|t)?(BTC|ETH|SOL|XRP|ZEC|HYPE|BNB|NEAR|XMR|LINK|TRX|AVAX|DOT|ADA|LTC|BCH|USD[CT]?)$|wrapped|bridged|staked|portal/i;
 const now = Math.floor(Date.now() / 1000);
-const forDate = process.env.FOR_DATE ?? utcDate(now + 2 * 3600);
+const forDate = process.env.FOR_DATE ?? addDays(utcDate(now), 1);
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // GeckoTerminal allows ~30 requests a minute: one call every 3 s, and a 429 waits 20 s before one more try.

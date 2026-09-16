@@ -16,7 +16,7 @@ import { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentIn
 import nacl from "tweetnacl";
 import bs58 from "bs58";
 import anchor from "@coral-xyz/anchor";
-import { xstockPrices, utcDate, addDays } from "./prices.mjs";
+import { xstockPrices, utcDate, addDays, chainClose } from "./prices.mjs";
 import { readRegistry, asStock, REGISTRY_FILE } from "./chain-tokens.mjs";
 import { leaderboard, readSettlements } from "./points.mjs";
 import { homeHtml, eventHtml } from "./ssr.mjs";
@@ -117,7 +117,12 @@ async function refreshPrices() {
   const all = stocks.flatMap((s) => s.tokens.map((t) => ({ ...t, mark: s.mark })));
   const mints = [...new Set(all.map((t) => t.mainnetMint))], byMint = {};
   for (let i = 0; i < mints.length; i += 50) Object.assign(byMint, await xstockPrices(mints.slice(i, i + 50)));
-  priceCache = { at: Date.now(), prices: Object.fromEntries(all.map((t) => [t.token, byMint[t.mainnetMint] ? { ...byMint[t.mainnetMint], mark: t.mark ? markCache.marks[t.mark] ?? null : null } : null])) };
+  // on-chain price tokens: the latest known daily close (yesterday's, or the day before's until yesterday's samples exist)
+  const closes = {}, today = utcDate(Date.now() / 1000);
+  for (const s of stocks) if (s.kind === "day") for (const t of s.tokens) for (const d of [addDays(today, -1), addDays(today, -2)]) {
+    const c = chainClose(DATA, t.mainnetMint, d); if (c.ok) { closes[t.token] = { date: d, close: c.close, samples: c.samples }; break; }
+  }
+  priceCache = { at: Date.now(), prices: Object.fromEntries(all.map((t) => [t.token, byMint[t.mainnetMint] ? { ...byMint[t.mainnetMint], mark: t.mark ? markCache.marks[t.mark] ?? null : null, prevClose: closes[t.token] ?? null } : null])) };
 }
 async function prices() {
   if (!priceCache.at) await refreshPrices();

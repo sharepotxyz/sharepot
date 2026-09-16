@@ -81,12 +81,12 @@
   <p>The stock pools settle on an exchange's official close. Two more token classes run on the same program, with one difference: <b>there is no exchange, so the day's close is read on-chain</b>.</p>
   <ul>
     <li><b>Pre-IPO</b>: T-OpenAI and T-Kalshi (<a href="https://app.tessera.pe" target="_blank" rel="noopener">Tessera</a>) and OpenAI (<a href="https://prestocks.com" target="_blank" rel="noopener">PreStocks</a>). One pool per token per UTC day. The issuers publish a mark price from private-market data; it moves rarely and is shown for context. The pool settles on the on-chain price.</li>
-    <li><b>Memes</b>: every evening at 23:00 UTC the ten Solana tokens with the most 24-hour traded volume are picked for the next day, subject to filters: mint and freeze authority given up, at least $500k of liquidity, a first pool at least three days old, no wrapped or bridged assets, no tokenized stocks or DeFi tokens. Tomorrow's ten can differ from today's; an open pool always settles.</li>
+    <li><b>Memes</b>: every day at 11:00 UTC the ten Solana tokens with the most 24-hour traded volume are picked for the next day, subject to filters: mint and freeze authority given up, at least $500k of liquidity, a first pool at least three days old, no wrapped or bridged assets, no tokenized stocks or DeFi tokens. Tomorrow's ten can differ from today's; an open pool always settles.</li>
     <li><b>A day's close</b> is the median of one Jupiter quote per minute during the day's last hour (23:00–24:00 UTC). One print cannot move it; a burst that moves the price for a few minutes barely can. Fewer than 40 usable quotes (a delisted token, a dead feed) voids the day with a full refund.</li>
     <li><b>Three ranges</b>: down, flat, up, cut at ± the token's median absolute daily move over its last 60 days (T-OpenAI ±1 %, PreStocks OpenAI ±3 %, a typical meme ±5–15 %), so "flat" and the two tails start out about equally likely.</li>
-    <li><b>Betting</b> opens at 00:00 UTC and stops at 12:00 UTC, halfway through the day. The baseline is the previous day's close, written on the market when it opens.</li>
+    <li><b>Betting</b> on a day's pool opens at 11:00 UTC the day before and stops at 12:00 UTC on the day, halfway through it — so there is always a pool to bet into. The previous day's close, the baseline, forms at 00:00 UTC, twelve hours before the lock; as with stocks, the pool opens before the previous close is known.</li>
     <li><b>Issuer transfer fees.</b> Tessera and PreStocks tokens charge 0.2 % / 0.5 % on every transfer, into and out of the pool alike. Your stake counts as what arrives; a payout lands net of that fee. That fee is the issuer's, not SharePot's.</li>
-    <li><b>Evidence</b> works as for stocks: the sampled quotes are published byte for byte, their sha256 is on-chain, and the market page re-hashes them in your browser.</li>
+    <li><b>Evidence</b> works as for stocks: the sampled quotes of both closing hours are published byte for byte, their sha256 is on-chain, and the market page re-hashes them in your browser.</li>
   </ul>
 
   <h2 id="try">Try it on devnet</h2>
