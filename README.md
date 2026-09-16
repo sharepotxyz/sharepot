@@ -131,6 +131,10 @@ crank wrote. The board is at `/leaderboard.html`, backed by `GET /api/leaderboar
   the admin, the upgrade authority and the treasury move to a 2-of-3 Squads multisig that the server is not a member
   of; the server keeps only the proposer key, which can never touch funds. Corrections then need a second signature
   and the window gives the time to gather it.
+* **A market whose price never comes refunds itself.** Still unproposed 24 h after its resolve time (a session that
+  never traded, a token whose quotes disappeared), a market may be voided by the proposer (`void_stale_market`; the
+  program checks the delay) and the crank refunds every stake. That is the only power the proposer has beyond
+  proposing a number: it can return money, never pick a winner.
 
 We do not settle on Pyth: since 2026-08-26 Hermes requires an API key for both latest and historical prices, and its
 equity feed reports the last trade before 16:00, not the official closing print these markets are defined on.

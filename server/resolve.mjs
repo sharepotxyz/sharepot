@@ -19,6 +19,9 @@ import { readRegistry } from "./chain-tokens.mjs";
 import { notify } from "./notify.mjs";
 // A market still unproposed this long after resolve_after_ts is overdue: one Telegram alert per market per 6 h.
 const OVERDUE_SECS = Number(process.env.OVERDUE_SECS ?? 7200);
+// ...and this long after it, with still no usable price, the proposer voids it on-chain (void_stale_market: the program
+// only allows this 24 h past the resolve time), so every stake goes back without waiting for the admin key.
+const STALE_VOID_SECS = 86_400;
 
 // Latest New York session that has started, per Nasdaq: today once the bell has rung, else the previous trading day.
 // (If a day was closed without notice, the day after still reports the day before the closure as "previous", so the
@@ -118,6 +121,17 @@ async function metaOf(mint) {
 }
 
 // ---------- on-chain steps ----------
+/** Void a market whose price will never come (proposer, ≥ 24 h past resolve time); returns true when voided. */
+async function voidStale(publicKey, m, metric, why, now) {
+  if (now < m.resolveAfterTs.toNumber() + STALE_VOID_SECS) return false;
+  if (DRY) { log(`market #${m.id} (${metric}): would void as stale — ${why}`); return false; }
+  try {
+    const sig = await program.methods.voidStaleMarket().accounts({ config: configPda, market: publicKey, proposer: proposer.publicKey }).rpc();
+    log(`market #${m.id} (${metric}): VOIDED as stale (${why}) ${sig}`);
+    notify("↩️ 盤已作廢退款", `#${m.id} ${metric}\n${why}\n結算時間過 24h 仍無可用價格,proposer 已 void,下一輪全額退款`, `voided:${m.id}`, 1440);
+    return true;
+  } catch (e) { log(`market #${m.id}: stale void failed: ${String(e?.message ?? e).split("\n")[0].slice(0, 160)}`); return false; }
+}
 async function propose(markets, now) {
   for (const { publicKey, account: m } of markets) {
    try {
@@ -133,8 +147,9 @@ async function propose(markets, now) {
       // unresolved long after its day ended can only be voided (admin key).
       const overdue = now >= m.resolveAfterTs.toNumber() + OVERDUE_SECS;
       log(`market #${m.id} (${metric}): cannot resolve yet — ${ev.reason}`);
-      if (ev.alert) notify("⚠️ 鏈上盤無法結算", `#${m.id} ${metric}\n${ev.reason}`, `hold:${m.id}`, 120);
-      else if (overdue) notify("⏳ 鏈上盤結算逾時", `#${m.id} ${metric} 日結束後 ${Math.round((now - m.resolveAfterTs.toNumber()) / 3600)} 小時仍未提案\n${ev.reason}\n若報價來源已消失要 void:ANCHOR_WALLET=<admin> node scripts/void-markets.mjs ${m.id}`, `overdue:${m.id}`, 360);
+      if (await voidStale(publicKey, m, metric, ev.reason, now)) continue;
+      if (ev.alert) notify("⚠️ 鏈上盤無法結算", `#${m.id} ${metric}\n${ev.reason}\n結算時間過 24h 後會自動 void 退款`, `hold:${m.id}`, 120);
+      else if (overdue) notify("⏳ 鏈上盤結算逾時", `#${m.id} ${metric} 日結束後 ${Math.round((now - m.resolveAfterTs.toNumber()) / 3600)} 小時仍未提案\n${ev.reason}\n過 24h 會自動 void 退款`, `overdue:${m.id}`, 360);
       continue;
     }
     if (!ev.ok) {
@@ -144,8 +159,9 @@ async function propose(markets, now) {
       const prevTraded = await lastTradedDate();
       const overdue = now >= m.resolveAfterTs.toNumber() + OVERDUE_SECS;
       if (prevTraded && prevTraded > spec.date) {
-        log(`market #${m.id} (${metric}): ⚠ no close for ${spec.date} although a later session (${prevTraded}) has started — ${spec.date} likely DID NOT TRADE; VOID NEEDED: ANCHOR_WALLET=<admin> node scripts/void-markets.mjs ${m.id}`);
-        notify("⛔ 需要 void", `#${m.id} ${metric}:${spec.date} 沒有收盤價但後面的交易日已開始,這天可能沒交易 → 要用 admin 金鑰 void`, `void:${m.id}`, 360);
+        log(`market #${m.id} (${metric}): ⚠ no close for ${spec.date} although a later session (${prevTraded}) has started — ${spec.date} likely DID NOT TRADE`);
+        if (await voidStale(publicKey, m, metric, `no close for ${spec.date}; session ${prevTraded} has since started`, now)) continue;
+        notify("⛔ 這天可能沒交易", `#${m.id} ${metric}:${spec.date} 沒有收盤價但後面的交易日已開始;結算時間過 24h 後 proposer 會自動 void 退款(admin 可提前:node scripts/void-markets.mjs ${m.id})`, `void:${m.id}`, 360);
       } else {
         log(`market #${m.id} (${metric}): cannot resolve yet — ${ev.reason}`);
         if (ev.alert) notify("⚠️ 結算暫停,兩個價源不一致", `#${m.id} ${metric}\n${ev.reason}\n結算器每 10 分鐘會再試;若持續不一致要人工判斷`, `hold:${m.id}`, 120);

@@ -344,6 +344,21 @@ describe("sharepot: parimutuel pools staked in tokenized stocks", () => {
     await createMarket(ondo, -1, 60);
   });
 
+  it("stale void: proposer cannot void before 24 h past the resolve time; a stranger never can; admin can at once", async () => {
+    const k = await createMarket(xTSLA, -1, 4);
+    await bet(k, alice, "up", T);
+    await sleep(5000);   // past resolve_after_ts, but nowhere near STALE_VOID_SECS
+    const staleVoid = (who: Keypair) => program.methods.voidStaleMarket().accounts({ config: configPda, market: k.m, proposer: who.publicKey }).signers([who]).rpc();
+    await expectErr(staleVoid(proposer), "NotStaleYet");
+    await expectErr(staleVoid(alice), "Unauthorized");
+    // the admin path is void_market, unchanged: immediate, then a normal refund settlement
+    await program.methods.voidMarket().accounts({ config: configPda, market: k.m, admin: admin.publicKey }).rpc();
+    await expectErr(staleVoid(proposer), "MarketNotOpen");
+    const a0 = await bal(xTSLA, xTSLA.ata.alice);
+    await settle(k, alice, dave);
+    assert.equal((await bal(xTSLA, xTSLA.ata.alice)) - a0, T, "voided: stake refunded in full");
+  });
+
   it("paused config blocks bets", async () => {
     const k = await createMarket(xTSLA, -1, 60);
     await program.methods.updateConfig(cfgArgs(), null, true).accounts({ config: configPda, admin: admin.publicKey }).rpc();

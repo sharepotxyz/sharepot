@@ -840,6 +840,73 @@
         }
       ],
       "args": []
+    },
+    {
+      "name": "void_stale_market",
+      "docs": [
+        "Proposer (or admin) voids a market that is still unproposed STALE_VOID_SECS after its resolve time: the price",
+        "it needs does not exist, so everyone is refunded. Refunding is the only thing this adds to the proposer's",
+        "powers; it can still never pick a winner. A market with a proposal on it is handled by the dispute window."
+      ],
+      "discriminator": [
+        91,
+        128,
+        56,
+        91,
+        77,
+        184,
+        56,
+        116
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "market",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.id",
+                "account": "Market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "proposer",
+          "signer": true
+        }
+      ],
+      "args": []
     }
   ],
   "accounts": [
@@ -1040,6 +1107,11 @@
       "code": 6017,
       "name": "UnsupportedMint",
       "msg": "token not supported: it has an active transfer hook"
+    },
+    {
+      "code": 6018,
+      "name": "NotStaleYet",
+      "msg": "market is not stale yet: the proposer may void it only 24 h after its resolve time"
     }
   ],
   "types": [

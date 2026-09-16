@@ -43,6 +43,13 @@ pub const MAX_FEE_BPS: u16 = 1_000; // 10% hard ceiling, protects users from a h
 pub const MAX_BUCKETS: usize = 8;
 pub const MAX_THRESHOLDS: usize = MAX_BUCKETS - 1;
 pub const NO_OUTCOME: u8 = 255;
+/// A market still unproposed this long after resolve_after_ts has no usable price (a session that never traded, a token
+/// whose quotes disappeared): the proposer may void it so every stake goes back, without waiting for the admin.
+pub const STALE_VOID_SECS: i64 = 86_400;
+/// True once a never-proposed market is stale enough for the proposer to void it.
+pub fn stale_void_allowed(now: i64, resolve_after_ts: i64) -> bool {
+    now >= resolve_after_ts.saturating_add(STALE_VOID_SECS)
+}
 
 #[program]
 pub mod sharepot {
@@ -236,6 +243,20 @@ pub mod sharepot {
         require!(m.status == MarketStatus::Open as u8 || m.status == MarketStatus::Proposed as u8, PotError::AlreadyFinal);
         m.status = MarketStatus::Voided as u8;
         m.resolved_at = Clock::get()?.unix_timestamp;
+        emit!(MarketResolved { market: m.key(), bucket: NO_OUTCOME, voided: true });
+        Ok(())
+    }
+
+    /// Proposer (or admin) voids a market that is still unproposed STALE_VOID_SECS after its resolve time: the price
+    /// it needs does not exist, so everyone is refunded. Refunding is the only thing this adds to the proposer's
+    /// powers; it can still never pick a winner. A market with a proposal on it is handled by the dispute window.
+    pub fn void_stale_market(ctx: Context<Propose>) -> Result<()> {
+        let now = Clock::get()?.unix_timestamp;
+        let m = &mut ctx.accounts.market;
+        require!(m.status == MarketStatus::Open as u8, PotError::MarketNotOpen);
+        require!(stale_void_allowed(now, m.resolve_after_ts), PotError::NotStaleYet);
+        m.status = MarketStatus::Voided as u8;
+        m.resolved_at = now;
         emit!(MarketResolved { market: m.key(), bucket: NO_OUTCOME, voided: true });
         Ok(())
     }
@@ -664,4 +685,17 @@ pub enum PotError {
     #[msg("bad bucket definition or index")] BadBuckets,
     #[msg("arithmetic overflow")] MathOverflow,
     #[msg("token not supported: it has an active transfer hook")] UnsupportedMint,
+    #[msg("market is not stale yet: the proposer may void it only 24 h after its resolve time")] NotStaleYet,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn stale_void_needs_a_full_day_after_resolve_time() {
+        assert!(!stale_void_allowed(1_000, 1_000));
+        assert!(!stale_void_allowed(1_000 + STALE_VOID_SECS - 1, 1_000));
+        assert!(stale_void_allowed(1_000 + STALE_VOID_SECS, 1_000));
+        assert!(stale_void_allowed(i64::MAX, i64::MAX)); // saturating: never wraps into "allowed too early"
+    }
 }
