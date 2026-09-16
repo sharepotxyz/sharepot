@@ -57,7 +57,7 @@ resolve on the same official close; each is staked and paid in its own token.
   Bets in the first quarter of the betting window (up to 6 h) pay 2 %. The rate is locked into the position when you
   bet, stake-weighted, so a late top-up cannot inherit an early rate.
 * **Fees are collected in the stock itself.** A pool staked in NVDAx pays its fee in NVDAx, swept to that token's
-  treasury account. There are nine pools, so fee income arrives as nine separate piles of stock, not as cash.
+  treasury account.
 * On a test network the operator **seeds** a market with a small fee-free prize so an empty pool looks alive. **On
   mainnet there is no seed** (`SEED_MARKETS=1` overrides it for a deliberate promotion). If nobody picked the winning
   range, everyone is refunded; a **voided** market refunds everyone in full.
@@ -78,8 +78,7 @@ asks:
 * **The cold-start problem is about depth, not solvency.** Splitting a day's volume across 9 pools × 4 ranges makes
   every range look thin, which is why a mainnet launch starts with one or two pools rather than all nine.
 
-Fee income accumulates as stock tokens in the treasury and stays there — it is not recycled into house prizes.
-Markets do not need them.
+Fee income is not recycled into house prizes. Markets do not need them.
 
 ## Leaderboard
 
