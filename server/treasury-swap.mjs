@@ -10,12 +10,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { Connection, Keypair, PublicKey, VersionedTransaction } from "@solana/web3.js";
-import { getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { getAssociatedTokenAddressSync, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { leaderboard, readSettlements } from "./points.mjs";
 import * as referrals from "./referrals.mjs";
 import { readRegistry } from "./chain-tokens.mjs";
 import { notify } from "./notify.mjs";
 import { sendSigned, signatureStatus } from "./tx.mjs";
+import { quoteProblem, simulationProblem } from "./swap-guard.mjs";
 
 const CLUSTER = process.env.CLUSTER ?? "mainnet";
 const RPC = process.env.CLUSTER_RPC ?? "https://api.mainnet-beta.solana.com";
@@ -26,6 +27,7 @@ const USDC = process.env.USDC_MINT ?? "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTD
 const MIN_USD = Number(process.env.SWAP_MIN_USD ?? 20);              // smaller lots stay in the token
 const MAX_IMPACT_PCT = Number(process.env.MAX_IMPACT_PCT ?? 0.3);    // per swap; a bigger lot is halved until it fits
 const SLIPPAGE_BPS = Number(process.env.SLIPPAGE_BPS ?? 50);
+const MAX_SWAP_LAMPORTS = BigInt(process.env.MAX_SWAP_LAMPORTS ?? 10_000_000);   // fees + priority + (first time) the USDC account's rent
 const MIN_LOT_USD = 5;                                               // stop halving below this
 const LEDGER = path.join(DATA, "treasury-swaps.jsonl");
 if (CLUSTER !== "mainnet" && !DRY) { console.error("treasury-swap: only mainnet has pools (DRY_RUN=1 to exercise the quoting)"); process.exit(2); }
@@ -68,6 +70,11 @@ const owed = new Map();   // mint → raw still to be paid out as rebates
 for (const d of referrals.pending(referrals.earnings(rows, db, (w) => pts.get(w) ?? 0), referrals.readPayouts(path.join(DATA, "referral-payouts.jsonl")))) owed.set(d.mint, (owed.get(d.mint) ?? 0n) + d.raw);
 log(`cluster=${CLUSTER} treasury=${treasury.publicKey.toBase58()} tokens=${tokens.size}${DRY ? " DRY RUN" : ""}${FAKE_USD ? ` fake balance $${FAKE_USD}` : ""}`);
 
+// Jupiter builds the transaction; the treasury signs only what a simulation shows to be the swap that was asked for
+// (swap-guard.mjs). Every token account the treasury owns is watched, not just the two the swap should touch.
+const usdcAta = getAssociatedTokenAddressSync(new PublicKey(USDC), treasury.publicKey, false, TOKEN_PROGRAM_ID).toBase58();
+const simulatedProblem = (tx, inputAta, amount, minOut) => simulationProblem(conn, tx, treasury.publicKey, { inputAta, outputAta: usdcAta, amount, minOut, maxLamports: MAX_SWAP_LAMPORTS });
+
 // 3. quote, split until the impact is acceptable, swap
 const quoteOk = async (mint, amount) => {
   for (;;) {
@@ -96,6 +103,8 @@ for (const [mint, t] of tokens) {
     if (DRY) { await sleep(1500); continue; }   // pace the quotes (free tier) in dry runs too
     const sw = await jup("/swap", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ quoteResponse: r.q, userPublicKey: treasury.publicKey.toBase58(), wrapAndUnwrapSol: true, dynamicComputeUnitLimit: true, prioritizationFeeLamports: { priorityLevelWithMaxLamports: { maxLamports: 1_000_000, priorityLevel: "medium" } } }) });
     const tx = VersionedTransaction.deserialize(Buffer.from(sw.swapTransaction, "base64"));
+    const bad = quoteProblem(r.q, { inputMint: mint, outputMint: USDC, amount: r.amount }) ?? await simulatedProblem(tx, ata.toBase58(), r.amount, BigInt(r.q.otherAmountThreshold));
+    if (bad) { failed++; log(`REFUSED to sign ${tag}: ${bad}`); await notify("⛔ 換 USDC:交易內容不符,拒簽", `${tag}\n${bad}`, "treasury-swap-guard", 60); continue; }
     const row = { mint, token: t.token, ui, usd: r.outUsd, impactPct: r.impact };
     let sig = null, landed = false;
     try { ({ sig, landed } = await sendSigned(conn, tx, [treasury], { lastValidBlockHeight: sw.lastValidBlockHeight, beforeSend: (s) => ledger({ status: "sent", ...row, raw: r.amount.toString(), signature: s }) })); }

@@ -14,6 +14,7 @@ import { leaderboard, readSettlements } from "./points.mjs";
 import * as referrals from "./referrals.mjs";
 import { notify } from "./notify.mjs";
 import { sendSigned, signatureStatus } from "./tx.mjs";
+import { provenRows } from "./settlement-proof.mjs";
 
 const CLUSTER = process.env.CLUSTER ?? "devnet";
 const RPC = process.env.CLUSTER_RPC ?? "https://api.devnet.solana.com";
@@ -22,6 +23,13 @@ const REFERRALS_FILE = process.env.REFERRALS_FILE ?? path.join(DATA, "referrals.
 const LEDGER = path.join(DATA, "referral-payouts.jsonl");
 const DRY = process.env.DRY_RUN === "1";
 const MIN_USD = Number(process.env.REFERRAL_MIN_USD ?? 0.05);      // below this the token-account rent would exceed the rebate
+// A wallet that does not hold the token yet gets its account opened (the treasury pays the rent) only once the rebate
+// owed in that token reaches this much; until then it stays owed and keeps growing. Small enough sums are not worth an
+// account the owner could close for its rent, and a referrer rarely holds every token its invitees bet in.
+const OPEN_ACCOUNT_USD = Number(process.env.REBATE_OPEN_ACCOUNT_USD ?? 10);
+// One run never sends more than this. Rebates are a share of a week's fees; a run that wants more is a mistake or an
+// attack, and a human looks first.
+const MAX_RUN_USD = Number(process.env.REBATE_MAX_RUN_USD ?? 2000);
 const keyFile = process.env.REBATE_KEYPAIR; if (!keyFile) { console.error("REBATE_KEYPAIR required"); process.exit(2); }
 const payer = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(keyFile, "utf8"))));
 const conn = new Connection(RPC, "confirmed");
@@ -40,7 +48,14 @@ for (const p of referrals.unsettledPayouts(payouts)) {
 payouts = referrals.readPayouts(LEDGER);
 
 // 2. what is due
-const rows = readSettlements(DATA), db = referrals.load(REFERRALS_FILE);
+// The settlement log comes from the app host: a row earns a rebate only once the chain confirms it
+// (settlement-proof.mjs). Forfeited positions paid their owner nothing and earn no rebate.
+const db = referrals.load(REFERRALS_FILE);
+const earns = (r) => { const b = db.bindings[r.owner]; if (!b) return false; try { return BigInt(r.fee ?? 0) > 0n; } catch { return false; } };
+const proof = await provenRows(conn, readSettlements(DATA).filter((r) => r.kind !== "forfeited"), { cacheFile: path.join(DATA, "settlement-proofs.json"), wanted: earns, log });
+const rows = proof.ok;
+if (proof.unknown.length) log(`held back: ${proof.unknown.length} settlement rows the chain could not be asked about (next run asks again)`);
+if (proof.rejected.length && !DRY) await notify("⛔ 推廣回饋:結算列對不上鏈上", `${CLUSTER}: ${proof.rejected.length} 筆結算列在鏈上找不到對應的派彩事件,已排除不付。\n${proof.rejected.slice(0, 5).map((x) => `${x.row.owner?.slice(0, 6)}… #${x.row.id}: ${x.why}`).join("\n")}\n若不是 RPC 問題,代表網站主機上的 settlements.jsonl 被改過。`, "referral-proof", 60);
 const pts = new Map(leaderboard(rows, { decimals: () => null, close: () => null }).entries.map((e) => [e.wallet, e.points]));
 const due = referrals.pending(referrals.earnings(rows, db, (w) => pts.get(w) ?? 0), payouts);
 log(`cluster=${CLUSTER} payer=${payer.publicKey.toBase58()} pending=${due.length}${DRY ? " DRY RUN" : ""}`);
@@ -51,10 +66,13 @@ for (const d of due) {
   const tag = `${d.wallet.slice(0, 6)}… ${d.token ?? d.mint.slice(0, 6)} ${d.decimals != null ? Number(d.raw) / 10 ** d.decimals : d.raw}${d.usd != null ? ` ($${d.usd.toFixed(2)})` : ""}`;
   if (d.usd != null && d.usd < MIN_USD) { skipped++; continue; }
   if (d.decimals == null) { log("skip (unknown decimals)", tag); skipped++; continue; }
+  if (CLUSTER === "mainnet" && d.usd == null) { log("waits (no dollar value known for this token: neither the minimum nor the run cap can be applied)", tag); skipped++; continue; }
   if (DRY) { log("would pay", tag); continue; }
   try {
     const mint = new PublicKey(d.mint), info = await conn.getParsedAccountInfo(mint), tp = info.value.owner;
     const from = getAssociatedTokenAddressSync(mint, payer.publicKey, false, tp), to = getAssociatedTokenAddressSync(mint, new PublicKey(d.wallet), false, tp);
+        if (!(await conn.getAccountInfo(to)) && !(d.usd != null && d.usd >= OPEN_ACCOUNT_USD)) { log(`waits (no ${d.token ?? "token"} account yet; opened once the rebate reaches $${OPEN_ACCOUNT_USD})`, tag); skipped++; continue; }
+    if (usdSent + (d.usd ?? 0) > MAX_RUN_USD) { log(`STOPPED: this run would pass $${MAX_RUN_USD}`, tag); failed++; await notify("⛔ 推廣回饋超過單次上限,已停", `${CLUSTER}: 本輪已付 $${usdSent.toFixed(2)},下一筆 ${tag} 會超過上限 $${MAX_RUN_USD}。確認沒問題再用 REBATE_MAX_RUN_USD 調高重跑。`, "referral-cap", 60); break; }
     const bal = await conn.getTokenAccountBalance(from).then((r) => BigInt(r.value.amount)).catch(() => 0n);
     const tx = new Transaction().add(createAssociatedTokenAccountIdempotentInstruction(payer.publicKey, to, new PublicKey(d.wallet), mint, tp));
     if (bal >= d.raw) tx.add(createTransferCheckedInstruction(from, mint, to, payer.publicKey, d.raw, d.decimals, [], tp));

@@ -32,7 +32,10 @@ export const bindMessage = (wallet, code) => `sharepot-referral v1\nwallet=${wal
 
 const EMPTY = () => ({ version: 1, wallets: {}, codes: {}, bindings: {} });
 export function load(file) {
-  try { const d = JSON.parse(fs.readFileSync(file, "utf8")); return { ...EMPTY(), ...d }; } catch { return EMPTY(); }
+  // Only "no file yet" is an empty book. Any other failure (unreadable, corrupt) must stop the caller: answering with
+  // an empty book would let the next save() wipe every binding.
+  let text; try { text = fs.readFileSync(file, "utf8"); } catch (e) { if (e?.code === "ENOENT") return EMPTY(); throw e; }
+  return { ...EMPTY(), ...JSON.parse(text) };
 }
 /** Atomic write: a crash mid-write must never leave a truncated file behind. */
 export function save(file, db) {
@@ -85,6 +88,9 @@ export function earnings(rows, db, pointsOf = () => 0) {
   for (const [w, b] of Object.entries(db.bindings)) entry(b.referrer).referred.add(w);
   for (const r of rows) {
     const b = db.bindings[r.owner]; if (!b) continue;
+    // Only what settled after the binding counts: a binding (the file is shared across networks) never reaches back
+    // over fees the wallet paid before it was invited.
+    if (b.at && r.at && String(r.at) < String(b.at)) continue;
     let fee; try { fee = BigInt(r.fee ?? 0); } catch { continue; }
     if (fee <= 0n) continue;
     add(b.referrer, r, (fee * BigInt(tierBps(pointsOf(b.referrer)))) / 10000n, "asReferrer");
@@ -101,7 +107,10 @@ export function earnings(rows, db, pointsOf = () => 0) {
 // was really paid, whatever happened to the process in between; a "sent" without "landed"/"void" is settled by the
 // next run from the chain (referral-payout.mjs reconcile).
 export function readPayouts(file) {
-  try { return fs.readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; }
+  // Only "no file yet" is an empty ledger. A torn or corrupt line must stop the payout, not read as "nothing was ever
+  // paid" — that would pay every rebate in history a second time.
+  let text; try { text = fs.readFileSync(file, "utf8"); } catch (e) { if (e?.code === "ENOENT") return []; throw e; }
+  return text.split("\n").filter(Boolean).map((l, i) => { try { return JSON.parse(l); } catch { throw new Error(`${file}: line ${i + 1} is not valid JSON; refusing to treat the payout ledger as empty`); } });
 }
 /** The payments that stand: sent rows (and legacy rows) whose signature was not voided. */
 export function effectivePayouts(payouts) {

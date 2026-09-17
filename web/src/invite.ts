@@ -34,7 +34,7 @@ async function render() {
         <ol class="fsteps">
           <li>Share your link. A wallet that arrives through it and places its <b>first</b> bet is bound to you — permanently, on every network.</li>
           <li>Fees are charged on winnings only (3% of what a winner takes from the losing ranges). When an invited wallet wins, you earn a share of that fee and they get ${pct(j.refereeBps)} of it back — both in the same stock token as the pool.</li>
-          <li>Payouts go straight to your wallet once a week; nothing to claim. Amounts under $0.05 wait for the next round.</li>
+          <li>Payouts go straight to your wallet once a week; nothing to claim. Amounts under $0.05 wait for the next round. If your wallet does not hold a token yet, its rebate accumulates and is sent once it reaches $10 (we open the token account for you then).</li>
         </ol>
         <table class="tbl"><thead><tr><th>Your all-time points</th><th class="r">Your share</th></tr></thead><tbody>${tiers}</tbody></table>
       </div>`;

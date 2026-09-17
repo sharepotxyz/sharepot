@@ -21,7 +21,12 @@ log() { echo "$(date -u +%FT%TZ) $*"; }
 #    fetched once, only when this host has no ledger at all (first run, or a rebuilt host).
 rsync -az "$REMOTE:$REMOTE_DATA/settlements.jsonl" "$REMOTE:$REMOTE_DATA/referrals.json" "$REMOTE:$REMOTE_DATA/chain-tokens.json" "$LOCAL_DATA/" 2>/dev/null || true
 LEDGER="$LOCAL_DATA/referral-payouts.jsonl"
-if [ ! -f "$LEDGER" ]; then rsync -az "$REMOTE:$REMOTE_DATA/referral-payouts.jsonl" "$LOCAL_DATA/" 2>/dev/null && log "ledger fetched from the app host (this host had none)" || true; fi
+if [ ! -f "$LEDGER" ]; then
+  # "the app host has none either" (first run ever) is fine; "could not tell" is not: paying without the ledger would
+  # pay every rebate in history again.
+  if ! has=$(ssh -o BatchMode=yes -o ConnectTimeout=20 "$REMOTE" "[ -f $REMOTE_DATA/referral-payouts.jsonl ] && echo yes || echo no"); then log "cannot reach the app host to look for a ledger; not paying"; exit 1; fi
+  if [ "$has" = yes ]; then rsync -az "$REMOTE:$REMOTE_DATA/referral-payouts.jsonl" "$LOCAL_DATA/" || { log "ledger exists on the app host but could not be fetched; not paying"; exit 1; }; log "ledger fetched from the app host (this host had none)"; fi
+fi
 rows() { [ -f "$1" ] && wc -l < "$1" || echo 0; }
 before=$(rows "$LEDGER")
 
