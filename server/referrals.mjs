@@ -93,9 +93,23 @@ export function earnings(rows, db, pointsOf = () => 0) {
   return { byWallet };
 }
 
+// The payout ledger (referral-payouts.jsonl) is append-only and written around the send, not after it:
+//   { status: "sent",    raw: N,  signature }  written BEFORE the transaction goes out (the signature is known first)
+//   { status: "landed",  raw: 0,  signature }  once it is confirmed
+//   { status: "void",    raw: -N, signature }  once its blockhash expired without it landing: the "sent" is cancelled
+// Rows without a status are from before this scheme and count as paid. Summing `raw` over every row is therefore what
+// was really paid, whatever happened to the process in between; a "sent" without "landed"/"void" is settled by the
+// next run from the chain (referral-payout.mjs reconcile).
 export function readPayouts(file) {
   try { return fs.readFileSync(file, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; }
 }
+/** The payments that stand: sent rows (and legacy rows) whose signature was not voided. */
+export function effectivePayouts(payouts) {
+  const voided = new Set(payouts.filter((p) => p.status === "void").map((p) => p.signature));
+  return payouts.filter((p) => (!p.status || p.status === "sent") && !voided.has(p.signature));
+}
+/** Sent rows the chain has not yet answered for. */
+export const unsettledPayouts = (payouts) => { const done = new Set(payouts.filter((p) => p.status === "landed" || p.status === "void").map((p) => p.signature)); return payouts.filter((p) => p.status === "sent" && !done.has(p.signature)); };
 /** earned − paid per (wallet, mint), as bigint raw units; entries ≤ 0 are dropped. */
 export function pending(earn, payouts) {
   const paid = new Map();

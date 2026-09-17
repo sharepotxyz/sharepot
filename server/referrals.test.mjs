@@ -71,3 +71,18 @@ test("save is atomic and load round-trips", () => {
   assert.deepEqual(fs.readdirSync(dir), ["referrals.json"]);
   assert.equal(REFEREE_BPS, 1000);
 });
+
+test("ledger: a sent row counts as paid, a void row cancels it, landed adds nothing; unsettled = sent without an answer", async () => {
+  const { effectivePayouts, unsettledPayouts } = await import("./referrals.mjs");
+  const db = load("/nonexistent"); ensureCode(db, A); bind(db, { wallet: B, code: codeFor(A), cluster: "devnet" });
+  const earn = earnings([row(B, 10_000)], db);              // A earns 2000 raw (20 %), B gets 1000 raw back
+  const sent = { status: "sent", wallet: A, mint: MINT, raw: "2000", signature: "s1" };
+  assert.deepEqual(pending(earn, [sent]).map((p) => p.wallet), [B]);                       // A paid (sent), B still due
+  assert.deepEqual(pending(earn, [sent, { status: "landed", wallet: A, mint: MINT, raw: "0", signature: "s1" }]).map((p) => p.wallet), [B]);
+  const voided = [sent, { status: "void", wallet: A, mint: MINT, raw: "-2000", signature: "s1" }];
+  assert.deepEqual(pending(earn, voided).map((p) => p.wallet).sort(), [A, B].sort());      // voided: A due again
+  assert.equal(effectivePayouts(voided).length, 0);
+  assert.equal(effectivePayouts([sent, { wallet: B, mint: MINT, raw: "1", signature: "legacy" }]).length, 2);
+  assert.deepEqual(unsettledPayouts([sent]).map((p) => p.signature), ["s1"]);
+  assert.equal(unsettledPayouts([sent, { status: "landed", signature: "s1", raw: "0" }]).length, 0);
+});

@@ -17,6 +17,7 @@ import idlJson from "../idl/sharepot.json" with { type: "json" };
 import { closeMove, chainMove, parseMetric, nasdaqMarketInfo, nyToUnix } from "./prices.mjs";
 import { readRegistry } from "./chain-tokens.mjs";
 import { notify } from "./notify.mjs";
+import { sendSigned } from "./tx.mjs";
 // A market still unproposed this long after resolve_after_ts is overdue: one Telegram alert per market per 6 h.
 const OVERDUE_SECS = Number(process.env.OVERDUE_SECS ?? 7200);
 // ...and this long after it, with still no usable price, the proposer voids it on-chain (void_stale_market: the program
@@ -79,7 +80,8 @@ function payoutFor(m, p) {
   const winPool = pools[w], losePool = pools.reduce((a, b) => a + b, 0n) - winPool, stake = amounts[w];
   if (winPool === 0n) return { payout: total, fee: 0n, kind: "refund" };
   if (stake === 0n) return { payout: 0n, fee: 0n, kind: "lost" };
-  const gross = (losePool * stake) / winPool, fee = (gross * feeW[w]) / (stake * 10000n), seed = (BigInt(m.seedAmount.toString()) * stake) / winPool;
+  // fee rate reduced to whole bps first, exactly as compute_payout does (fee_w / stake, capped at MAX_FEE_BPS)
+  const bps = feeW[w] / stake, gross = (losePool * stake) / winPool, fee = (gross * (bps < 1000n ? bps : 1000n)) / 10000n, seed = (BigInt(m.seedAmount.toString()) * stake) / winPool;
   return { payout: stake + gross - fee + seed, fee, kind: "won" };
 }
 const SETTLEMENTS = path.join(DATA, "settlements.jsonl");
@@ -175,9 +177,14 @@ async function propose(markets, now) {
     if (DRY) continue;
     const evidence = { market: publicKey.toBase58(), id: m.id.toNumber(), metric, ...ev.detail, movePpm: ev.value, source: ev.evidence.source, response: ev.evidence.response };
     const hash = createHash("sha256").update(ev.evidence.response).digest();
-    const sig = await program.methods.proposeResolution(new BN(ev.value), Array.from(hash))
-      .accounts({ config: configPda, market: publicKey, proposer: proposer.publicKey }).rpc();
-    fs.writeFileSync(path.join(DATA, "evidence", `${m.id}.json`), JSON.stringify({ ...evidence, thresholds: thr, bucket, responseSha256: hash.toString("hex"), signature: sig, at: new Date().toISOString() }, null, 2));
+    const tx = await program.methods.proposeResolution(new BN(ev.value), Array.from(hash))
+      .accounts({ config: configPda, market: publicKey, proposer: proposer.publicKey }).transaction();
+    // The evidence file is written with the signature BEFORE the send: if the proposal lands but its confirmation is
+    // lost to a rate-limited RPC, the market is Proposed on-chain and the evidence (and the close the leaderboard
+    // scores on) must already exist. A send that provably did not land is simply retried next run, overwriting this.
+    const write = (sig) => fs.writeFileSync(path.join(DATA, "evidence", `${m.id}.json`), JSON.stringify({ ...evidence, thresholds: thr, bucket, responseSha256: hash.toString("hex"), signature: sig, at: new Date().toISOString() }, null, 2));
+    const { sig, landed } = await sendSigned(conn, tx, [proposer], { beforeSend: write });
+    if (!landed) { fs.rmSync(path.join(DATA, "evidence", `${m.id}.json`), { force: true }); log(`  proposal did not land before its blockhash expired; next run retries`); continue; }
     log(`  proposed ${sig}`);
    } catch (e) {
     log(`market #${m.id}: propose failed: ${e?.message?.split("\n")[0]}`);
@@ -217,10 +224,22 @@ async function settle(markets, cfg) {
           const ownerToken = (await getOrCreateAssociatedTokenAccount(conn, proposer, mint, p.owner, false, "confirmed", undefined, tokenProgram)).address;
           const fresh = await program.account.market.fetch(publicKey);
           const { payout, fee, kind } = payoutFor(fresh, p);
-          const sig = await program.methods.settlePosition().accounts({ market: publicKey, position: ppk, payer: p.payer, vault: vaultPda(publicKey), mint, ownerToken, cranker: proposer.publicKey, tokenProgram }).rpc();
+          const tx = await program.methods.settlePosition().accounts({ market: publicKey, position: ppk, payer: p.payer, vault: vaultPda(publicKey), mint, ownerToken, cranker: proposer.publicKey, tokenProgram }).transaction();
+          // The row below is the only record of this payout (leaderboard, referral rebates, the wallet's history): a
+          // position closes on-chain when it is paid, so a payout whose confirmation was lost would otherwise vanish.
+          // sendSigned polls through rate limits until the outcome is certain; if it still cannot tell, the position
+          // itself is asked: gone from the chain means paid.
+          let sig = null, ok = false, note = null;
+          try { ({ sig, landed: ok } = await sendSigned(conn, tx, [proposer], { beforeSend: (s) => { sig = s; } })); }
+          catch (e) { note = String(e?.message ?? e).split("\n")[0].slice(0, 160); }
+          if (!ok) {
+            const still = await program.account.position.fetchNullable(ppk).catch(() => undefined);
+            if (still !== null) throw new Error(note ?? "did not land before its blockhash expired");
+            ok = true; note = `confirmation lost (${note ?? "expired"}); position gone from the chain, so it was paid`;
+          }
           fs.appendFileSync(SETTLEMENTS, JSON.stringify({ at: new Date().toISOString(), market: publicKey.toBase58(), id: m.id.toNumber(), metric: tag(m.metric), mint: mint.toBase58(), owner: p.owner.toBase58(), amounts: p.amounts.slice(0, fresh.nBuckets).map((x) => x.toString()), status: fresh.status, outcome: fresh.outcome, observed: fresh.proposedValue.toString(), kind, payout: payout.toString(), fee: fee.toString(), signature: sig,
-            token, decimals: meta.decimals, multiplier: meta.multiplier, close, pools: fresh.pools.slice(0, fresh.nBuckets).map((x) => x.toString()), seed: fresh.seedAmount.toString() }) + "\n");
-          log(`  settled ${p.owner.toBase58()} ${kind} payout=${payout} ${sig}`);
+            token, decimals: meta.decimals, multiplier: meta.multiplier, close, pools: fresh.pools.slice(0, fresh.nBuckets).map((x) => x.toString()), seed: fresh.seedAmount.toString(), ...(note ? { note } : {}) }) + "\n");
+          log(`  settled ${p.owner.toBase58()} ${kind} payout=${payout} ${sig}${note ? ` (${note})` : ""}`);
         } catch (e) {
           log(`  FAILED ${p.owner.toBase58()}: ${e.message?.split("\n")[0]}`);
           notify("⚠️ 有倉位付不出去", `#${m.id} ${tag(m.metric)} owner ${p.owner.toBase58().slice(0, 8)}…\n${String(e.message ?? e).split("\n")[0].slice(0, 200)}\n(每輪重試;若持續失敗,該盤無法 sweep)`, `settle:${ppk.toBase58()}`, 360);

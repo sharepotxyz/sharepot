@@ -166,7 +166,7 @@ function leaderboardCached(key, since) {
 // ---------- helpers ----------
 const seenAddr = new Map(), seenIp = new Map(), seenDispute = new Map(); let seenDay = "", faucetToday = 0;
 const dayKey = () => new Date().toISOString().slice(0, 10);
-function rollDay() { const d = dayKey(); if (d !== seenDay) { seenDay = d; seenAddr.clear(); seenIp.clear(); seenDispute.clear(); faucetToday = 0; } }
+function rollDay() { const d = dayKey(); if (d !== seenDay) { seenDay = d; seenAddr.clear(); seenIp.clear(); seenDispute.clear(); seenLookup.clear(); faucetToday = 0; } }
 // Behind Cloudflare the real client is CF-Connecting-IP; direct localhost callers fall back to the socket address.
 const clientIp = (req) => String(req.headers["cf-connecting-ip"] ?? req.socket.remoteAddress ?? "?").trim();
 const json = (res, code, body, extra = {}) => { res.writeHead(code, { "content-type": "application/json", "access-control-allow-origin": "*", "access-control-allow-headers": "content-type", "access-control-allow-methods": "GET,POST,OPTIONS", ...extra }); res.end(JSON.stringify(body)); };
@@ -182,16 +182,27 @@ const settledRowsOf = (wallet) => readSettlements(DATA).filter((r) => r.owner ==
 // Open positions of a wallet straight from the chain (they close on payout, so settled history is checked separately).
 const openPositionsOf = async (wallet) => (await ro.account.position.all([{ dataSize: ro.account.position.size }, { memcmp: { offset: 40, bytes: wallet } }])).length;
 const betCache = new Map();   // wallet → { at, open, settled }
+// A cache miss costs one getProgramAccounts call on the RPC this process also reads the markets with. A stranger can
+// trigger misses at will (any address is a valid question), so they are budgeted per network per day and globally per
+// minute; over budget the answer is 429, never a slower site.
+const LOOKUP_IP_DAILY = Number(process.env.LOOKUP_IP_DAILY ?? 60), LOOKUP_PER_MINUTE = Number(process.env.LOOKUP_PER_MINUTE ?? 30);
+const seenLookup = new Map(); let lookupMinute = { at: 0, n: 0 };
+function chargeLookup(ip) {
+  rollDay(); const minute = Math.floor(Date.now() / 60_000); if (lookupMinute.at !== minute) lookupMinute = { at: minute, n: 0 };
+  if (lookupMinute.n >= LOOKUP_PER_MINUTE || (seenLookup.get(ip) ?? 0) >= LOOKUP_IP_DAILY) throw Object.assign(new Error("too many wallet lookups; try again later"), { status: 429 });
+  lookupMinute.n++; seenLookup.set(ip, (seenLookup.get(ip) ?? 0) + 1);
+}
 // "No bets yet" goes stale the moment the first bet lands, so it is only trusted for 10 s; a positive answer for 60 s.
-async function betHistory(wallet, fresh = false) {
+async function betHistory(wallet, fresh = false, ip = "?") {
   const hit = betCache.get(wallet); if (!fresh && hit && Date.now() - hit.at < (hit.open + hit.settled ? 60_000 : 10_000)) return hit;
+  chargeLookup(ip);
   const v = { at: Date.now(), open: await openPositionsOf(wallet), settled: settledRowsOf(wallet).length };
   betCache.set(wallet, v); return v;
 }
 const referralPoints = () => { const b = leaderboardCached("all", 0); return new Map(b.entries.map((e) => [e.wallet, e.points])); };
 function referralView(wallet) {
   const db = referrals.load(REFERRALS_FILE), rows = readSettlements(DATA), pts = referralPoints();
-  const earn = referrals.earnings(rows, db, (w) => pts.get(w) ?? 0), payouts = referrals.readPayouts(REFERRAL_PAYOUTS);
+  const earn = referrals.earnings(rows, db, (w) => pts.get(w) ?? 0), payouts = referrals.effectivePayouts(referrals.readPayouts(REFERRAL_PAYOUTS));
   const e = earn.byWallet.get(wallet), own = db.wallets[wallet], b = db.bindings[wallet] ?? null, points = pts.get(wallet) ?? 0;
   const ui = (raw, m) => (m.decimals == null ? null : (Number(raw) / 10 ** m.decimals) * (m.multiplier || 1));
   const paidBy = new Map(); for (const p of payouts) if (p.wallet === wallet) paidBy.set(p.mint, (paidBy.get(p.mint) ?? 0n) + BigInt(p.raw));
@@ -305,7 +316,7 @@ const server = http.createServer(async (req, res) => {
     // GET /referral/:wallet → the wallet's code, link, binding and earnings
     const rw = p.match(/^\/referral\/([1-9A-HJ-NP-Za-km-z]{32,44})$/);
     if (rw && req.method === "GET") {
-      const h = await betHistory(rw[1]);
+      const h = await betHistory(rw[1], false, clientIp(req));
       return json(res, 200, { ...referralView(rw[1]), eligible: h.open + h.settled > 0, bets: h.open + h.settled, firstBet: h.settled === 0 && h.open > 0 }, { "cache-control": "no-store" });
     }
     // POST /referral/code {wallet} → create the wallet's code once it has placed a bet (nothing to sign: a code only
@@ -315,7 +326,7 @@ const server = http.createServer(async (req, res) => {
       const wallet = String(b.wallet ?? ""); if (!isPubkey(wallet)) return json(res, 400, { error: "wallet required" });
       const db = referrals.load(REFERRALS_FILE);
       if (!db.wallets[wallet]) {
-        const h = await betHistory(wallet, true);
+        const h = await betHistory(wallet, true, clientIp(req));
         if (h.open + h.settled === 0) return json(res, 403, { error: "place a bet first — the link unlocks with your first stake" });
         referrals.ensureCode(db, wallet); referrals.save(REFERRALS_FILE, db);
         console.log("referral code", wallet.slice(0, 6), db.wallets[wallet].code);
@@ -333,7 +344,7 @@ const server = http.createServer(async (req, res) => {
       const db = referrals.load(REFERRALS_FILE);
       if (db.bindings[wallet]) return json(res, db.bindings[wallet].code === code ? 200 : 409, db.bindings[wallet].code === code ? { ok: true, already: true } : { error: "this wallet is already bound to another code", permanent: true });
       if (!referrals.referrerOf(db, code)) return json(res, 404, { error: "unknown referral code", permanent: true });
-      const h = await betHistory(wallet, true);
+      const h = await betHistory(wallet, true, clientIp(req));
       if (h.open === 0 && h.settled === 0) return json(res, 409, { error: "place your first bet, then the link binds" });
       if (h.settled > 0) return json(res, 409, { error: "a referral link only counts on a wallet's first bet", permanent: true });
       const r = referrals.bind(db, { wallet, code, cluster: CLUSTER });
@@ -404,7 +415,10 @@ const server = http.createServer(async (req, res) => {
       }
     }
     json(res, 404, { error: "not found" });
-  } catch (e) { console.error(e); json(res, 500, { error: "internal error" }); }
+  } catch (e) {
+    if (e?.status === 429 || e?.status === 413) return json(res, e.status, { error: e.message });
+    console.error(e); json(res, 500, { error: "internal error" });
+  }
 });
 server.headersTimeout = 15_000; server.requestTimeout = 60_000; server.keepAliveTimeout = 10_000;
 server.listen(PORT, "127.0.0.1", () => console.log(`sharepot api+site on 127.0.0.1:${PORT} cluster=${CLUSTER} faucet=${!!faucet} tokens=${tokens.length} static=${STATIC} rpc=${RPC.replace(/api-key=[^&\s]*/, "api-key=…")}`));
