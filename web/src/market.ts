@@ -6,6 +6,7 @@ import { STATUS_LABEL, buildEvents, eventKey, payoutMultiple, statusOf, type Eve
 import { CATEGORY_NAME, bucketLabel, bucketName, fmtAmt, fmtMove, fmtPx, fmtUsd, issuerOf, loadPrices, loadStocks, markOf, prevCloseOf, priceOf, question, sessionLabel, toRaw, tokenSymbol, uiAmount, usdOf } from "./stocks";
 import { balances, bucketColor, esc, fmtTs, getSession, mountTopbar, onSession, openWalletMenu, refreshBalances, shareBalance, tickerBadge, timeLeft, trackStocks } from "./ui";
 import { API_BASE, IS_TEST, explorerTx } from "./config";
+import { bindReferralAfterBet } from "./referral";
 
 const qs = new URLSearchParams(location.search);
 const root = document.getElementById("event")!;
@@ -148,7 +149,8 @@ function renderTrade() {
       await confirmBySig(sig);
       const done = `Staked ${fmtAmt(m, a)} ${tok} on “${esc(full(bucket))}”. <a href="${explorerTx(sig)}" target="_blank" rel="noopener">view tx</a>`;
       await refreshBalances(); await load(true);
-      const m2 = document.getElementById("msg"); if (m2) m2.innerHTML = `<div class="msg ok">${done}</div>`;
+      const refNote = await bindReferralAfterBet(sess);
+      const m2 = document.getElementById("msg"); if (m2) m2.innerHTML = `<div class="msg ok">${done}${refNote ? `<br>${esc(refNote)}` : ""}</div>`;
     } catch (e: any) { msg.innerHTML = `<div class="msg err">${esc(e?.message ?? e)}</div>`; go.disabled = false; }
   };
   showPosition();

@@ -21,6 +21,7 @@ import { readRegistry, asStock, REGISTRY_FILE } from "./chain-tokens.mjs";
 import { leaderboard, readSettlements } from "./points.mjs";
 import { homeHtml, eventHtml } from "./ssr.mjs";
 import { notify } from "./notify.mjs";
+import * as referrals from "./referrals.mjs";
 
 const PORT = Number(process.env.PORT ?? 5041);
 const CLUSTER = process.env.CLUSTER ?? "devnet";
@@ -171,6 +172,36 @@ const clientIp = (req) => String(req.headers["cf-connecting-ip"] ?? req.socket.r
 const json = (res, code, body, extra = {}) => { res.writeHead(code, { "content-type": "application/json", "access-control-allow-origin": "*", "access-control-allow-headers": "content-type", "access-control-allow-methods": "GET,POST,OPTIONS", ...extra }); res.end(JSON.stringify(body)); };
 const readBody = (req, max = 4096) => new Promise((ok, err) => { let b = ""; req.on("data", (c) => { b += c; if (b.length > max) { err(Object.assign(new Error("body too large"), { status: 413 })); req.destroy(); } }); req.on("end", () => ok(b)); req.on("error", err); });
 const DISPUTES = path.join(DATA, "disputes.jsonl");
+// ---------- referrals (referrals.mjs) ----------
+// One file for every network (keyed by wallet address): point REFERRALS_FILE at the same path on mainnet.
+const REFERRALS_FILE = process.env.REFERRALS_FILE ?? path.join(DATA, "referrals.json");
+const REFERRAL_PAYOUTS = path.join(DATA, "referral-payouts.jsonl");
+const SITE_URL = process.env.SITE_URL ?? (CLUSTER === "mainnet" ? "https://sharepot.xyz" : "https://devnet.sharepot.xyz");
+const isPubkey = (s) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(String(s ?? ""));
+const settledRowsOf = (wallet) => readSettlements(DATA).filter((r) => r.owner === wallet);
+// Open positions of a wallet straight from the chain (they close on payout, so settled history is checked separately).
+const openPositionsOf = async (wallet) => (await ro.account.position.all([{ dataSize: ro.account.position.size }, { memcmp: { offset: 40, bytes: wallet } }])).length;
+const betCache = new Map();   // wallet → { at, open, settled }
+// "No bets yet" goes stale the moment the first bet lands, so it is only trusted for 10 s; a positive answer for 60 s.
+async function betHistory(wallet, fresh = false) {
+  const hit = betCache.get(wallet); if (!fresh && hit && Date.now() - hit.at < (hit.open + hit.settled ? 60_000 : 10_000)) return hit;
+  const v = { at: Date.now(), open: await openPositionsOf(wallet), settled: settledRowsOf(wallet).length };
+  betCache.set(wallet, v); return v;
+}
+const referralPoints = () => { const b = leaderboardCached("all", 0); return new Map(b.entries.map((e) => [e.wallet, e.points])); };
+function referralView(wallet) {
+  const db = referrals.load(REFERRALS_FILE), rows = readSettlements(DATA), pts = referralPoints();
+  const earn = referrals.earnings(rows, db, (w) => pts.get(w) ?? 0), payouts = referrals.readPayouts(REFERRAL_PAYOUTS);
+  const e = earn.byWallet.get(wallet), own = db.wallets[wallet], b = db.bindings[wallet] ?? null, points = pts.get(wallet) ?? 0;
+  const ui = (raw, m) => (m.decimals == null ? null : (Number(raw) / 10 ** m.decimals) * (m.multiplier || 1));
+  const paidBy = new Map(); for (const p of payouts) if (p.wallet === wallet) paidBy.set(p.mint, (paidBy.get(p.mint) ?? 0n) + BigInt(p.raw));
+  const earned = e ? [...e.earned.values()].map((m) => ({ mint: m.mint, token: m.token, earned: ui(m.raw, m), asReferrer: ui(m.asReferrer, m), asReferee: ui(m.asReferee, m), paid: ui(paidBy.get(m.mint) ?? 0n, m), usd: m.usd, settlements: m.rows })) : [];
+  return { wallet, code: own?.code ?? null, link: own ? `${SITE_URL}/?ref=${own.code}` : null,
+    bound: b ? { code: b.code, referrer: b.referrer.slice(0, 4) + "…" + b.referrer.slice(-4), at: b.at } : null,
+    referred: e?.referred.size ?? 0, points, tierBps: referrals.tierBps(points), nextTier: referrals.nextTier(points), refereeBps: referrals.REFEREE_BPS, tiers: referrals.REFERRER_TIERS,
+    earned, earnedUsd: earned.reduce((a, x) => a + (x.usd ?? 0), 0),
+    payouts: payouts.filter((p) => p.wallet === wallet).slice(-20).reverse().map(({ at, mint, token, raw, ui: amount, signature }) => ({ at, mint, token, raw, amount, signature })) };
+}
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".json": "application/json", ".ico": "image/x-icon", ".woff2": "font/woff2", ".mp4": "video/mp4", ".jpg": "image/jpeg" };
 // Pages ship with the data they render on first paint (markets, config, listed stocks, prices from the in-memory
 // caches) embedded as window.__BOOT__, so the browser needs no API round trip to Germany after the scripts load.
@@ -263,6 +294,53 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { window: win, at: board.at, totals: board.totals,
         entries: board.entries.slice(0, limit).map((e) => ({ ...e, test: own.has(e.wallet) })) },
         { "cache-control": "public, max-age=30" });
+    }
+    // ---------- referrals ----------
+    // GET /referral/lookup/:code → who a code belongs to (for the "invited by" banner)
+    const rl = p.match(/^\/referral\/lookup\/([A-Za-z0-9]{4,12})$/);
+    if (rl) {
+      const code = referrals.normalizeCode(rl[1]), w = referrals.referrerOf(referrals.load(REFERRALS_FILE), code);
+      return json(res, 200, w ? { valid: true, code, referrer: w.slice(0, 4) + "…" + w.slice(-4), refereeBps: referrals.REFEREE_BPS } : { valid: false, code }, { "cache-control": "public, max-age=60" });
+    }
+    // GET /referral/:wallet → the wallet's code, link, binding and earnings
+    const rw = p.match(/^\/referral\/([1-9A-HJ-NP-Za-km-z]{32,44})$/);
+    if (rw && req.method === "GET") {
+      const h = await betHistory(rw[1]);
+      return json(res, 200, { ...referralView(rw[1]), eligible: h.open + h.settled > 0, bets: h.open + h.settled, firstBet: h.settled === 0 && h.open > 0 }, { "cache-control": "no-store" });
+    }
+    // POST /referral/code {wallet} → create the wallet's code once it has placed a bet (nothing to sign: a code only
+    // ever pays its owner)
+    if (p === "/referral/code" && req.method === "POST") {
+      let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: "bad body" }); }
+      const wallet = String(b.wallet ?? ""); if (!isPubkey(wallet)) return json(res, 400, { error: "wallet required" });
+      const db = referrals.load(REFERRALS_FILE);
+      if (!db.wallets[wallet]) {
+        const h = await betHistory(wallet, true);
+        if (h.open + h.settled === 0) return json(res, 403, { error: "place a bet first — the link unlocks with your first stake" });
+        referrals.ensureCode(db, wallet); referrals.save(REFERRALS_FILE, db);
+        console.log("referral code", wallet.slice(0, 6), db.wallets[wallet].code);
+      }
+      return json(res, 200, { ...referralView(wallet), eligible: true });
+    }
+    // POST /referral/bind {wallet, code, signature} → bind a first-time bettor to the code it arrived with. The wallet
+    // signs the canonical message; only a wallet with an open position and no settled history qualifies (= first bet).
+    if (p === "/referral/bind" && req.method === "POST") {
+      let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: "bad body" }); }
+      const wallet = String(b.wallet ?? ""), code = referrals.normalizeCode(b.code);
+      if (!isPubkey(wallet) || !referrals.CODE_RE.test(code)) return json(res, 400, { error: "wallet and code required" });
+      let ok = false; try { ok = nacl.sign.detached.verify(new TextEncoder().encode(referrals.bindMessage(wallet, code)), bs58.decode(String(b.signature ?? "")), bs58.decode(wallet)); } catch {}
+      if (!ok) return json(res, 401, { error: "signature does not match the wallet" });
+      const db = referrals.load(REFERRALS_FILE);
+      if (db.bindings[wallet]) return json(res, db.bindings[wallet].code === code ? 200 : 409, db.bindings[wallet].code === code ? { ok: true, already: true } : { error: "this wallet is already bound to another code", permanent: true });
+      if (!referrals.referrerOf(db, code)) return json(res, 404, { error: "unknown referral code", permanent: true });
+      const h = await betHistory(wallet, true);
+      if (h.open === 0 && h.settled === 0) return json(res, 409, { error: "place your first bet, then the link binds" });
+      if (h.settled > 0) return json(res, 409, { error: "a referral link only counts on a wallet's first bet", permanent: true });
+      const r = referrals.bind(db, { wallet, code, cluster: CLUSTER });
+      if (r.error) return json(res, 409, { error: r.error, permanent: true });
+      referrals.save(REFERRALS_FILE, db);
+      console.log("referral bind", wallet.slice(0, 6), "→", code);
+      return json(res, 200, { ok: true });
     }
     // Public: raise a dispute on a proposed result. The wallet signs a canonical message so a dispute is attributable;
     // resolution happens on-chain (re-propose / void) inside the dispute window.

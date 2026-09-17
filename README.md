@@ -90,6 +90,19 @@ evidence file the result was derived from, so NVDAx and NVDAon score alike and n
 frozen into the settlement record at payout time (`server/resolve.mjs`); `server/points.mjs` only adds up what the
 crank wrote. The board is at `/leaderboard.html`, backed by `GET /api/leaderboard?window=7d|30d|all`.
 
+## Invite links
+
+Anyone who has placed a bet gets a link (`/?ref=CODE`, code derived from the wallet address). A wallet that arrives
+through it and places its **first** bet is bound to that code — the wallet signs the binding, so nobody can claim
+someone else's wallet, and the file is keyed by address, so the binding holds on devnet and mainnet alike.
+
+Fees are charged on winnings only, in the pool's token. When a bound wallet's winning bet settles, the referrer earns
+20 % of that fee (25 % from 10 000 all-time points, 30 % from 100 000) and the invitee gets 10 % of it back, both in
+the same token. `server/referral-payout.mjs` pays the balance out once a week from the operator's rebate wallet;
+`data/referral-payouts.jsonl` is the ledger, `data/referrals.json` the bindings, and everything else is recomputed from
+`settlements.jsonl` so nothing is counted twice. Rules and maths: `server/referrals.mjs` (tests in
+`referrals.test.mjs`).
+
 ## Why you can trust the settlement
 
 1. **The server never holds funds.** Stakes sit in a program-owned vault per market; only the program's payout math can

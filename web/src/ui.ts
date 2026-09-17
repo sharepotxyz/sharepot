@@ -4,6 +4,7 @@ import { API_BASE, CLUSTER, IS_TEST } from "./config";
 import { STATUS, connection, type MarketView } from "./chain";
 import { CATEGORIES, STOCK_NAMES, STOCK_ORDER, issuerOf, priceOf, symbolOf, tokenSymbol, uiAmount } from "./stocks";
 import { connectWallet, devWallet, listWallets, type Session } from "./wallet";
+import { bindIfPending, captureReferral } from "./referral";
 
 /** HTML-escape anything that did not originate in our own source. */
 export const esc = (v: unknown) => String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
@@ -45,6 +46,8 @@ export function mountTopbar(opts: TopbarOpts = {}) {
     : `<span class="netbadge" title="Test network: mock stock tokens, no real value">${esc(net)}</span>`;
   const fl = document.getElementById("faucetlink"); if (fl) fl.hidden = !faucetOn;
   mountNavMenu();
+  captureReferral();
+  onSession((s) => { if (s) bindIfPending(s); });
   const q = document.getElementById("q") as HTMLInputElement | null;
   if (q) {
     q.value = opts.q ?? "";

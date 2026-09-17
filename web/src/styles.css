@@ -154,3 +154,9 @@ h2{font-size:17px;margin:28px 0 10px}
 .docs .fsteps.big{font-size:15px;gap:10px}.docs code{background:var(--surface2);padding:1px 5px;border-radius:5px;font-size:13.5px}
 .docs .faq dt{font-weight:600;margin-top:12px}.docs .faq dd{margin:4px 0 0;color:var(--dim);font-size:15px;line-height:1.5}
 .docs .mono{overflow-wrap:anywhere;word-break:break-all}
+
+/* referrals */
+.refbar{background:var(--accent-bg);color:var(--fg);font-size:13.5px;padding:8px 0;border-bottom:1px solid var(--line)}.refbar a{margin-left:6px}
+.linkbox{display:flex;gap:8px;flex-wrap:wrap}.linkbox input{flex:1 1 260px;min-width:0;font:inherit;font-size:13.5px;padding:9px 12px;border:1px solid var(--line);border-radius:10px;background:var(--surface2);color:var(--fg)}
+.lbstats.four{grid-template-columns:repeat(4,minmax(0,1fr))}@media(max-width:600px){.lbstats.four{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.tbl tr.sel td{background:var(--accent-bg);font-weight:600}
