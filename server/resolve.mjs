@@ -11,7 +11,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import anchor from "@coral-xyz/anchor";
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
-import { getAssociatedTokenAddressSync, getOrCreateAssociatedTokenAccount, createHarvestWithheldTokensToMintInstruction, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
+import { getAssociatedTokenAddressSync, getOrCreateAssociatedTokenAccount, getAccount, createHarvestWithheldTokensToMintInstruction, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
 import idlJson from "../idl/sharepot.json" with { type: "json" };
 import { closeMove, chainMove, parseMetric, nasdaqMarketInfo, nyToUnix } from "./prices.mjs";
@@ -23,6 +23,13 @@ const OVERDUE_SECS = Number(process.env.OVERDUE_SECS ?? 7200);
 // ...and this long after it, with still no usable price, the proposer voids it on-chain (void_stale_market: the program
 // only allows this 24 h past the resolve time), so every stake goes back without waiting for the admin key.
 const STALE_VOID_SECS = 86_400;
+// A position that cannot be paid — the owner closed their token account for the stock, or the issuer froze it — is
+// forfeited to the treasury once the program allows it (forfeit_position: 30 days after the market resolved). Until
+// then the crank recreates a closed account only when the payout is worth more than the rent it would pay for it
+// (ATA_RENT_USD), so nobody can drain the crank with dust bets from throwaway wallets; a frozen account just waits.
+const FORFEIT_GRACE_SECS = 30 * 86_400;
+const ATA_RENT_USD = Number(process.env.ATA_RENT_USD ?? 0.5);
+const ARCHIVE = (dataDir) => path.join(dataDir, "markets-archive.jsonl");
 
 // Latest New York session that has started, per Nasdaq: today once the bell has rung, else the previous trading day.
 // (If a day was closed without notice, the day after still reports the day before the closure as "previous", so the
@@ -141,8 +148,9 @@ async function propose(markets, now) {
     const metric = tag(m.metric), spec = parseMetric(metric);
     if (!spec) { log(`market #${m.id}: unknown metric ${metric}`); continue; }
     const onChain = spec.kind === "day";
+    const n = m.nBuckets, thr = m.thresholds.slice(0, n - 1).map((t) => t.toNumber());
     const ev = onChain
-      ? chainMove(DATA, tokenByMint.get(m.mint.toBase58())?.mainnetMint ?? m.mint.toBase58(), spec.symbol, spec.date, now)
+      ? chainMove(DATA, tokenByMint.get(m.mint.toBase58())?.mainnetMint ?? m.mint.toBase58(), spec.symbol, spec.date, now, thr)
       : await closeMove(spec.symbol, spec.date, now);
     if (!ev.ok && onChain) {
       // Not enough closing-hour quotes (sampler outage, or the token's price feed disappeared): hold; a market still
@@ -171,7 +179,6 @@ async function propose(markets, now) {
       }
       continue;
     }
-    const n = m.nBuckets, thr = m.thresholds.slice(0, n - 1).map((t) => t.toNumber());
     const bucket = thr.filter((t) => ev.value >= t).length; // same rule as on-chain Market::bucket_of
     log(`market #${m.id} (${metric}): move ${ev.value} ppm (${onChain ? ev.detail.baseline : ev.detail.prevClose} → ${ev.detail.close}${onChain ? `, median of ${ev.detail.samples} quotes` : ""}); thresholds ${thr.join("/")} → bucket ${bucket} of ${n}`);
     if (DRY) continue;
@@ -217,13 +224,39 @@ async function settle(markets, cfg) {
       // positions of this market: memcmp on the market pubkey (offset 8 = after discriminator)
       const positions = await program.account.position.all([{ memcmp: { offset: 8, bytes: publicKey.toBase58() } }]);
       log(`market #${m.id}: settling ${positions.length} positions`);
+      const now = Math.floor(Date.now() / 1000); let deferred = 0;
       for (const { publicKey: ppk, account: p } of positions) {
         if (DRY) continue;
         try {
-          // creates the owner's token account if they closed it (rent paid by the cranker)
-          const ownerToken = (await getOrCreateAssociatedTokenAccount(conn, proposer, mint, p.owner, false, "confirmed", undefined, tokenProgram)).address;
           const fresh = await program.account.market.fetch(publicKey);
           const { payout, fee, kind } = payoutFor(fresh, p);
+          // Where can the payout go? The owner's associated token account: as it is (usable), missing (closed by the
+          // owner) or frozen (by the issuer). Only a usable one is paid into.
+          const ata = getAssociatedTokenAddressSync(mint, p.owner, false, tokenProgram);
+          const acct = await getAccount(conn, ata, "confirmed", tokenProgram).catch((e) => (/TokenAccountNotFound/.test(String(e?.name ?? e)) ? null : { isFrozen: true, invalid: true }));
+          const graceOver = now >= fresh.resolvedAt.toNumber() + FORFEIT_GRACE_SECS;
+          if (!acct || acct.isFrozen) {
+            const worthUsd = close != null ? (Number(payout) / 10 ** meta.decimals) * meta.multiplier * close : null;
+            if (graceOver) {
+              // forfeit_position: the payout goes to the treasury, the position closes (rent to its payer)
+              const treasury = (await getOrCreateAssociatedTokenAccount(conn, proposer, mint, cfg.treasuryOwner, false, "confirmed", undefined, tokenProgram)).address;
+              const ftx = await program.methods.forfeitPosition().accounts({ config: configPda, market: publicKey, position: ppk, payer: p.payer, vault: vaultPda(publicKey), mint, ownerAta: ata, treasury, cranker: proposer.publicKey, tokenProgram }).transaction();
+              let fsig = null, fok = false, fnote = null;
+              try { ({ sig: fsig, landed: fok } = await sendSigned(conn, ftx, [proposer], { beforeSend: (s) => { fsig = s; } })); } catch (e) { fnote = String(e?.message ?? e).split("\n")[0].slice(0, 160); }
+              if (!fok) { const still = await program.account.position.fetchNullable(ppk).catch(() => undefined); if (still !== null) throw new Error(fnote ?? "forfeit did not land"); }
+              fs.appendFileSync(SETTLEMENTS, JSON.stringify({ at: new Date().toISOString(), market: publicKey.toBase58(), id: m.id.toNumber(), metric: tag(m.metric), mint: mint.toBase58(), owner: p.owner.toBase58(), amounts: p.amounts.slice(0, fresh.nBuckets).map((x) => x.toString()), status: fresh.status, outcome: fresh.outcome, observed: fresh.proposedValue.toString(), kind: "forfeited", payout: "0", forfeited: payout.toString(), fee: fee.toString(), signature: fsig,
+                token, decimals: meta.decimals, multiplier: meta.multiplier, close, pools: fresh.pools.slice(0, fresh.nBuckets).map((x) => x.toString()), seed: fresh.seedAmount.toString(), note: `owner's token account ${acct ? "frozen" : "closed"} 30 days after resolution; payout forfeited to the treasury` }) + "\n");
+              log(`  forfeited ${p.owner.toBase58()} (${acct ? "frozen" : "closed"} account) amount=${payout} ${fsig}`);
+              continue;
+            }
+            if (acct?.isFrozen || (worthUsd != null && worthUsd < ATA_RENT_USD)) {
+              deferred++;
+              log(`  deferred ${p.owner.toBase58()}: token account ${acct ? "frozen by the issuer" : `closed, payout ≈ $${worthUsd.toFixed(2)} < rent $${ATA_RENT_USD}`}; forfeits to the treasury after ${new Date((fresh.resolvedAt.toNumber() + FORFEIT_GRACE_SECS) * 1000).toISOString().slice(0, 10)} unless paid before`);
+              continue;
+            }
+          }
+          // creates the owner's token account if they closed it (rent paid by the cranker; only when the payout is worth it)
+          const ownerToken = (await getOrCreateAssociatedTokenAccount(conn, proposer, mint, p.owner, false, "confirmed", undefined, tokenProgram)).address;
           const tx = await program.methods.settlePosition().accounts({ market: publicKey, position: ppk, payer: p.payer, vault: vaultPda(publicKey), mint, ownerToken, cranker: proposer.publicKey, tokenProgram }).transaction();
           // The row below is the only record of this payout (leaderboard, referral rebates, the wallet's history): a
           // position closes on-chain when it is paid, so a payout whose confirmation was lost would otherwise vanish.
@@ -242,13 +275,19 @@ async function settle(markets, cfg) {
           log(`  settled ${p.owner.toBase58()} ${kind} payout=${payout} ${sig}${note ? ` (${note})` : ""}`);
         } catch (e) {
           log(`  FAILED ${p.owner.toBase58()}: ${e.message?.split("\n")[0]}`);
-          notify("⚠️ 有倉位付不出去", `#${m.id} ${tag(m.metric)} owner ${p.owner.toBase58().slice(0, 8)}…\n${String(e.message ?? e).split("\n")[0].slice(0, 200)}\n(每輪重試;若持續失敗,該盤無法 sweep)`, `settle:${ppk.toBase58()}`, 360);
+          notify("⚠️ 有倉位付不出去", `#${m.id} ${tag(m.metric)} owner ${p.owner.toBase58().slice(0, 8)}…\n${String(e.message ?? e).split("\n")[0].slice(0, 200)}\n(每輪重試;30 天後仍付不出會沒收進金庫、該盤才能 sweep)`, `settle:${ppk.toBase58()}`, 360);
         }
       }
+      if (deferred) log(`market #${m.id}: ${deferred} position(s) deferred (owner's account closed or frozen); the market sweeps once they are paid or forfeited`);
     }
     const fresh = await program.account.market.fetch(publicKey);
     if (fresh.positionsOpen === 0 && fresh.status !== 4 && !DRY) {
       try {
+        // The sweep closes the market account (rent back to the proposer), so its final state is archived first: the
+        // site keeps showing settled markets and their results from this file (api.mjs) after they leave the chain.
+        let remaining = null; try { remaining = (await conn.getTokenAccountBalance(vaultPda(publicKey))).value.amount; } catch {}
+        const num = (x) => (x?.toNumber ? x.toNumber() : Number(x));
+        fs.appendFileSync(ARCHIVE(DATA), JSON.stringify({ pubkey: publicKey.toBase58(), id: num(fresh.id), mint: mint.toBase58(), tokenProgram: tokenProgram.toBase58(), decimals: meta.decimals, multiplier: meta.multiplier, metric: tag(fresh.metric), nBuckets: fresh.nBuckets, thresholds: fresh.thresholds.slice(0, fresh.nBuckets - 1).map(num), openTs: num(fresh.openTs), closeTs: num(fresh.closeTs), resolveAfterTs: num(fresh.resolveAfterTs), baseline: num(fresh.baseline), pools: fresh.pools.slice(0, fresh.nBuckets).map(num), seed: num(fresh.seedAmount), status: 4, outcome: fresh.outcome, proposedOutcome: fresh.proposedOutcome, proposedValue: num(fresh.proposedValue), proposedAt: num(fresh.proposedAt), resolvedAt: num(fresh.resolvedAt), positions: fresh.positions, positionsOpen: 0, feeCollected: num(fresh.feeCollected), paidOut: num(fresh.paidOut), swept: remaining == null ? null : Number(remaining), snapshotHash: Buffer.from(fresh.snapshotHash).toString("hex"), sweptAt: new Date().toISOString() }) + "\n");
         // A mint with a transfer fee (Tessera, PreStocks) leaves the issuer's withheld fees sitting in the vault account,
         // and Token-2022 refuses to close an account holding any; harvesting them to the mint is permissionless.
         if (meta.transferFee && tokenProgram.equals(TOKEN_2022_PROGRAM_ID)) {

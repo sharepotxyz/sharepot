@@ -8,6 +8,7 @@ import {
   createInitializeTransferHookInstruction, createPauseInstruction, createResumeInstruction, createUpdateMultiplierDataInstruction,
   getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction, createMintToInstruction,
   createInitializeTransferFeeConfigInstruction, createHarvestWithheldTokensToMintInstruction,
+  createCloseAccountInstruction, createFreezeAccountInstruction, createThawAccountInstruction,
 } from "@solana/spl-token";
 import { assert } from "chai";
 import { Sharepot } from "../target/types/sharepot";
@@ -159,11 +160,45 @@ describe("sharepot: parimutuel pools staked in tokenized stocks", () => {
     assert.equal((await bal(xTSLA, xTSLA.ata.bob)) - b0, 0);
     assert.isAbove(await conn.getBalance(alice.publicKey), aliceLamports0, "rent refunded to position payer");
     mk = await program.account.market.fetch(k.m);
-    const t0 = await bal(xTSLA, xTSLA.ata.admin);
+    const t0 = await bal(xTSLA, xTSLA.ata.admin), rent0 = await conn.getBalance(proposer.publicKey);
     await sweep(k, dave);
     assert.equal((await bal(xTSLA, xTSLA.ata.admin)) - t0, mk.feeCollected.toNumber());
     assert.equal(mk.feeCollected.toNumber(), 7.5 * T);
     await expectErr(getAccount(conn, k.v, undefined, T22) as any, "TokenAccountNotFoundError");
+    // the market account is closed too: its rent, like the vault's, goes back to the proposer that paid it
+    assert.isNull(await program.account.market.fetchNullable(k.m), "market account closed by sweep");
+    assert.isAbove(await conn.getBalance(proposer.publicKey), rent0 + 3_000_000, "market + vault rent returned to the proposer");
+  });
+
+  it("forfeit: a position whose owner's token account is closed or frozen goes to the treasury after the grace (admin at once); a payable owner never does", async () => {
+    const k = await createMarket(xTSLA, -1, 6);
+    // erin: a throwaway wallet that stakes everything it holds and then closes its token account
+    const erin = Keypair.generate(), erinAta = getAssociatedTokenAddressSync(xTSLA.mint, erin.publicKey, false, T22);
+    await conn.confirmTransaction(await conn.requestAirdrop(erin.publicKey, LAMPORTS_PER_SOL), "confirmed");
+    await provider.sendAndConfirm(new Transaction().add(createAssociatedTokenAccountIdempotentInstruction(admin.publicKey, erinAta, erin.publicKey, xTSLA.mint, T22), createMintToInstruction(xTSLA.mint, erinAta, issuer.publicKey, BigInt(T), [], T22)), [issuer]);
+    await bet(k, alice, "up", 100 * T); await bet(k, bob, "down", 100 * T); await bet(k, erin, "up", T, erinAta);
+    await provider.sendAndConfirm(new Transaction().add(createCloseAccountInstruction(erinAta, erin.publicKey, erin.publicKey, [], T22)), [erin]);
+    await sleep(7500);
+    await propose(k, 100); await finalize(k);
+    const forfeit = (owner: PublicKey, payer: PublicKey, cranker: Keypair, ownerAta = getAssociatedTokenAddressSync(xTSLA.mint, owner, false, T22)) =>
+      program.methods.forfeitPosition().accounts({ config: configPda, market: k.m, position: posPda(k.m, owner), payer, vault: k.v, mint: xTSLA.mint, ownerAta, treasury: xTSLA.ata.admin, cranker: cranker.publicKey, tokenProgram: T22 }).signers(cranker === admin ? [] : [cranker]).rpc();
+    await expectErr(forfeit(erin.publicKey, erin.publicKey, dave), "NotForfeitableYet");          // a stranger must wait 30 days
+    await expectErr(forfeit(alice.publicKey, alice.publicKey, admin), "OwnerCanBePaid");           // alice's account works: settle her
+    await expectErr(forfeit(erin.publicKey, erin.publicKey, admin, xTSLA.ata.alice), "WrongOwnerAccount");
+    const t0 = await bal(xTSLA, xTSLA.ata.admin), e0 = await conn.getBalance(erin.publicKey);
+    await forfeit(erin.publicKey, erin.publicKey, admin);                                           // account closed → treasury
+    // erin: 1 + 100*1/101 − fee ≈ 1.99 shares now in the treasury; her position rent came back to her
+    assert.isAbove((await bal(xTSLA, xTSLA.ata.admin)) - t0, 1.9 * T); assert.isAbove(await conn.getBalance(erin.publicKey), e0);
+    assert.isNull(await program.account.position.fetchNullable(posPda(k.m, erin.publicKey)));
+    // the issuer freezes alice's account: now she cannot be paid either
+    await provider.sendAndConfirm(new Transaction().add(createFreezeAccountInstruction(xTSLA.ata.alice, xTSLA.mint, issuer.publicKey, [], T22)), [issuer]);
+    await expectErr(settle(k, alice, dave), "frozen");
+    await forfeit(alice.publicKey, alice.publicKey, admin);
+    await provider.sendAndConfirm(new Transaction().add(createThawAccountInstruction(xTSLA.ata.alice, xTSLA.mint, issuer.publicKey, [], T22)), [issuer]);
+    await settle(k, bob, dave);                                                                     // the loser settles as usual
+    let mk = await program.account.market.fetch(k.m); assert.equal(mk.positionsOpen, 0);
+    await sweep(k, dave);
+    assert.isNull(await program.account.market.fetchNullable(k.m));
   });
 
   it("each market is locked to its own stock: wrong mint, wrong token account and wrong treasury are all rejected", async () => {

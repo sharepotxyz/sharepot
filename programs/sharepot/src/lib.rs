@@ -33,8 +33,9 @@ use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{self, CloseAccount, Mint, TokenAccount, TokenInterface, TransferChecked};
 use anchor_spl::token_2022::spl_token_2022::{
     extension::{transfer_hook::TransferHook, BaseStateWithExtensions, StateWithExtensions},
-    state::Mint as MintState,
+    state::{Account as TokenAccountState, AccountState, Mint as MintState},
 };
+use anchor_spl::associated_token::get_associated_token_address_with_program_id;
 
 declare_id!("8TzdVXpqa52o3fBvYynSxHTWP4zuWfZmTvSkpdLT9rWW");
 
@@ -49,6 +50,23 @@ pub const STALE_VOID_SECS: i64 = 86_400;
 /// True once a never-proposed market is stale enough for the proposer to void it.
 pub fn stale_void_allowed(now: i64, resolve_after_ts: i64) -> bool {
     now >= resolve_after_ts.saturating_add(STALE_VOID_SECS)
+}
+/// A position that still cannot be paid this long after its market resolved (the owner's token account for the stock
+/// is gone or frozen) may be forfeited to the treasury by anyone, so a market can always be swept and nobody can make
+/// the crank pay for token accounts one dust bet at a time. The admin may do it at once.
+pub const FORFEIT_GRACE_SECS: i64 = 30 * 86_400;
+pub fn forfeit_allowed(now: i64, resolved_at: i64) -> bool {
+    now >= resolved_at.saturating_add(FORFEIT_GRACE_SECS)
+}
+/// Whether tokens can be sent to this account right now: it exists, belongs to the token program and is not frozen.
+/// (A paused mint blocks every transfer alike and is not the owner's doing; it is not looked at here.)
+pub fn owner_can_be_paid(ata: &AccountInfo, token_program: &Pubkey) -> Result<bool> {
+    if ata.data_is_empty() || ata.owner != token_program {
+        return Ok(false);
+    }
+    let data = ata.try_borrow_data()?;
+    let acct = StateWithExtensions::<TokenAccountState>::unpack(&data)?;
+    Ok(acct.base.state != AccountState::Frozen)
 }
 
 #[program]
@@ -283,8 +301,39 @@ pub mod sharepot {
         Ok(())
     }
 
+    /// A position whose owner cannot receive the stock — their associated token account for it is gone or frozen —
+    /// would keep the market from ever being swept (settle_position needs a live account to pay into), and if the
+    /// crank paid the rent to recreate such accounts, one dust bet per throwaway wallet would drain it. So once
+    /// FORFEIT_GRACE_SECS have passed since the market resolved (the admin: at once), anyone may forfeit such a
+    /// position: what it would have been paid goes to the treasury instead, and it closes, rent to its payer. An
+    /// owner whose account is usable is never touched — the account's state is checked here — and settle_position
+    /// stays open to them throughout the grace period.
+    pub fn forfeit_position(ctx: Context<Forfeit>) -> Result<()> {
+        let now = Clock::get()?.unix_timestamp;
+        let (payout, fee, owner, id_bytes, bump) = {
+            let c = &ctx.accounts.config;
+            let m = &ctx.accounts.market;
+            let p = &ctx.accounts.position;
+            require!(m.status == MarketStatus::Resolved as u8 || m.status == MarketStatus::Voided as u8, PotError::NotResolved);
+            require!(ctx.accounts.cranker.key() == c.admin || forfeit_allowed(now, m.resolved_at), PotError::NotForfeitableYet);
+            require!(!owner_can_be_paid(&ctx.accounts.owner_ata.to_account_info(), &ctx.accounts.token_program.key())?, PotError::OwnerCanBePaid);
+            let (payout, fee) = compute_payout(m, p)?;
+            (payout, fee, p.owner, m.id.to_le_bytes(), m.bump)
+        };
+        if payout > 0 {
+            let seeds: &[&[u8]] = &[b"market", id_bytes.as_ref(), &[bump]];
+            token_interface::transfer_checked(ctx.accounts.transfer_ctx().with_signer(&[seeds]), payout, ctx.accounts.mint.decimals)?;
+        }
+        let m = &mut ctx.accounts.market;
+        m.fee_collected = m.fee_collected.checked_add(fee).unwrap();
+        m.positions_open = m.positions_open.checked_sub(1).unwrap();
+        emit!(PositionForfeited { market: m.key(), user: owner, amount: payout });
+        Ok(())
+    }
+
     /// After every position is settled: fees + rounding dust (+ seed if voided or
-    /// no winners) go to the treasury's account for this stock, vault is closed.
+    /// no winners) go to the treasury's account for this stock; the vault and the market account are closed and
+    /// their rent returns to the proposer, which paid it. The market's final numbers go out in an event.
     pub fn sweep_market(ctx: Context<Sweep>) -> Result<()> {
         let (id_bytes, bump) = {
             let m = &ctx.accounts.market;
@@ -301,6 +350,7 @@ pub mod sharepot {
         let m = &mut ctx.accounts.market;
         m.swept = remaining;
         m.status = MarketStatus::Swept as u8;
+        emit!(MarketSwept { market: m.key(), id: m.id, mint: m.mint, outcome: m.outcome, pools: m.pools, seed_amount: m.seed_amount, paid_out: m.paid_out, fee_collected: m.fee_collected, swept: remaining });
         Ok(())
     }
 }
@@ -617,10 +667,45 @@ impl<'info> Settle<'info> {
 }
 
 #[derive(Accounts)]
-pub struct Sweep<'info> {
+pub struct Forfeit<'info> {
     #[account(seeds = [b"config"], bump = config.bump)]
     pub config: Account<'info, Config>,
     #[account(mut, seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump, has_one = vault, has_one = mint)]
+    pub market: Account<'info, Market>,
+    #[account(mut, close = payer, seeds = [b"position", market.key().as_ref(), position.owner.as_ref()], bump = position.bump,
+        has_one = market, has_one = payer)]
+    pub position: Account<'info, Position>,
+    /// CHECK: rent goes back to whoever created the position; enforced by has_one.
+    #[account(mut)]
+    pub payer: UncheckedAccount<'info>,
+    #[account(mut)]
+    pub vault: InterfaceAccount<'info, TokenAccount>,
+    pub mint: InterfaceAccount<'info, Mint>,
+    /// CHECK: the owner's associated token account for this stock in whatever state it is in — it may not exist at
+    /// all — so it cannot be typed; the address is enforced here and its state is read by owner_can_be_paid.
+    #[account(address = get_associated_token_address_with_program_id(&position.owner, &mint.key(), &token_program.key()) @ PotError::WrongOwnerAccount)]
+    pub owner_ata: UncheckedAccount<'info>,
+    #[account(mut, token::mint = mint, token::authority = config.treasury_owner, token::token_program = token_program)]
+    pub treasury: InterfaceAccount<'info, TokenAccount>,
+    pub cranker: Signer<'info>,
+    pub token_program: Interface<'info, TokenInterface>,
+}
+impl<'info> Forfeit<'info> {
+    fn transfer_ctx(&self) -> CpiContext<'_, '_, '_, 'info, TransferChecked<'info>> {
+        CpiContext::new(self.token_program.key(), TransferChecked {
+            from: self.vault.to_account_info(),
+            mint: self.mint.to_account_info(),
+            to: self.treasury.to_account_info(),
+            authority: self.market.to_account_info(),
+        })
+    }
+}
+
+#[derive(Accounts)]
+pub struct Sweep<'info> {
+    #[account(seeds = [b"config"], bump = config.bump)]
+    pub config: Account<'info, Config>,
+    #[account(mut, close = rent_dest, seeds = [b"market", market.id.to_le_bytes().as_ref()], bump = market.bump, has_one = vault, has_one = mint)]
     pub market: Account<'info, Market>,
     #[account(mut)]
     pub vault: InterfaceAccount<'info, TokenAccount>,
@@ -664,6 +749,10 @@ pub struct ResolutionProposed { pub market: Pubkey, pub bucket: u8, pub observed
 pub struct MarketResolved { pub market: Pubkey, pub bucket: u8, pub voided: bool }
 #[event]
 pub struct PositionSettled { pub market: Pubkey, pub user: Pubkey, pub payout: u64, pub fee: u64 }
+#[event]
+pub struct PositionForfeited { pub market: Pubkey, pub user: Pubkey, pub amount: u64 }
+#[event]
+pub struct MarketSwept { pub market: Pubkey, pub id: u64, pub mint: Pubkey, pub outcome: u8, pub pools: [u64; MAX_BUCKETS], pub seed_amount: u64, pub paid_out: u64, pub fee_collected: u64, pub swept: u64 }
 
 #[error_code]
 pub enum PotError {
@@ -686,6 +775,9 @@ pub enum PotError {
     #[msg("arithmetic overflow")] MathOverflow,
     #[msg("token not supported: it has an active transfer hook")] UnsupportedMint,
     #[msg("market is not stale yet: the proposer may void it only 24 h after its resolve time")] NotStaleYet,
+    #[msg("position cannot be forfeited yet: 30 days must pass since the market resolved")] NotForfeitableYet,
+    #[msg("the owner's token account can receive the payout: settle the position instead")] OwnerCanBePaid,
+    #[msg("not the owner's associated token account for this stock")] WrongOwnerAccount,
 }
 
 #[cfg(test)]
@@ -697,5 +789,12 @@ mod tests {
         assert!(!stale_void_allowed(1_000 + STALE_VOID_SECS - 1, 1_000));
         assert!(stale_void_allowed(1_000 + STALE_VOID_SECS, 1_000));
         assert!(stale_void_allowed(i64::MAX, i64::MAX)); // saturating: never wraps into "allowed too early"
+    }
+    #[test]
+    fn forfeit_needs_thirty_days_after_resolution() {
+        assert!(!forfeit_allowed(1_000, 1_000));
+        assert!(!forfeit_allowed(1_000 + FORFEIT_GRACE_SECS - 1, 1_000));
+        assert!(forfeit_allowed(1_000 + FORFEIT_GRACE_SECS, 1_000));
+        assert!(forfeit_allowed(i64::MAX, i64::MAX));
     }
 }

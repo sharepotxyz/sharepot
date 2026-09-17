@@ -187,6 +187,143 @@ export type Sharepot = {
       "args": []
     },
     {
+      "name": "forfeitPosition",
+      "docs": [
+        "A position whose owner cannot receive the stock — their associated token account for it is gone or frozen —",
+        "would keep the market from ever being swept (settle_position needs a live account to pay into), and if the",
+        "crank paid the rent to recreate such accounts, one dust bet per throwaway wallet would drain it. So once",
+        "FORFEIT_GRACE_SECS have passed since the market resolved (the admin: at once), anyone may forfeit such a",
+        "position: what it would have been paid goes to the treasury instead, and it closes, rent to its payer. An",
+        "owner whose account is usable is never touched — the account's state is checked here — and settle_position",
+        "stays open to them throughout the grace period."
+      ],
+      "discriminator": [
+        191,
+        228,
+        177,
+        18,
+        120,
+        53,
+        217,
+        150
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "market",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.id",
+                "account": "market"
+              }
+            ]
+          },
+          "relations": [
+            "position"
+          ]
+        },
+        {
+          "name": "position",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  112,
+                  111,
+                  115,
+                  105,
+                  116,
+                  105,
+                  111,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market"
+              },
+              {
+                "kind": "account",
+                "path": "position.owner",
+                "account": "position"
+              }
+            ]
+          }
+        },
+        {
+          "name": "payer",
+          "writable": true,
+          "relations": [
+            "position"
+          ]
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "market"
+          ]
+        },
+        {
+          "name": "ownerAta",
+          "docs": [
+            "all — so it cannot be typed; the address is enforced here and its state is read by owner_can_be_paid."
+          ]
+        },
+        {
+          "name": "treasury",
+          "writable": true
+        },
+        {
+          "name": "cranker",
+          "signer": true
+        },
+        {
+          "name": "tokenProgram"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "initialize",
       "discriminator": [
         175,
@@ -629,7 +766,8 @@ export type Sharepot = {
       "name": "sweepMarket",
       "docs": [
         "After every position is settled: fees + rounding dust (+ seed if voided or",
-        "no winners) go to the treasury's account for this stock, vault is closed."
+        "no winners) go to the treasury's account for this stock; the vault and the market account are closed and",
+        "their rent returns to the proposer, which paid it. The market's final numbers go out in an event."
       ],
       "discriminator": [
         108,
@@ -703,6 +841,9 @@ export type Sharepot = {
         },
         {
           "name": "rentDest",
+          "docs": [
+            "operator's hot key funds itself instead of draining into the admin; address enforced."
+          ],
           "writable": true
         },
         {
@@ -843,6 +984,73 @@ export type Sharepot = {
         }
       ],
       "args": []
+    },
+    {
+      "name": "voidStaleMarket",
+      "docs": [
+        "Proposer (or admin) voids a market that is still unproposed STALE_VOID_SECS after its resolve time: the price",
+        "it needs does not exist, so everyone is refunded. Refunding is the only thing this adds to the proposer's",
+        "powers; it can still never pick a winner. A market with a proposal on it is handled by the dispute window."
+      ],
+      "discriminator": [
+        91,
+        128,
+        56,
+        91,
+        77,
+        184,
+        56,
+        116
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "market",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  97,
+                  114,
+                  107,
+                  101,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "market.id",
+                "account": "market"
+              }
+            ]
+          }
+        },
+        {
+          "name": "proposer",
+          "signer": true
+        }
+      ],
+      "args": []
     }
   ],
   "accounts": [
@@ -924,6 +1132,32 @@ export type Sharepot = {
         106,
         199,
         202
+      ]
+    },
+    {
+      "name": "marketSwept",
+      "discriminator": [
+        5,
+        246,
+        135,
+        203,
+        78,
+        240,
+        3,
+        251
+      ]
+    },
+    {
+      "name": "positionForfeited",
+      "discriminator": [
+        163,
+        236,
+        161,
+        147,
+        117,
+        45,
+        239,
+        83
       ]
     },
     {
@@ -1042,7 +1276,27 @@ export type Sharepot = {
     {
       "code": 6017,
       "name": "unsupportedMint",
-      "msg": "stock token not supported: it charges a transfer fee or has an active transfer hook"
+      "msg": "token not supported: it has an active transfer hook"
+    },
+    {
+      "code": 6018,
+      "name": "notStaleYet",
+      "msg": "market is not stale yet: the proposer may void it only 24 h after its resolve time"
+    },
+    {
+      "code": 6019,
+      "name": "notForfeitableYet",
+      "msg": "position cannot be forfeited yet: 30 days must pass since the market resolved"
+    },
+    {
+      "code": 6020,
+      "name": "ownerCanBePaid",
+      "msg": "the owner's token account can receive the payout: settle the position instead"
+    },
+    {
+      "code": 6021,
+      "name": "wrongOwnerAccount",
+      "msg": "not the owner's associated token account for this stock"
     }
   ],
   "types": [
@@ -1456,6 +1710,55 @@ export type Sharepot = {
       }
     },
     {
+      "name": "marketSwept",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "id",
+            "type": "u64"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "outcome",
+            "type": "u8"
+          },
+          {
+            "name": "pools",
+            "type": {
+              "array": [
+                "u64",
+                8
+              ]
+            }
+          },
+          {
+            "name": "seedAmount",
+            "type": "u64"
+          },
+          {
+            "name": "paidOut",
+            "type": "u64"
+          },
+          {
+            "name": "feeCollected",
+            "type": "u64"
+          },
+          {
+            "name": "swept",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
       "name": "position",
       "type": {
         "kind": "struct",
@@ -1493,6 +1796,26 @@ export type Sharepot = {
           {
             "name": "bump",
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "positionForfeited",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "market",
+            "type": "pubkey"
+          },
+          {
+            "name": "user",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
           }
         ]
       }

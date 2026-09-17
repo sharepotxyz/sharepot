@@ -216,39 +216,59 @@ export const MIN_CLOSE_SAMPLES = Number(process.env.MIN_CLOSE_SAMPLES ?? 40);
 export const utcDate = (ts) => new Date(ts * 1000).toISOString().slice(0, 10);
 export const utcMidnight = (date) => Math.floor(Date.parse(date + "T00:00:00Z") / 1000);
 
-/** The sampled quotes of `mint` in the closing hour of UTC day `date`, oldest first, plus the exact bytes they came from. */
-export function closingSamples(dataDir, mint, date) {
+/** The sampled quotes of `mint` in the closing hour of UTC day `date`, oldest first, plus the exact bytes they came from.
+ *  `key` picks the source inside each line: "p" = Jupiter (primary), "p2" = DexScreener (second source). */
+export function closingSamples(dataDir, mint, date, key = "p") {
   const f = `${dataDir}/ticks/${date}.jsonl`;
   const start = utcMidnight(date) + 23 * 3600, end = utcMidnight(date) + 24 * 3600;
   const lines = [];
-  try { for (const l of fs.readFileSync(f, "utf8").split("\n")) { if (!l) continue; const r = JSON.parse(l); if (r.t >= start && r.t < end && typeof r.p?.[mint] === "number" && r.p[mint] > 0) lines.push(l); } } catch {}
-  return { samples: lines.map((l) => { const r = JSON.parse(l); return { t: r.t, usd: r.p[mint] }; }), raw: lines.join("\n") + (lines.length ? "\n" : ""), file: f };
+  try { for (const l of fs.readFileSync(f, "utf8").split("\n")) { if (!l) continue; const r = JSON.parse(l); if (r.t >= start && r.t < end && typeof r[key]?.[mint] === "number" && r[key][mint] > 0) lines.push(l); } } catch {}
+  return { samples: lines.map((l) => { const r = JSON.parse(l); return { t: r.t, usd: r[key][mint] }; }), raw: lines.join("\n") + (lines.length ? "\n" : ""), file: f };
 }
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); const n = s.length; return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2; };
 /** Close of `mint` for UTC day `date`: median of its closing-hour samples, in USD; null until enough samples exist. */
-export function chainClose(dataDir, mint, date) {
-  const { samples, raw, file } = closingSamples(dataDir, mint, date);
+export function chainClose(dataDir, mint, date, key = "p") {
+  const { samples, raw, file } = closingSamples(dataDir, mint, date, key);
   if (samples.length < MIN_CLOSE_SAMPLES) return { ok: false, reason: `${samples.length} of ${MIN_CLOSE_SAMPLES} closing-hour samples for ${date}`, samples: samples.length };
   return { ok: true, close: median(samples.map((s) => s.usd)), samples: samples.length, first: samples[0].t, last: samples.at(-1).t, raw, file };
 }
+/** Floored move in ppm between two USD prices. */
+export function movePpm(prevUsd, curUsd) {
+  const p0 = toPico(prevUsd), p1 = toPico(curUsd);
+  const num = (p1 - p0) * 1_000_000n;
+  const q = num / p0; return Number(num % p0 !== 0n && num < 0n ? q - 1n : q);
+}
+/** Same rule as on-chain Market::bucket_of. */
+export const bucketOf = (thresholds, value) => thresholds.filter((t) => value >= t).length;
 /**
  * Move of `mint` for UTC day `date` vs the previous day's close, in ppm, floored. Both closes come from the sampled
  * quotes (prices.mjs closingSamples), so the evidence is self-contained: the sample lines of both closing hours.
  * Same shape as closeMove(): ok/value/detail/evidence.
+ *
+ * Second source: the same lines carry DexScreener's quote of the token's deepest pair. When both sources have enough
+ * samples for both days, the move they each give must fall in the same range (`thresholds`, ppm) or the market is
+ * held with an alert — a single wrong feed must never settle a pool. A second source with too few samples is noted
+ * and the primary is used alone.
  */
-export function chainMove(dataDir, mint, symbol, date, now = Math.floor(Date.now() / 1000)) {
+export function chainMove(dataDir, mint, symbol, date, now = Math.floor(Date.now() / 1000), thresholds = null) {
   if (now < utcMidnight(date) + 24 * 3600) return { ok: false, reason: `${date} has not ended yet (UTC)` };
   const prevDate = addDays(date, -1);
   const b = chainClose(dataDir, mint, prevDate);
   if (!b.ok) return { ok: false, alert: true, reason: `no previous close: ${b.reason} (${prevDate})` };
   const c = chainClose(dataDir, mint, date);
   if (!c.ok) return { ok: false, reason: `not enough closing-hour quotes: ${c.reason}` };
-  const p0 = toPico(b.close), p1 = toPico(c.close);
-  const num = (p1 - p0) * 1_000_000n;
-  const q = num / p0, ppm = num % p0 !== 0n && num < 0n ? q - 1n : q; // floor division
+  const ppm = movePpm(b.close, c.close);
+  const b2 = chainClose(dataDir, mint, prevDate, "p2"), c2 = chainClose(dataDir, mint, date, "p2");
+  let crossCheck;
+  if (b2.ok && c2.ok) {
+    const ppm2 = movePpm(b2.close, c2.close);
+    const agreed = thresholds ? bucketOf(thresholds, ppm) === bucketOf(thresholds, ppm2) : null;
+    if (agreed === false) return { ok: false, alert: true, reason: `sources disagree on the range: jupiter ${ppm} ppm ($${b.close} → $${c.close}) vs dexscreener ${ppm2} ppm ($${b2.close} → $${c2.close})` };
+    crossCheck = { source: "dexscreener", baseline: b2.close, close: c2.close, movePpm: ppm2, prevSamples: b2.samples, samples: c2.samples, agreed };
+  } else crossCheck = { source: "dexscreener", agreed: null, note: `second source short of samples (${prevDate}: ${b2.samples ?? 0}, ${date}: ${c2.samples ?? 0} of ${MIN_CLOSE_SAMPLES}); primary used alone` };
   return {
-    ok: true, value: Number(ppm),
-    detail: { symbol, source: "jupiter-price-v3", mint, prevDate, baseline: b.close, prevSamples: b.samples, date, close: c.close, samples: c.samples, window: "23:00–24:00 UTC of each day, one quote per minute, median" },
-    evidence: { source: `sampled quotes ${prevDate} and ${date}, 23:00–24:00 UTC (lite-api.jup.ag/price/v3, one per minute)`, response: b.raw + c.raw },
+    ok: true, value: ppm,
+    detail: { symbol, source: "jupiter-price-v3", mint, prevDate, baseline: b.close, prevSamples: b.samples, date, close: c.close, samples: c.samples, window: "23:00–24:00 UTC of each day, one quote per minute, median", crossCheck },
+    evidence: { source: `sampled quotes ${prevDate} and ${date}, 23:00–24:00 UTC (lite-api.jup.ag/price/v3 as p, api.dexscreener.com as p2, one per minute)`, response: b.raw + c.raw },
   };
 }

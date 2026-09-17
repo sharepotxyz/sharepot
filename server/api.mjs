@@ -82,6 +82,20 @@ async function mintInfo(mint) {
 }
 const serializeMarket = (pubkey, a, mi) => ({ pubkey: pubkey.toBase58(), id: num(a.id), mint: a.mint.toBase58(), tokenProgram: mi.tokenProgram, decimals: mi.decimals, multiplier: mi.multiplier, metric: tagOf(a.metric), nBuckets: a.nBuckets, thresholds: a.thresholds.slice(0, a.nBuckets - 1).map(num), openTs: num(a.openTs), closeTs: num(a.closeTs), resolveAfterTs: num(a.resolveAfterTs), baseline: num(a.baseline), pools: a.pools.slice(0, a.nBuckets).map(num), seed: num(a.seedAmount), status: a.status, outcome: a.outcome, proposedOutcome: a.proposedOutcome, proposedValue: num(a.proposedValue), proposedAt: num(a.proposedAt), positions: a.positions, positionsOpen: a.positionsOpen, feeCollected: num(a.feeCollected), snapshotHash: Buffer.from(a.snapshotHash).toString("hex") });
 const serializeConfig = (c) => ({ admin: c.admin.toBase58(), proposer: c.proposer.toBase58(), treasuryOwner: c.treasuryOwner.toBase58(), feeBps: c.feeBps, earlyBirdDiscountBps: c.earlyBirdDiscountBps, earlyBirdSecs: num(c.earlyBirdSecs), disputeWindowSecs: num(c.disputeWindowSecs), minBet: num(c.minBet), marketCount: num(c.marketCount), paused: c.paused });
+// Swept markets leave the chain (sweep_market closes the account, rent back to the proposer). The resolver archives
+// each one's final state to data/markets-archive.jsonl just before; those rows are served alongside the live
+// markets, so settled markets and their results stay on the site. Re-read when the file changes; last row per id wins.
+let archive = { stamp: null, rows: [] };
+function archivedMarkets() {
+  const f = path.join(DATA, "markets-archive.jsonl");
+  let stamp = "-"; try { const st = fs.statSync(f); stamp = `${st.size}:${st.mtimeMs}`; } catch {}
+  if (stamp !== archive.stamp) {
+    const byId = new Map();
+    try { for (const l of fs.readFileSync(f, "utf8").split("\n")) { if (!l) continue; try { const r = JSON.parse(l); byId.set(r.id, r); } catch {} } } catch {}
+    archive = { stamp, rows: [...byId.values()] };
+  }
+  return archive.rows;
+}
 let chainCache = { at: 0, markets: null, config: null, pending: null };
 const CHAIN_TTL_MS = Number(process.env.CHAIN_CACHE_MS ?? 15000);
 function chainState() {
@@ -91,6 +105,8 @@ function chainState() {
   chainCache.pending = (async () => {
     const [all, cfg] = await Promise.all([ro.account.market.all([{ dataSize: ro.account.market.size }]), ro.account.config.fetch(configPda)]);
     const markets = await Promise.all(all.map(async (x) => serializeMarket(x.publicKey, x.account, await mintInfo(x.account.mint))));
+    const live = new Set(markets.map((m) => m.id));
+    for (const a of archivedMarkets()) if (!live.has(a.id)) markets.push(a);
     chainCache = { at: Date.now(), markets: markets.sort((a, b) => b.id - a.id), config: serializeConfig(cfg), pending: null };
     return chainCache;
   })().catch((e) => { chainCache.pending = null; throw e; });

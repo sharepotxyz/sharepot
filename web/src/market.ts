@@ -8,6 +8,8 @@ import { balances, bucketColor, esc, fmtTs, getSession, mountTopbar, onSession, 
 import { API_BASE, IS_TEST, explorerTx } from "./config";
 import { bindReferralAfterBet } from "./referral";
 
+const MIN_BET_USD = 1;
+
 const qs = new URLSearchParams(location.search);
 const root = document.getElementById("event")!;
 let ev: EventView | undefined, m: MarketView, cfg: any, bucket = -1, tab: "rules" | "resolution" | "details" = "rules";
@@ -139,7 +141,10 @@ function renderTrade() {
   const go = box.querySelector<HTMLButtonElement>("#go"), msg = box.querySelector("#msg")!;
   if (go) go.onclick = async () => {
     const sess = getSession()!; const a = toRaw(m, Number(amtEl.value));
-    if (a < cfg.minBet.toNumber()) { msg.innerHTML = `<div class="msg err">Enter an amount (minimum ${fmtAmt(m, cfg.minBet.toNumber(), 8)} ${tok}).</div>`; return; }
+    // The program's floor is in raw units of whatever token; the page also asks for at least MIN_BET_USD of it
+    // (dust stakes cost more in payout rent than they can win — see forfeit_position), when a price is known.
+    const px = priceOf(m), minRaw = Math.max(cfg.minBet.toNumber(), px ? toRaw(m, MIN_BET_USD / px) : 0);
+    if (a < minRaw) { msg.innerHTML = `<div class="msg err">Enter an amount (minimum ${fmtAmt(m, minRaw, 8)} ${tok}${px ? `, about $${MIN_BET_USD}` : ""}).</div>`; return; }
     if (balances.loaded && a > held) { msg.innerHTML = `<div class="msg err">You hold ${fmtAmt(m, held)} ${tok}.</div>`; return; }
     go.disabled = true; msg.innerHTML = `<div class="msg">Confirm in your wallet…</div>`;
     try {
