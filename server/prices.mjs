@@ -34,20 +34,52 @@ export function nyToUnix(date, hhmm) {
   return Math.floor((2 * guess - wall) / 1000);
 }
 
-// NYSE calendar, hardcoded per year from the exchange's published holiday list. A date in a year that is not listed
-// throws instead of guessing, so the table cannot go stale silently — add the next year before it starts.
+// NYSE calendar: years read off the exchange's published holiday list are kept here as they were published; any other
+// year is generated from the exchange's standing rules (nyseYearByRule), so nothing has to be added by hand each year.
 const NYSE = {
   2026: {
     holidays: ["2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25", "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25"],
     earlyCloses: { "2026-11-27": "13:00", "2026-12-24": "13:00" },
   },
+  // nyse.com/markets/hours-calendars, read 2026-09-17. Juneteenth (Sat) is kept on Fri 06-18, Independence Day (Sun)
+  // on Mon 07-05, Christmas (Sat) on Fri 12-24; the only early close is the day after Thanksgiving.
+  2027: {
+    holidays: ["2027-01-01", "2027-01-18", "2027-02-15", "2027-03-26", "2027-05-31", "2027-06-18", "2027-07-05", "2027-09-06", "2027-11-25", "2027-12-24"],
+    earlyCloses: { "2027-11-26": "13:00" },
+  },
 };
+/**
+ * A year's scheduled NYSE holidays and early closes from the exchange's standing rules (Rule 7.2), for any year the
+ * table above does not list, so the calendar never runs out. A holiday on a Saturday is kept on the Friday before and
+ * one on a Sunday on the Monday after — except New Year's Day on a Saturday, which is not kept at all (the Friday is a
+ * year-end session). Early closes (13:00): the day after Thanksgiving, and July 3 and December 24 when they are
+ * weekdays and not themselves a holiday. The generator reproduces the published lists of 2022 and 2024–2027
+ * (prices.test.mjs). Unscheduled closures cannot be known in advance by any table: the opener's live Nasdaq check and
+ * the resolver's "no close for that day" path handle those.
+ */
+export function nyseYearByRule(year) {
+  const iso = (m, d) => `${year}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  const dow = (m, d) => new Date(Date.UTC(year, m - 1, d)).getUTCDay();
+  const nth = (m, weekday, n) => { let d = 1 + ((weekday - dow(m, 1) + 7) % 7) + (n - 1) * 7; return iso(m, d); };
+  const last = (m, weekday) => { const end = new Date(Date.UTC(year, m, 0)).getUTCDate(); return iso(m, end - ((dow(m, end) - weekday + 7) % 7)); };
+  const observed = (m, d, skipSaturday = false) => { const w = dow(m, d); return w === 6 ? (skipSaturday ? null : addDays(iso(m, d), -1)) : w === 0 ? addDays(iso(m, d), 1) : iso(m, d); };
+  // Good Friday: two days before Easter Sunday (anonymous Gregorian algorithm)
+  const a = year % 19, b = Math.floor(year / 100), c = year % 100, d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const em = Math.floor((h + l - 7 * m + 114) / 31), ed = ((h + l - 7 * m + 114) % 31) + 1;
+  const thanksgiving = nth(11, 4, 4);
+  const holidays = [observed(1, 1, true), nth(1, 1, 3), nth(2, 1, 3), addDays(iso(em, ed), -2), last(5, 1), observed(6, 19), observed(7, 4), nth(9, 1, 1), thanksgiving, observed(12, 25)].filter(Boolean);
+  const earlyCloses = { [addDays(thanksgiving, 1)]: "13:00" };
+  for (const [mo, da] of [[7, 3], [12, 24]]) { const w = dow(mo, da); if (w >= 1 && w <= 5 && !holidays.includes(iso(mo, da))) earlyCloses[iso(mo, da)] = "13:00"; }
+  return { holidays, earlyCloses };
+}
+const nyseYear = (year) => NYSE[year] ?? (NYSE[year] = nyseYearByRule(year));
+
 /** Trading sessions between two dates (inclusive), oldest first: { date, open, close } with unix-second times. */
 export async function sessions(startDate, endDate) {
   const out = [];
   for (let d = startDate; d <= endDate; d = addDays(d, 1)) {
-    const y = NYSE[Number(d.slice(0, 4))];
-    if (!y) throw new Error(`no NYSE calendar for ${d.slice(0, 4)} in prices.mjs — add that year's holidays`);
+    const y = nyseYear(Number(d.slice(0, 4)));
     const dow = new Date(d + "T12:00:00Z").getUTCDay();
     if (dow === 0 || dow === 6 || y.holidays.includes(d)) continue;
     out.push({ date: d, open: nyToUnix(d, "09:30"), close: nyToUnix(d, y.earlyCloses[d] ?? "16:00") });
@@ -137,7 +169,7 @@ export const SECOND_SOURCE_GRACE_SECS = Number(process.env.SECOND_SOURCE_GRACE_S
  * Integer math on 1/10,000-dollar prices, floored: a fall of any size stays negative and never rounds up onto a
  * threshold. Returns the raw API response so the caller can publish and hash it as evidence.
  */
-export async function closeMove(symbol, date, now = Math.floor(Date.now() / 1000)) {
+export async function closeMove(symbol, date, now = Math.floor(Date.now() / 1000), thresholds = null) {
   // Which sessions the calendar expects: the predicted one and the one before it.
   const cal = await sessions(addDays(date, -10), date);
   const session = cal.find((x) => x.date === date), prevSession = cal.filter((x) => x.date < date).pop();
@@ -154,11 +186,18 @@ export async function closeMove(symbol, date, now = Math.floor(Date.now() / 1000
   //      the bell must be more than SECOND_SOURCE_GRACE_SECS ago before the primary is trusted alone.
   if (prev.date !== prevSession.date) return { ok: false, alert: true, reason: `${SOURCE} bar before ${date} is ${prev.date}, calendar expects ${prevSession.date} — a session is missing from the response` };
   if (lastTradeTs != null && lastTradeTs < session.close) return { ok: false, reason: `${SOURCE} bar for ${date} is not final yet (last trade ${new Date(lastTradeTs * 1000).toISOString()}, bell ${new Date(session.close * 1000).toISOString()})` };
+  const movePpmOf = (close) => { const p0 = BigInt(Math.round(prev.close * 10_000)), p1 = BigInt(Math.round((close + cur.dividend) * 10_000)), num = (p1 - p0) * 1_000_000n, q = num / p0; return Number(num % p0 !== 0n && num < 0n ? q - 1n : q); };
   let crossCheck;
   try {
     const nd = await nasdaqClose(symbol, date);
-    if (nd && Math.abs(nd.close - cur.close) > 0.005) return { ok: false, alert: true, reason: `${SOURCE} close ${cur.close} disagrees with Nasdaq ${nd.close} (${nd.via}) for ${symbol} ${date}` };
-    if (nd) crossCheck = { source: "nasdaq", via: nd.via, close: nd.close, agreed: true };
+    // The two closes differ. If both put the day in the same range the difference decides nothing: settle on the
+    // primary and say so in the evidence. If they do not, hold — and tell the caller this is a disagreement
+    // (`disagree`), so it can refund the market once it has lasted a day instead of guessing a winner.
+    const differs = nd && Math.abs(nd.close - cur.close) > 0.005;
+    const rangeOf = (v) => thresholds.filter((t) => v >= t).length;
+    if (differs && thresholds && rangeOf(movePpmOf(cur.close)) === rangeOf(movePpmOf(nd.close))) crossCheck = { source: "nasdaq", via: nd.via, close: nd.close, agreed: false, sameRange: true, note: `closes differ (${cur.close} vs ${nd.close}) but both fall in the same range; primary used` };
+    else if (differs) return { ok: false, alert: true, disagree: true, reason: `${SOURCE} close ${cur.close} (${movePpmOf(cur.close)} ppm) and Nasdaq ${nd.close} (${movePpmOf(nd.close)} ppm, ${nd.via}) put ${symbol} ${date} in different ranges` };
+    else if (nd) crossCheck = { source: "nasdaq", via: nd.via, close: nd.close, agreed: true };
     else if (now < session.close + SECOND_SOURCE_GRACE_SECS) return { ok: false, reason: `Nasdaq has no close for ${symbol} ${date} yet — waiting for the second source (until ${new Date((session.close + SECOND_SOURCE_GRACE_SECS) * 1000).toISOString()})` };
     else crossCheck = { source: "nasdaq", agreed: null, note: "no second-source close within the grace period; primary used alone" };
   } catch (e) {

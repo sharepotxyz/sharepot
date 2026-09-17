@@ -151,7 +151,7 @@ async function propose(markets, now) {
     const n = m.nBuckets, thr = m.thresholds.slice(0, n - 1).map((t) => t.toNumber());
     const ev = onChain
       ? chainMove(DATA, tokenByMint.get(m.mint.toBase58())?.mainnetMint ?? m.mint.toBase58(), spec.symbol, spec.date, now, thr)
-      : await closeMove(spec.symbol, spec.date, now);
+      : await closeMove(spec.symbol, spec.date, now, thr);
     if (!ev.ok && onChain) {
       // Not enough closing-hour quotes (sampler outage, or the token's price feed disappeared): hold; a market still
       // unresolved long after its day ended can only be voided (admin key).
@@ -168,13 +168,20 @@ async function propose(markets, now) {
       // which needs the admin key.
       const prevTraded = await lastTradedDate();
       const overdue = now >= m.resolveAfterTs.toNumber() + OVERDUE_SECS;
-      if (prevTraded && prevTraded > spec.date) {
+      // Nobody has to decide anything by hand. A day with no close although a later session has started never traded;
+      // a day whose two sources still put it in different ranges after 24 h of retries has no answer anyone can
+      // check (closes that differ inside one range settle normally, prices.mjs). Both are refunded in full.
+      if (ev.disagree) {
+        log(`market #${m.id} (${metric}): held — ${ev.reason}`);
+        if (await voidStale(publicKey, m, metric, ev.reason, now)) continue;
+        notify("⚠️ 兩個價源落在不同區間,先不結算", `#${m.id} ${metric}\n${ev.reason}\n每 10 分鐘重試;結算時間過 24h 仍不一致就自動作廢、全額退款,不用處理。`, `hold:${m.id}`, 720);
+      } else if (prevTraded && prevTraded > spec.date) {
         log(`market #${m.id} (${metric}): ⚠ no close for ${spec.date} although a later session (${prevTraded}) has started — ${spec.date} likely DID NOT TRADE`);
         if (await voidStale(publicKey, m, metric, `no close for ${spec.date}; session ${prevTraded} has since started`, now)) continue;
         notify("⛔ 這天可能沒交易", `#${m.id} ${metric}:${spec.date} 沒有收盤價但後面的交易日已開始;結算時間過 24h 後 proposer 會自動 void 退款(admin 可提前:node scripts/void-markets.mjs ${m.id})`, `void:${m.id}`, 360);
       } else {
         log(`market #${m.id} (${metric}): cannot resolve yet — ${ev.reason}`);
-        if (ev.alert) notify("⚠️ 結算暫停,兩個價源不一致", `#${m.id} ${metric}\n${ev.reason}\n結算器每 10 分鐘會再試;若持續不一致要人工判斷`, `hold:${m.id}`, 120);
+        if (ev.alert) notify("⚠️ 結算暫停,兩個價源不一致", `#${m.id} ${metric}\n${ev.reason}\n結算器每 10 分鐘會再試;下一個交易日開始後仍無解,過 24h 會自動作廢退款`, `hold:${m.id}`, 720);
         else if (overdue) notify("⏳ 結算逾時", `#${m.id} ${metric} 收盤後 ${Math.round((now - m.resolveAfterTs.toNumber()) / 3600)} 小時仍未提案\n${ev.reason}`, `overdue:${m.id}`, 360);
       }
       continue;

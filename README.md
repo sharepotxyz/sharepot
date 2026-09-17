@@ -13,7 +13,8 @@ Built for the Solana Foundation **Stocklana** hackathon (September 2026).
 
 **Try it (devnet): <https://devnet.sharepot.xyz>** — connect Phantom / Solflare / Backpack set to devnet, or use the built-in
 browser test wallet, then press "Get test tokens": every wallet gets mock tokens of every pool open today plus a little
-SOL for fees. A new stock pool opens for every token at each US opening bell; pre-IPO and meme pools open at 00:00 UTC.
+SOL for fees. A new stock pool opens for every token at each US opening bell; a pre-IPO or meme day's pool opens at
+11:00 UTC the day before.
 
 ## How a market works
 
@@ -25,8 +26,10 @@ SOL for fees. A new stock pool opens for every token at each US opening bell; pr
   the last 12 weeks (TSLA −1.75 % / 0 / +2 %, NVDA −1.5 % / 0 / +2.25 %, SPY −0.5 % / 0 / +0.5 %), so every range
   starts out roughly equally likely. Odds then move with the pools.
 * Session times come from the NYSE holiday calendar built into the server (holidays, early closes, daylight saving;
-  checked session by session against a broker's market calendar for the rest of 2026). A date in a year that is not
-  in the table stops the scheduler instead of guessing.
+  checked session by session against a broker's market calendar for the rest of 2026). Before it opens a market the
+  opener also asks Nasdaq's live market status for the next session and follows Nasdaq if the two disagree (an
+  unscheduled closure). Years beyond the published table are generated from the exchange's standing holiday rules
+  (`nyseYearByRule`, tested against NYSE's published lists for 2022 and 2024–2027), so nothing is added by hand each year.
 
 ## Many issuers, one question
 
@@ -62,6 +65,11 @@ resolve on the same official close; each is staked and paid in its own token.
   mainnet there is no seed** (`SEED_MARKETS=1` overrides it for a deliberate promotion). If nobody picked the winning
   range, everyone is refunded; a **voided** market refunds everyone in full.
 * Payouts are **pushed** to wallets by a permissionless crank after the dispute window. Nobody has to claim.
+* **The one case the crank cannot pay**: the owner's token account for that stock was closed or frozen after the bet.
+  The crank reopens a closed account at its own cost when the payout is worth at least $0.50; a smaller one waits for
+  the owner to reopen it. A position still unpayable 30 days after resolution can be forfeited to the treasury
+  (`forfeit_position`; the program checks both the delay and the account), so a market can always be closed. The site
+  asks for stakes of about $1 or more for the same reason.
 
 ## Why this works with no house money
 
@@ -100,6 +108,10 @@ Fees are charged on winnings only, in the pool's token. When a bound wallet's wi
 20 % of that fee (25 % from 10 000 all-time points, 30 % from 100 000) and the invitee gets 10 % of it back, both in
 the same token. `deploy/referral-payout-remote.sh` pays the balance out once a week straight from the treasury (rebates are a
 share of collected fees, so it always holds enough), from the machine that keeps the treasury key, never the app host;
+before a settlement row earns anyone a rebate the payer finds its transaction on-chain and requires this program's
+`PositionSettled` event for the same market, owner and fee (`server/settlement-proof.mjs`), so the app host's files
+cannot invent fees; one run never sends more than $2,000 without a human; a wallet that does not hold the token yet
+gets its account opened once the rebate reaches $10.
 `data/referral-payouts.jsonl` is the ledger, `data/referrals.json` the bindings, and everything else is recomputed from
 `settlements.jsonl` so nothing is counted twice. Rules and maths: `server/referrals.mjs` (tests in
 `referrals.test.mjs`).
@@ -116,7 +128,10 @@ share of collected fees, so it always holds enough), from the machine that keeps
    instead of posting a wrong result: the bar before the target must be the calendar's previous session (a dropped bar
    would silently shift "previous close" back a day); the target bar must be final (the source's last regular trade
    at or after the closing bell, so an intraday price is never mistaken for the close); and the close must **match
-   Nasdaq's official close to the cent** — an independent second source with no key. If Nasdaq has nothing for the
+   Nasdaq's official close to the cent** — an independent second source with no key. Closes that differ but leave
+   the day in the same range settle on the primary, with the difference written into the evidence; closes that put
+   the day in different ranges are never proposed, and if 24 h of retries do not reconcile them the market refunds
+   itself. If Nasdaq has nothing for the
    day yet the resolver waits up to two hours after the bell, then proceeds on the primary alone and says so in the
    published evidence. Fetches retry on network errors; whatever still fails is retried by cron every ten minutes.
 3. **Anyone can check the number.** The raw response is published byte for byte; the market page re-hashes it **in
@@ -133,10 +148,13 @@ share of collected fees, so it always holds enough), from the machine that keeps
 
 * **The proposer key can propose any number.** The checks above run off-chain, in the same process that holds the key.
   A compromised resolver could propose a wrong move; the range still comes from the on-chain thresholds, but a wrong
-  input gives a wrong range. What stops it is the six-hour window, in which the admin can re-propose or void, and the
-  alerts that make sure someone is looking. Disputes are recorded off-chain and have no on-chain effect by themselves.
+  input gives a wrong range. What stops it is the six-hour window and a second machine: `server/verify-proposals.mjs`
+  runs every ten minutes on a different host that holds the admin key, fetches the closes itself (for on-chain closes:
+  from its own per-minute samples), and **voids a proposal whose range it cannot reproduce** — a full refund, never a
+  different winner. For an on-chain close, a disagreement within 0.5 % of a threshold only pages the operator (two samplers never see the same quotes). Disputes are recorded off-chain and
+  have no on-chain effect by themselves.
 * **The admin is fully trusted.** The admin can finalize inside the window, void any open or proposed market
-  (full refund), and change the proposer, treasury and fee (capped at 10 %) for future markets. The admin cannot move
+  (full refund), and change the proposer, treasury and fee (capped at 10 %; a bet already placed keeps its rate). The admin cannot move
   vault funds anywhere but to winners (per the payout math) or, after every position is settled, fees and dust to the
   treasury.
 * **The issuer is trusted by construction.** Every xStock carries a permanent delegate and a pause switch; the vaults
@@ -186,7 +204,9 @@ Two more token classes run on the same program. There is no exchange for them, s
 * **Close** = median of one Jupiter quote per minute during the day's last hour (23:00–24:00 UTC), sampled by
   `server/sample-prices.mjs` into `data/ticks/<date>.jsonl`. Metric tag `<SYMBOL>.day:<date>`; the move is that day's
   close against the previous day's, both read from the samples at resolution and published together as evidence.
-  Fewer than 40 usable quotes on either day voids the market (full refund).
+  Fewer than 40 usable quotes on either day voids the market (full refund). Every sample also records a second quote
+  (DexScreener); if the two sources put the day in different ranges the market is held, not proposed, and refunds
+  itself after 24 h.
 * **Three ranges** (down / flat / up) cut at ± the token's median absolute daily move over 60 days (GeckoTerminal).
   A day's pool opens at 11:00 UTC the day before and locks at 12:00 UTC on the day, so there is always one to bet into
   (tomorrow's opens before today's locks); resolution after 00:05 the next day, same dispute window and crank as the
@@ -200,7 +220,7 @@ Two more token classes run on the same program. There is no exchange for them, s
 
 ```
 programs/sharepot   Anchor program (Rust): per-stock parimutuel pools, Token-2022, on-chain range derivation
-tests/              13 tests against a local validator with mock xStocks carrying the real TSLAx extension set
+tests/              15 tests against a local validator with mock xStocks carrying the real TSLAx extension set
 server/             market opener (NYSE calendar), resolver + settlement crank, API + devnet faucet + static site
 web/                market pages, Wallet Standard betting (Phantom, Solflare, Backpack), "My bets"
 scripts/            devnet bootstrap (mock xStocks, faucet, config), replay markets for demos, admin tools
@@ -218,8 +238,10 @@ Instruction | Who | What
 `propose_resolution` | proposer or admin | observed move + evidence hash; range derived on-chain; starts the dispute window
 `finalize_resolution` | anyone after the window, admin any time | locks the outcome
 `void_market` | admin | refund everyone
+`void_stale_market` | proposer or admin | refund everyone in a market still unproposed 24 h after its resolve time
 `settle_position` | anyone | pay one position in the stock, close it, refund its rent to the payer
-`sweep_market` | anyone | after all positions are settled: fees + dust to the treasury's account for that stock, close the vault; market + vault rent back to the proposer that paid it
+`forfeit_position` | anyone after 30 days, admin any time | only if the owner's token account is gone or frozen: the payout goes to the treasury, the position closes
+`sweep_market` | anyone | after all positions are settled: fees + dust to the treasury's account for that stock, close the vault and the market account; their rent goes back to the proposer that paid it
 
 Program id: `8TzdVXpqa52o3fBvYynSxHTWP4zuWfZmTvSkpdLT9rWW`
 
@@ -227,7 +249,7 @@ Program id: `8TzdVXpqa52o3fBvYynSxHTWP4zuWfZmTvSkpdLT9rWW`
 
 ```bash
 anchor build
-./scripts/test-local.sh                       # fresh validator + the 13 tests
+./scripts/test-local.sh                       # fresh validator + the 15 tests
 
 # a local cluster with mock xStocks, a faucet and today's markets
 solana-test-validator --reset --bpf-program 8TzdVXpqa52o3fBvYynSxHTWP4zuWfZmTvSkpdLT9rWW target/deploy/sharepot.so &

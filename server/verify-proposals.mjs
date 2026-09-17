@@ -86,7 +86,7 @@ async function closingMedian(mint, date) {
 // ---------- the check ----------
 async function independentValue(spec, now, thr) {
   if (spec.kind === "close") {
-    const ev = await closeMove(spec.symbol, spec.date, now);
+    const ev = await closeMove(spec.symbol, spec.date, now, thr);
     return ev.ok ? { value: ev.value, detail: `${ev.detail.prevClose} → ${ev.detail.close} (${ev.detail.source}${ev.detail.crossCheck?.agreed ? " + nasdaq" : ""})` } : { error: ev.reason };
   }
   const mint = await mainnetMintOf(spec.symbol); if (!mint) return { error: `no mainnet mint known for ${spec.symbol}` };
