@@ -7,6 +7,7 @@
 //   /api/leaderboard?window=7d|30d|all              points ranking (shares staked x official close, per settled market)
 //   /api/faucet (POST, test networks)               2 shares of every mock token + a little SOL
 //   /api/dispute (POST), /api/disputes              signed disputes against a proposed result
+//   /api/feedback (POST)                            free-text feedback from the site (no wallet needed)
 //   everything else                                 files from web/dist
 import http from "node:http";
 import fs from "node:fs";
@@ -180,14 +181,15 @@ function leaderboardCached(key, since) {
 }
 
 // ---------- helpers ----------
-const seenAddr = new Map(), seenIp = new Map(), seenDispute = new Map(); let seenDay = "", faucetToday = 0;
+const seenAddr = new Map(), seenIp = new Map(), seenDispute = new Map(), seenFeedback = new Map(); let seenDay = "", faucetToday = 0, feedbackToday = 0;
 const dayKey = () => new Date().toISOString().slice(0, 10);
-function rollDay() { const d = dayKey(); if (d !== seenDay) { seenDay = d; seenAddr.clear(); seenIp.clear(); seenDispute.clear(); seenLookup.clear(); faucetToday = 0; } }
+function rollDay() { const d = dayKey(); if (d !== seenDay) { seenDay = d; seenAddr.clear(); seenIp.clear(); seenDispute.clear(); seenFeedback.clear(); seenLookup.clear(); faucetToday = 0; feedbackToday = 0; } }
 // Behind Cloudflare the real client is CF-Connecting-IP; direct localhost callers fall back to the socket address.
 const clientIp = (req) => String(req.headers["cf-connecting-ip"] ?? req.socket.remoteAddress ?? "?").trim();
 const json = (res, code, body, extra = {}) => { res.writeHead(code, { "content-type": "application/json", "access-control-allow-origin": "*", "access-control-allow-headers": "content-type", "access-control-allow-methods": "GET,POST,OPTIONS", ...extra }); res.end(JSON.stringify(body)); };
 const readBody = (req, max = 4096) => new Promise((ok, err) => { let b = ""; req.on("data", (c) => { b += c; if (b.length > max) { err(Object.assign(new Error("body too large"), { status: 413 })); req.destroy(); } }); req.on("end", () => ok(b)); req.on("error", err); });
 const DISPUTES = path.join(DATA, "disputes.jsonl");
+const FEEDBACK = path.join(DATA, "feedback.jsonl");
 // ---------- referrals (referrals.mjs) ----------
 // One file for every network (keyed by wallet address): point REFERRALS_FILE at the same path on mainnet.
 const REFERRALS_FILE = process.env.REFERRALS_FILE ?? path.join(DATA, "referrals.json");
@@ -384,6 +386,24 @@ const server = http.createServer(async (req, res) => {
       fs.appendFileSync(DISPUTES, JSON.stringify(rec) + "\n");
       console.log("dispute", rec.id, market, reason.slice(0, 120));
       notify("⚠️ 有人對結算提出異議", `market ${market.slice(0, 8)}… · ${wallet.slice(0, 6)}…${claimed ? ` · 主張值 ${claimed}` : ""}\n${reason.slice(0, 300)}\n爭議窗 6h 內可 re-propose / void(admin 金鑰在東京)`, "dispute:" + market, 5);
+      return json(res, 200, { ok: true, id: rec.id });
+    }
+    // Public: free-text feedback. No wallet or signature (most people who have something to say have not connected
+    // yet); capped per network and per day, stored as lines, and the operator is pinged at most every 10 minutes.
+    if (p === "/feedback" && req.method === "POST") {
+      rollDay(); const ip = clientIp(req);
+      seenFeedback.set(ip, (seenFeedback.get(ip) ?? 0) + 1);
+      if (seenFeedback.get(ip) > 5 || feedbackToday >= 200) return json(res, 429, { error: "too much feedback from this network today; email hello@sharepot.xyz instead" });
+      let b; try { b = JSON.parse(await readBody(req, 16 * 1024)); } catch { return json(res, 400, { error: "bad body" }); }
+      const clean = (v, n) => String(v ?? "").replace(/[\u0000-\u0008\u000b-\u001f]/g, "").trim().slice(0, n);
+      const message = clean(b.message, 4000), contact = clean(b.contact, 200), page = clean(b.page, 300), wallet = isPubkey(b.wallet) ? String(b.wallet) : null;
+      if (message.length < 5) return json(res, 400, { error: "please write a few words first" });
+      if (b.website) return json(res, 200, { ok: true }); // honeypot field: bots fill it, people never see it
+      feedbackToday++;
+      const rec = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), at: new Date().toISOString(), message, contact, page, wallet, ua: clean(req.headers["user-agent"], 200) };
+      fs.appendFileSync(FEEDBACK, JSON.stringify(rec) + "\n");
+      console.log("feedback", rec.id, message.slice(0, 120));
+      notify("💬 網站收到回饋", `${message.slice(0, 600)}\n— ${contact || "沒留聯絡方式"}${wallet ? ` · ${wallet.slice(0, 6)}…` : ""} · ${page || "?"}\n全部:~/data/feedback.jsonl(今天第 ${feedbackToday} 則)`, "feedback", 10);
       return json(res, 200, { ok: true, id: rec.id });
     }
     if (p === "/disputes") {

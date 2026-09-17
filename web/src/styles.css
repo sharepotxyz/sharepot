@@ -134,6 +134,10 @@ h2{font-size:17px;margin:28px 0 10px}
 .foot{color:var(--dim);font-size:12.5px;border-top:1px solid var(--line);padding-block:18px 40px;margin-top:30px}.foot p{max-width:90ch;margin:0 0 8px}
 
 @media(max-width:900px){.evpage{grid-template-columns:1fr;grid-template-areas:"top" "trade" "bottom"}.trade{position:static;margin-top:16px}.hero{grid-template-columns:1fr}}
+.fbbtn{position:fixed;right:16px;bottom:16px;z-index:25;border-radius:999px;padding:8px 16px;font-size:13px;font-weight:600;box-shadow:var(--shadow)}
+.fbbox{position:fixed;right:16px;bottom:16px;z-index:40;width:min(360px,calc(100vw - 24px));background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:14px;display:grid;gap:10px}
+.fbbox textarea{font:inherit;font-size:14px;color:var(--fg);background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:10px;resize:vertical;width:100%}.fbbox textarea:focus{outline:2px solid var(--accent);background:var(--surface)}
+.fbbox input{font:inherit;font-size:13.5px;color:var(--fg);background:var(--surface2);border:1px solid var(--line);border-radius:10px;padding:9px 10px;width:100%}.fbhead,.fbrow{display:flex;align-items:center;justify-content:space-between;gap:10px}.fbhead .ghost{border:0;padding:2px 6px}
 @media(max-width:640px){.container{padding-inline:14px}.tb{gap:10px;height:56px}.search{display:none}.brand span.full{display:none}
 .hero h1{font-size:24px}.navlink{display:none}.navmorebox{display:block}
 .hero{padding-top:18px}.steps{display:none}

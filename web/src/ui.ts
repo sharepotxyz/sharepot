@@ -56,6 +56,40 @@ export function mountTopbar(opts: TopbarOpts = {}) {
   }
   renderCatnav(opts.active ?? "");
   mountWallet();
+  mountFeedback();
+}
+/** Feedback: a small button pinned to the corner of every page. No wallet needed; the note goes to /api/feedback
+ *  with the page it was written on, plus the wallet address when one happens to be connected. */
+function mountFeedback() {
+  if (!API_BASE || document.getElementById("fbbtn")) return;
+  const btn = document.createElement("button"); btn.id = "fbbtn"; btn.className = "fbbtn"; btn.textContent = "Feedback";
+  document.body.appendChild(btn);
+  btn.onclick = () => {
+    if (document.getElementById("fbbox")) return;
+    const box = document.createElement("div"); box.id = "fbbox"; box.className = "fbbox";
+    box.innerHTML = `<div class="fbhead"><b>Tell us what you think</b><button class="ghost" id="fbx" aria-label="Close">\u2715</button></div>
+      <textarea id="fbmsg" rows="5" maxlength="4000" placeholder="A bug, something confusing, a market you want\u2026"></textarea>
+      <input id="fbcontact" maxlength="200" placeholder="Email, X or Telegram (optional, if you want a reply)">
+      <input id="fbweb" name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px">
+      <div class="fbrow"><span class="note" id="fbnote">Or email <a href="mailto:hello@sharepot.xyz">hello@sharepot.xyz</a></span><button class="primary" id="fbsend">Send</button></div>`;
+    document.body.appendChild(box);
+    const $ = <T extends HTMLElement>(id: string) => box.querySelector<T>("#" + id)!;
+    const msg = $<HTMLTextAreaElement>("fbmsg"), send = $<HTMLButtonElement>("fbsend"), note = $("fbnote");
+    const hint = note.innerHTML; msg.oninput = () => { if (note.innerHTML !== hint) note.innerHTML = hint; };
+    msg.focus();
+    $("fbx").onclick = () => box.remove();
+    send.onclick = async () => {
+      if (msg.value.trim().length < 5) { note.textContent = "Please write a few words first."; return; }
+      send.disabled = true; send.textContent = "Sending\u2026";
+      try {
+        const r = await fetch(API_BASE + "/feedback", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: msg.value, contact: $<HTMLInputElement>("fbcontact").value, website: $<HTMLInputElement>("fbweb").value, page: location.pathname + location.search, wallet: session ? String(session.publicKey) : null }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error ?? "HTTP " + r.status);
+        box.innerHTML = `<div class="fbhead"><b>Thanks, got it \u2713</b></div><div class="note">Every note is read by a person.</div>`;
+        setTimeout(() => box.remove(), 2500);
+      } catch (e: any) { note.textContent = "Could not send: " + String(e?.message ?? e); send.disabled = false; send.textContent = "Send"; }
+    };
+  };
 }
 /** Phones hide the text links in the top bar (styles.css, ≤640px), which left Docs / Faucet / Leaderboard / My bets
  *  unreachable there. A ☰ button lists the same links in a dropdown; it is invisible on wider screens. */
