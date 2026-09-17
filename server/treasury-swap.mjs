@@ -43,7 +43,7 @@ const jup = async (p, init) => {
     const text = await r.text(); let j = null; try { j = JSON.parse(text); } catch {}
     if (r.ok && j && !j.error) return j;
     const transient = r.status === 429 || r.status >= 500 || /rate limit/i.test(text);
-    if (transient && attempt < 4) { await sleep(3000 * attempt); continue; }
+    if (transient && attempt < 5) { await sleep(10_000 * attempt); continue; }
     throw new Error(j?.error ?? `jupiter ${r.status}: ${text.slice(0, 80)}`);
   }
 };
@@ -93,7 +93,7 @@ for (const [mint, t] of tokens) {
     if (r.outUsd < MIN_USD) { held++; log(`hold ${tag}: worth $${r.outUsd.toFixed(2)} < $${MIN_USD}`); continue; }
     const ui = Number(r.amount) / 10 ** t.decimals;
     log(`${DRY ? "would sell" : "selling"} ${tag}: ${ui} of ${Number(lot) / 10 ** t.decimals} → $${r.outUsd.toFixed(2)} USDC, impact ${r.impact.toFixed(3)} %${r.amount < lot ? ` (split: ${Number(lot - r.amount) / 10 ** t.decimals} waits for the next run)` : ""}`);
-    if (DRY) continue;
+    if (DRY) { await sleep(1500); continue; }   // pace the quotes (free tier) in dry runs too
     const sw = await jup("/swap", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ quoteResponse: r.q, userPublicKey: treasury.publicKey.toBase58(), wrapAndUnwrapSol: true, dynamicComputeUnitLimit: true, prioritizationFeeLamports: { priorityLevelWithMaxLamports: { maxLamports: 1_000_000, priorityLevel: "medium" } } }) });
     const tx = VersionedTransaction.deserialize(Buffer.from(sw.swapTransaction, "base64"));
     const row = { mint, token: t.token, ui, usd: r.outUsd, impactPct: r.impact };
