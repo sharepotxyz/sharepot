@@ -10,10 +10,17 @@ const transient = (e) => /429|Too Many|fetch failed|ECONNRESET|timed? ?out|503|5
 
 /** Signs, sends and waits. Returns { sig, landed }. Throws on a definite failure (rejected by preflight, or failed on-chain).
  *  `beforeSend(sig)` runs once the signature is known and before anything reaches the network: the place to record it. */
-export async function sendSigned(conn, tx, signers, { beforeSend } = {}) {
-  const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash("confirmed");
-  tx.recentBlockhash = blockhash; tx.feePayer = signers[0].publicKey; tx.sign(...signers);
-  const sig = bs58.encode(tx.signature), raw = tx.serialize();
+export async function sendSigned(conn, tx, signers, { beforeSend, lastValidBlockHeight: lvbh } = {}) {
+  let sig, raw, lastValidBlockHeight = lvbh;
+  if (tx.version !== undefined) {
+    // a VersionedTransaction (e.g. built by Jupiter) already carries its blockhash; the caller passes its expiry height
+    if (lastValidBlockHeight == null) ({ lastValidBlockHeight } = await conn.getLatestBlockhash("confirmed"));
+    tx.sign(signers); sig = bs58.encode(tx.signatures[0]); raw = tx.serialize();
+  } else {
+    const fresh = await conn.getLatestBlockhash("confirmed");
+    tx.recentBlockhash = fresh.blockhash; lastValidBlockHeight = fresh.lastValidBlockHeight; tx.feePayer = signers[0].publicKey; tx.sign(...signers);
+    sig = bs58.encode(tx.signature); raw = tx.serialize();
+  }
   if (beforeSend) await beforeSend(sig);
   for (let tries = 1; ; tries++) {
     try { await conn.sendRawTransaction(raw, { skipPreflight: false }); break; }
