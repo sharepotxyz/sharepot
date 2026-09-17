@@ -83,8 +83,8 @@ export function homeHtml(data, html, url) {
   }).join("");
   const pools = evs.reduce((a, e) => a + e.markets.length, 0), pot = evs.reduce((a, e) => a + (e.potUsd ?? 0), 0);
   return html
-    .replace(`<div id="events" class="evgrid"><div class="note">Loading markets…</div></div>`, `<div id="events" class="evgrid">${cards}</div>`)
-    .replace(`<div id="summary" class="note"></div>`, `<div id="summary" class="note">${evs.length} market${evs.length === 1 ? "" : "s"} · ${pools} pools${pot ? ` · ${fmtUsd(pot)} in play` : ""}</div>`);
+    .replace(`<div id="events" class="evgrid"><div class="note">Loading markets…</div></div>`, () => `<div id="events" class="evgrid">${cards}</div>`)
+    .replace(`<div id="summary" class="note"></div>`, () => `<div id="summary" class="note">${evs.length} market${evs.length === 1 ? "" : "s"} · ${pools} pools${pot ? ` · ${fmtUsd(pot)} in play` : ""}</div>`);
 }
 
 /** Event page: breadcrumb, header, token switcher and the ranges table of the selected pool (trade panel loads with JS). */
@@ -111,5 +111,5 @@ export function eventHtml(data, url, html) {
     <div class="toks">${ev.markets.map((x) => `<button class="tok${x.id === m.id ? " on" : ""}" disabled><b>${esc(c.tok(x).token)}</b><span>${esc(c.tok(x).issuer)}</span><em>${amt(x, total(x) + x.seed)} in pot</em></button>`).join("")}</div>
     <div class="otable"><div class="orow ohead"><span>Range (move vs previous close)</span><span>Chance</span><span>Pays</span><span class="opool">Pool</span><span></span></div>${rows}</div>
   </div><aside class="trade" id="trade"><div class="tcard"><div class="note">Loading the trade panel…</div></div></aside><div class="evbottom"></div></div>`;
-  return html.replace(`<main class="container" id="event"><div class="note" style="padding:30px 0">Loading…</div></main>`, `<main class="container" id="event">${body}</main>`);
+  return html.replace(`<main class="container" id="event"><div class="note" style="padding:30px 0">Loading…</div></main>`, () => `<main class="container" id="event">${body}</main>`);
 }

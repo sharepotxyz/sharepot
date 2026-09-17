@@ -147,16 +147,25 @@ function renderTrade() {
     if (a < minRaw) { msg.innerHTML = `<div class="msg err">Enter an amount (minimum ${fmtAmt(m, minRaw, 8)} ${tok}${px ? `, about $${MIN_BET_USD}` : ""}).</div>`; return; }
     if (balances.loaded && a > held) { msg.innerHTML = `<div class="msg err">You hold ${fmtAmt(m, held)} ${tok}.</div>`; return; }
     go.disabled = true; msg.innerHTML = `<div class="msg">Confirm in your wallet…</div>`;
+    let sig = "";
     try {
       const tx = await buildPlaceBetTx(sess.publicKey, m, bucket, a);
-      const sig = await sess.signAndSend(tx);
+      sig = await sess.signAndSend(tx);
       msg.innerHTML = `<div class="msg">Sent. Waiting for confirmation…</div>`;
       await confirmBySig(sig);
-      const done = `Staked ${fmtAmt(m, a)} ${tok} on “${esc(full(bucket))}”. <a href="${explorerTx(sig)}" target="_blank" rel="noopener">view tx</a>`;
-      await refreshBalances(); await load(true);
-      const refNote = await bindReferralAfterBet(sess);
-      const m2 = document.getElementById("msg"); if (m2) m2.innerHTML = `<div class="msg ok">${done}${refNote ? `<br>${esc(refNote)}` : ""}</div>`;
-    } catch (e: any) { msg.innerHTML = `<div class="msg err">${esc(e?.message ?? e)}</div>`; go.disabled = false; }
+    } catch (e: any) {
+      // Sent but not seen yet: it may still land, so the button stays off rather than invite a second stake.
+      if (sig && e?.unconfirmed) { msg.innerHTML = `<div class="msg err">Sent, but not confirmed yet: it may still go through. Check <a href="/portfolio.html">My bets</a> or the <a href="${explorerTx(sig)}" target="_blank" rel="noopener">transaction</a> before staking again.</div>`; return; }
+      msg.innerHTML = `<div class="msg err">${esc(e?.message ?? e)}</div>`; go.disabled = false; return;
+    }
+    // The stake is on-chain from here on: nothing below may turn that into an error message.
+    const done = `Staked ${fmtAmt(m, a)} ${tok} on “${esc(full(bucket))}”. <a href="${explorerTx(sig)}" target="_blank" rel="noopener">view tx</a>`;
+    const show = (note = "") => { const m2 = document.getElementById("msg"); if (m2) m2.innerHTML = `<div class="msg ok">${done}${note ? `<br>${esc(note)}` : ""}</div>`; };
+    show();
+    try { await refreshBalances(); } catch {}
+    try { await load(true); } catch {}
+    show();
+    try { show((await bindReferralAfterBet(sess)) || ""); } catch {}
   };
   showPosition();
 }

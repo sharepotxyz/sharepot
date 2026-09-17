@@ -11,13 +11,15 @@ export async function confirmBySig(sig: string, timeoutMs = 60000): Promise<void
   const t0 = Date.now();
   while (Date.now() - t0 < timeoutMs) {
     let st;
-    // a rate-limited status poll says nothing about the transaction: wait and ask again
-    try { st = (await connection.getSignatureStatuses([sig])).value[0]; } catch (e: any) { if (!/429|rate limit|fetch failed/i.test(String(e?.message ?? e))) throw e; }
+    // a status poll that fails (rate limit, a network blip: browsers word these differently) says nothing about the
+    // transaction: wait and ask again. Only an error reported for the transaction itself is a failure.
+    try { st = (await connection.getSignatureStatuses([sig])).value[0]; } catch { st = undefined; }
     if (st?.err) throw new Error("Transaction failed: " + JSON.stringify(st.err));
     if (st && (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) return;
     await new Promise((r) => setTimeout(r, 1500));
   }
-  throw new Error("Not confirmed after " + timeoutMs / 1000 + "s. Check signature " + sig);
+  // Not seen yet is not the same as failed: the transaction may still land. Callers must not invite a second send.
+  throw Object.assign(new Error("Not confirmed after " + timeoutMs / 1000 + "s. Check signature " + sig), { unconfirmed: true });
 }
 export const programId = new PublicKey(PROGRAM_ID);
 const readOnlyProvider = new AnchorProvider(connection, { publicKey: PublicKey.default, signTransaction: async (t: any) => t, signAllTransactions: async (t: any) => t } as any, { commitment: "confirmed" });

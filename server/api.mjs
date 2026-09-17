@@ -68,6 +68,7 @@ fs.mkdirSync(DATA, { recursive: true });
 const IDL = JSON.parse(fs.readFileSync(new URL("../idl/sharepot.json", import.meta.url), "utf8"));
 const ro = new anchor.Program(IDL, new anchor.AnchorProvider(conn, new anchor.Wallet(Keypair.generate()), { commitment: "confirmed" }));
 const [configPda] = PublicKey.findProgramAddressSync([Buffer.from("config")], ro.programId);
+const parseLine = (l) => { try { return JSON.parse(l); } catch { return null; } };   // display-only readers skip a torn line
 const tagOf = (b) => Buffer.from(b).toString("utf8").replace(/\0+$/, "");
 const num = (x) => (x?.toNumber ? x.toNumber() : Number(x));
 // token program, decimals and current ScaledUiAmount multiplier (dividends / splits) of each mint; re-read every 10 min
@@ -237,7 +238,7 @@ const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", "
 const htmlCache = new Map();
 // Rendered pages (boot script + SSR) are memoised for a few seconds per path+query: the data behind them is already
 // cached 15 s (CHAIN_TTL_MS), so this changes nothing a visitor can see, only how many times per second we re-render.
-const RENDER_TTL_MS = Number(process.env.RENDER_CACHE_MS ?? 5000), RENDER_CACHE_MAX = 500, renderCache = new Map();
+const RENDER_TTL_MS = Number(process.env.RENDER_CACHE_MS ?? 5000), RENDER_CACHE_MAX = 100, renderCache = new Map();
 function pageHtml(file) {
   const mtime = fs.statSync(file).mtimeMs, hit = htmlCache.get(file);
   if (hit && hit.mtime === mtime) return hit.html;
@@ -260,7 +261,7 @@ function serveStatic(res, url, req) {
     res.writeHead(200, { "content-type": TYPES[".html"], "cache-control": "no-cache", "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY" });
     const key = rel + url.search, hit = renderCache.get(key);
     if (hit && Date.now() - hit.at < RENDER_TTL_MS) return res.end(hit.html);
-    let html = pageHtml(file).replace("</head>", bootScript() + "</head>");
+    let html = pageHtml(file).replace("</head>", () => bootScript() + "</head>"); // function replacer: "$" in token names is data, not a pattern
     // first-paint content rendered here (ssr.mjs); a rendering error only costs the pre-render, never the page
     const data = { markets: chainCache.markets, config: chainCache.config, stocks, prices: priceCache.at ? priceCache.prices : null };
     try { if (rel === "/index.html") html = homeHtml(data, html, url); else if (rel === "/market.html") html = eventHtml(data, url, html); }
@@ -308,13 +309,13 @@ const server = http.createServer(async (req, res) => {
     const po = p.match(/^\/positions\/([1-9A-HJ-NP-Za-km-z]{32,44})$/);
     if (po) {
       const f = path.join(DATA, "settlements.jsonl");
-      const rows = fs.existsSync(f) ? fs.readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.owner === po[1]) : [];
+      const rows = fs.existsSync(f) ? fs.readFileSync(f, "utf8").split("\n").filter(Boolean).map(parseLine).filter((r) => r && r.owner === po[1]) : [];
       return json(res, 200, { owner: po[1], settled: rows.reverse() }, { "cache-control": "no-store" });
     }
     // Leaderboard: points = shares staked × the official close the market settled on (points.mjs).
     // ?window=7d|30d|all, ?limit=n. Recomputed only when the settlement log has grown.
     if (p === "/leaderboard") {
-      const win = url.searchParams.get("window") ?? "all";
+      const w0 = url.searchParams.get("window"), win = w0 === "7d" || w0 === "30d" ? w0 : "all";   // also the cache key: never the raw string
       const days = win === "7d" ? 7 : win === "30d" ? 30 : 0;
       const since = days ? Math.floor(Date.now() / 1000) - days * 86400 : 0;
       const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") ?? 100) || 100));
@@ -346,8 +347,10 @@ const server = http.createServer(async (req, res) => {
       if (!db.wallets[wallet]) {
         const h = await betHistory(wallet, true, clientIp(req));
         if (h.open + h.settled === 0) return json(res, 403, { error: "place a bet first — the link unlocks with your first stake" });
-        referrals.ensureCode(db, wallet); referrals.save(REFERRALS_FILE, db);
-        console.log("referral code", wallet.slice(0, 6), db.wallets[wallet].code);
+        // re-read after the await: another request may have saved meanwhile, and load → save must not span an await
+        const cur = referrals.load(REFERRALS_FILE);
+        referrals.ensureCode(cur, wallet); referrals.save(REFERRALS_FILE, cur);
+        console.log("referral code", wallet.slice(0, 6), cur.wallets[wallet].code);
       }
       return json(res, 200, { ...referralView(wallet), eligible: true });
     }
@@ -365,9 +368,12 @@ const server = http.createServer(async (req, res) => {
       const h = await betHistory(wallet, true, clientIp(req));
       if (h.open === 0 && h.settled === 0) return json(res, 409, { error: "place your first bet, then the link binds" });
       if (h.settled > 0) return json(res, 409, { error: "a referral link only counts on a wallet's first bet", permanent: true });
-      const r = referrals.bind(db, { wallet, code, cluster: CLUSTER });
+      // re-read after the await (see /referral/code): load → bind → save runs without yielding
+      const cur = referrals.load(REFERRALS_FILE);
+      if (cur.bindings[wallet]) return json(res, cur.bindings[wallet].code === code ? 200 : 409, cur.bindings[wallet].code === code ? { ok: true, already: true } : { error: "this wallet is already bound to another code", permanent: true });
+      const r = referrals.bind(cur, { wallet, code, cluster: CLUSTER });
       if (r.error) return json(res, 409, { error: r.error, permanent: true });
-      referrals.save(REFERRALS_FILE, db);
+      referrals.save(REFERRALS_FILE, cur);
       console.log("referral bind", wallet.slice(0, 6), "→", code);
       return json(res, 200, { ok: true });
     }
@@ -408,7 +414,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === "/disputes") {
       const m = url.searchParams.get("market");
-      const rows = fs.existsSync(DISPUTES) ? fs.readFileSync(DISPUTES, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)) : [];
+      const rows = fs.existsSync(DISPUTES) ? fs.readFileSync(DISPUTES, "utf8").split("\n").filter(Boolean).map(parseLine).filter(Boolean) : [];
       return json(res, 200, { disputes: rows.filter((d) => !m || d.market === m).map(({ id, at, market, wallet, reason, claimedValue, status }) => ({ id, at, market, wallet: wallet.slice(0, 4) + "…" + wallet.slice(-4), reason, claimedValue, status })) });
     }
     if (p === "/faucet" && req.method === "POST") {

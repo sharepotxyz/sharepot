@@ -16,6 +16,7 @@ const shares = (raw, decimals, multiplier) => (Number(raw) / 10 ** decimals) * (
 
 /** One settlement row → its dollar figures, or null when the market has no official close. */
 function score(row, fallback) {
+  if (row.status === 3) return null;   // voided (also when voided after a proposal, which leaves a close behind): no result, no score
   const decimals = row.decimals ?? fallback.decimals(row.mint);
   const close = row.close ?? fallback.close(row.id);
   if (decimals == null || !close) return null;
