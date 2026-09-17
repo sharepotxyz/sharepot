@@ -175,6 +175,9 @@ const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", "
 // Pages ship with the data they render on first paint (markets, config, listed stocks, prices from the in-memory
 // caches) embedded as window.__BOOT__, so the browser needs no API round trip to Germany after the scripts load.
 const htmlCache = new Map();
+// Rendered pages (boot script + SSR) are memoised for a few seconds per path+query: the data behind them is already
+// cached 15 s (CHAIN_TTL_MS), so this changes nothing a visitor can see, only how many times per second we re-render.
+const RENDER_TTL_MS = Number(process.env.RENDER_CACHE_MS ?? 5000), RENDER_CACHE_MAX = 500, renderCache = new Map();
 function pageHtml(file) {
   const mtime = fs.statSync(file).mtimeMs, hit = htmlCache.get(file);
   if (hit && hit.mtime === mtime) return hit.html;
@@ -195,11 +198,15 @@ function serveStatic(res, url, req) {
   if (ext === ".html") {
     // Wallet pages must never be framed (clickjacking); the rest of the policy is left to the front web server.
     res.writeHead(200, { "content-type": TYPES[".html"], "cache-control": "no-cache", "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY" });
+    const key = rel + url.search, hit = renderCache.get(key);
+    if (hit && Date.now() - hit.at < RENDER_TTL_MS) return res.end(hit.html);
     let html = pageHtml(file).replace("</head>", bootScript() + "</head>");
     // first-paint content rendered here (ssr.mjs); a rendering error only costs the pre-render, never the page
     const data = { markets: chainCache.markets, config: chainCache.config, stocks, prices: priceCache.at ? priceCache.prices : null };
     try { if (rel === "/index.html") html = homeHtml(data, html, url); else if (rel === "/market.html") html = eventHtml(data, url, html); }
     catch (e) { console.error("ssr failed:", String(e?.message ?? e).slice(0, 160)); }
+    if (renderCache.size >= RENDER_CACHE_MAX) renderCache.clear();   // unbounded query strings must not grow memory
+    renderCache.set(key, { at: Date.now(), html });
     return res.end(html);
   }
   const size = fs.statSync(file).size, range = String(req?.headers?.range ?? "").match(/^bytes=(\d*)-(\d*)$/);
