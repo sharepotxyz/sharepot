@@ -15,9 +15,8 @@ S=/home/sharepot
 * * * * * cd $S/apps/sharepot && DATA_DIR=$S/data node server/sample-prices.mjs >> $S/logs/sample-prices.log 2>&1
 0 11 * * * cd $S/apps/sharepot && DATA_DIR=$S/data node server/select-chain.mjs >> $S/logs/select-chain.log 2>&1
 
-# referral rebates (server/referrals.mjs): once a week, pay what settled fees earned referrers and invitees, from the
-# rebate wallet (devnet: the proposer, which can mint the mock tokens it lacks; mainnet: a funded rebate key).
-0 6 * * 1 cd $S/apps/sharepot && CLUSTER=devnet CLUSTER_RPC=https://api.devnet.solana.com DATA_DIR=$S/data REBATE_KEYPAIR=$S/secrets/devnet/proposer.json node server/referral-payout.mjs >> $S/logs/referral-payout.log 2>&1
+# referral rebates (server/referrals.mjs) are NOT paid from this host: deploy/referral-payout-remote.sh runs weekly
+# where the treasury key lives, pulls settlements + bindings from here, pays from the treasury and pushes the ledger back.
 
 # propose results after the close, finalize after the dispute window, pay out and sweep
 */10 * * * * cd $S/apps/sharepot && CLUSTER=devnet CLUSTER_RPC=https://api.devnet.solana.com DATA_DIR=$S/data SHAREPOT_SECRETS=$S/secrets/devnet node server/resolve.mjs >> $S/logs/resolve.log 2>&1

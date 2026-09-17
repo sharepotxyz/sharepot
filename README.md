@@ -98,7 +98,8 @@ someone else's wallet, and the file is keyed by address, so the binding holds on
 
 Fees are charged on winnings only, in the pool's token. When a bound wallet's winning bet settles, the referrer earns
 20 % of that fee (25 % from 10 000 all-time points, 30 % from 100 000) and the invitee gets 10 % of it back, both in
-the same token. `server/referral-payout.mjs` pays the balance out once a week from the operator's rebate wallet;
+the same token. `deploy/referral-payout-remote.sh` pays the balance out once a week straight from the treasury (rebates are a
+share of collected fees, so it always holds enough), from the machine that keeps the treasury key, never the app host;
 `data/referral-payouts.jsonl` is the ledger, `data/referrals.json` the bindings, and everything else is recomputed from
 `settlements.jsonl` so nothing is counted twice. Rules and maths: `server/referrals.mjs` (tests in
 `referrals.test.mjs`).
