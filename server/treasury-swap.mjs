@@ -112,7 +112,7 @@ async function executeSwap(tag, r, requote, want, rowBase) {
     if (attempt > 1) { r = await requote(r.amount); if (r.tooThin) return "thin"; }
     const sw = await jup("/swap", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ quoteResponse: r.q, userPublicKey: treasury.publicKey.toBase58(), wrapAndUnwrapSol: true, dynamicComputeUnitLimit: true, prioritizationFeeLamports: { jitoTipLamports: tip } }) });
     const tx = VersionedTransaction.deserialize(Buffer.from(sw.swapTransaction, "base64"));
-    const bad = quoteProblem(r.q, { inputMint: want.inputMint, outputMint: want.outputMint, amount: r.amount }) ?? jito.tipProblem(tx, tip)
+    const bad = quoteProblem(r.q, { inputMint: want.inputMint, outputMint: want.outputMint, amount: r.amount, slippageBps: SLIPPAGE_BPS }) ?? jito.tipProblem(tx, tip)
       ?? await simulationProblem(conn, tx, treasury.publicKey, { inputAta: want.inputAta, outputAta: want.outputAta, nativeOut: !!want.nativeOut, amount: r.amount, minOut: BigInt(r.q.otherAmountThreshold), maxLamports: MAX_SWAP_LAMPORTS });
     if (bad) { log(`REFUSED to sign ${tag}: ${bad}`); await notify("⛔ 換匯:交易內容不符,拒簽", `${tag}\n${bad}`, "treasury-swap-guard", 60); return "refused"; }
     const row = { ...rowBase, tip, attempt };

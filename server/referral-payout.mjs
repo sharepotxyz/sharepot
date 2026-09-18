@@ -39,19 +39,29 @@ const ledger = (row) => fs.appendFileSync(LEDGER, JSON.stringify({ at: new Date(
 
 // 1. reconcile: "sent" rows of an earlier run that never got their "landed" / "void"
 let payouts = referrals.readPayouts(LEDGER);
+// Only an answer from the chain settles a row: "confirmed" lands it, "failed" voids it. No record at all is NOT
+// "never landed" — a node without full history, or one still catching up, says the same of a transaction that did
+// land, and voiding on that would pay the rebate twice. Such a row stays "sent" (counted as paid) until the chain
+// answers; the operator is told, once per signature.
+const unanswered = [];
 for (const p of referrals.unsettledPayouts(payouts)) {
   if (DRY) { log("unsettled from an earlier run (DRY RUN, not touched):", p.signature); continue; }
   const st = await signatureStatus(conn, p.signature);
   if (st === "confirmed") { ledger({ status: "landed", wallet: p.wallet, mint: p.mint, token: p.token, raw: "0", signature: p.signature }); log("reconciled: landed", p.signature); }
-  else { ledger({ status: "void", wallet: p.wallet, mint: p.mint, token: p.token, raw: (-BigInt(p.raw)).toString(), signature: p.signature, why: st ?? "not in the ledger" }); log(`reconciled: void (${st ?? "never landed"})`, p.signature); }
+  else if (st === "failed") { ledger({ status: "void", wallet: p.wallet, mint: p.mint, token: p.token, raw: (-BigInt(p.raw)).toString(), signature: p.signature, why: "failed on-chain" }); log("reconciled: void (failed on-chain)", p.signature); }
+  else { unanswered.push(p); log("reconciled: no record on this RPC yet — held as paid, asked again next run", p.signature); }
 }
+for (const p of unanswered) await notify("⚠️ 推廣回饋:一筆付款鏈上查無紀錄", `${CLUSTER} ${p.wallet?.slice(0, 6)}… ${p.token ?? p.mint?.slice(0, 6)} raw ${p.raw}\n簽章 ${p.signature}\nRPC 說沒有這筆(可能沒落地,也可能節點沒歷史)。先當作已付、不重付;每週再問。若 explorer 也查無且已過一週,在帳本補一列 status=void 才會重付。`, `payout-unanswered:${p.signature}`, 7 * 24 * 60);
 payouts = referrals.readPayouts(LEDGER);
 
 // 2. what is due
 // The settlement log comes from the app host: a row earns a rebate only once the chain confirms it
 // (settlement-proof.mjs). Forfeited positions paid their owner nothing and earn no rebate.
 const db = referrals.load(REFERRALS_FILE);
-const earns = (r) => { const b = db.bindings[r.owner]; if (!b) return false; try { return BigInt(r.fee ?? 0) > 0n; } catch { return false; } };
+// Rows that move money (a bound wallet's fee) and rows that set how much (a referrer's own rows decide its tier) are
+// both proven against the chain; rows of wallets that are neither pass through, they change nothing.
+const referrers = new Set(Object.values(db.bindings).map((b) => b.referrer));
+const earns = (r) => { if (referrers.has(r.owner)) return true; const b = db.bindings[r.owner]; if (!b) return false; try { return BigInt(r.fee ?? 0) > 0n; } catch { return false; } };
 const proof = await provenRows(conn, readSettlements(DATA).filter((r) => r.kind !== "forfeited"), { cacheFile: path.join(DATA, "settlement-proofs.json"), wanted: earns, log });
 const rows = proof.ok;
 if (proof.unknown.length) log(`held back: ${proof.unknown.length} settlement rows the chain could not be asked about (next run asks again)`);

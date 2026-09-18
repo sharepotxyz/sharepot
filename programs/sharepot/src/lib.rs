@@ -32,7 +32,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{self, CloseAccount, Mint, TokenAccount, TokenInterface, TransferChecked};
 use anchor_spl::token_2022::spl_token_2022::{
-    extension::{transfer_hook::TransferHook, BaseStateWithExtensions, StateWithExtensions},
+    extension::{memo_transfer::MemoTransfer, transfer_hook::TransferHook, BaseStateWithExtensions, StateWithExtensions},
     state::{Account as TokenAccountState, AccountState, Mint as MintState},
 };
 use anchor_spl::associated_token::get_associated_token_address_with_program_id;
@@ -58,7 +58,10 @@ pub const FORFEIT_GRACE_SECS: i64 = 30 * 86_400;
 pub fn forfeit_allowed(now: i64, resolved_at: i64) -> bool {
     now >= resolved_at.saturating_add(FORFEIT_GRACE_SECS)
 }
-/// Whether tokens can be sent to this account right now: it exists, belongs to the token program and is not frozen.
+/// Whether tokens can be sent to this account right now: it exists, belongs to the token program, is not frozen and
+/// does not demand a memo on every incoming transfer (a Token-2022 option the owner can switch on; this program's
+/// payout carries no memo, so such an account refuses it exactly like a frozen one would — and if that did not count
+/// as "cannot be paid", one such position would keep its market from ever being swept).
 /// (A paused mint blocks every transfer alike and is not the owner's doing; it is not looked at here.)
 pub fn owner_can_be_paid(ata: &AccountInfo, token_program: &Pubkey) -> Result<bool> {
     if ata.data_is_empty() || ata.owner != token_program {
@@ -66,7 +69,15 @@ pub fn owner_can_be_paid(ata: &AccountInfo, token_program: &Pubkey) -> Result<bo
     }
     let data = ata.try_borrow_data()?;
     let acct = StateWithExtensions::<TokenAccountState>::unpack(&data)?;
-    Ok(acct.base.state != AccountState::Frozen)
+    if acct.base.state == AccountState::Frozen {
+        return Ok(false);
+    }
+    if let Ok(m) = acct.get_extension::<MemoTransfer>() {
+        if bool::from(m.require_incoming_transfer_memos) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 #[program]
@@ -301,7 +312,8 @@ pub mod sharepot {
         Ok(())
     }
 
-    /// A position whose owner cannot receive the stock — their associated token account for it is gone or frozen —
+    /// A position whose owner cannot receive the stock — their associated token account for it is gone, frozen or set to
+/// refuse transfers without a memo —
     /// would keep the market from ever being swept (settle_position needs a live account to pay into), and if the
     /// crank paid the rent to recreate such accounts, one dust bet per throwaway wallet would drain it. So once
     /// FORFEIT_GRACE_SECS have passed since the market resolved (the admin: at once), anyone may forfeit such a
@@ -776,7 +788,7 @@ pub enum PotError {
     #[msg("token not supported: it has an active transfer hook")] UnsupportedMint,
     #[msg("market is not stale yet: the proposer may void it only 24 h after its resolve time")] NotStaleYet,
     #[msg("position cannot be forfeited yet: 30 days must pass since the market resolved")] NotForfeitableYet,
-    #[msg("the owner's token account can receive the payout: settle the position instead")] OwnerCanBePaid,
+    #[msg("the owner's token account can receive the payout (it exists, is not frozen and needs no memo): settle the position instead")] OwnerCanBePaid,
     #[msg("not the owner's associated token account for this stock")] WrongOwnerAccount,
 }
 

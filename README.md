@@ -65,7 +65,7 @@ resolve on the same official close; each is staked and paid in its own token.
   mainnet there is no seed** (`SEED_MARKETS=1` overrides it for a deliberate promotion). If nobody picked the winning
   range, everyone is refunded; a **voided** market refunds everyone in full.
 * Payouts are **pushed** to wallets by a permissionless crank after the dispute window. Nobody has to claim.
-* **The one case the crank cannot pay**: the owner's token account for that stock was closed or frozen after the bet.
+* **The one case the crank cannot pay**: the owner's token account for that stock was closed, frozen, or set to require a memo on incoming transfers after the bet.
   The crank reopens a closed account at its own cost when the payout is worth at least $0.50; a smaller one waits for
   the owner to reopen it. A position still unpayable 30 days after resolution can be forfeited to the treasury
   (`forfeit_position`; the program checks both the delay and the account), so a market can always be closed. The site
@@ -240,7 +240,7 @@ Instruction | Who | What
 `void_market` | admin | refund everyone
 `void_stale_market` | proposer or admin | refund everyone in a market still unproposed 24 h after its resolve time
 `settle_position` | anyone | pay one position in the stock, close it, refund its rent to the payer
-`forfeit_position` | anyone after 30 days, admin any time | only if the owner's token account is gone or frozen: the payout goes to the treasury, the position closes
+`forfeit_position` | anyone after 30 days, admin any time | only if the owner's token account is gone, frozen or set to require memos: the payout goes to the treasury, the position closes
 `sweep_market` | anyone | after all positions are settled: fees + dust to the treasury's account for that stock, close the vault and the market account; their rent goes back to the proposer that paid it
 
 Program id: `8TzdVXpqa52o3fBvYynSxHTWP4zuWfZmTvSkpdLT9rWW`

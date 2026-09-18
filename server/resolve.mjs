@@ -11,7 +11,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import anchor from "@coral-xyz/anchor";
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
-import { getAssociatedTokenAddressSync, getOrCreateAssociatedTokenAccount, getAccount, createHarvestWithheldTokensToMintInstruction, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
+import { getAssociatedTokenAddressSync, getOrCreateAssociatedTokenAccount, getAccount, getMemoTransfer, createHarvestWithheldTokensToMintInstruction, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
 import idlJson from "../idl/sharepot.json" with { type: "json" };
 import { closeMove, chainMove, parseMetric, nasdaqMarketInfo, nyToUnix } from "./prices.mjs";
@@ -241,9 +241,16 @@ async function settle(markets, cfg) {
           // owner) or frozen (by the issuer). Only a usable one is paid into.
           const ata = getAssociatedTokenAddressSync(mint, p.owner, false, tokenProgram);
           const acct = await getAccount(conn, ata, "confirmed", tokenProgram).catch((e) => (/TokenAccountNotFound/.test(String(e?.name ?? e)) ? null : { isFrozen: true, invalid: true }));
+          // An account the owner set to require a memo on every incoming transfer (a Token-2022 option) refuses the
+          // payout just as a frozen one does; the program treats it the same (owner_can_be_paid), so it is deferred and
+          // forfeitable, not retried every ten minutes.
+          let memoRequired = false; try { memoRequired = !!acct && !acct.invalid && !!getMemoTransfer(acct)?.requireIncomingTransferMemos; } catch { memoRequired = false; }
+          const blocked = !acct ? "closed" : acct.isFrozen ? "frozen" : memoRequired ? "set to require memos" : null;
           const graceOver = now >= fresh.resolvedAt.toNumber() + FORFEIT_GRACE_SECS;
-          if (!acct || acct.isFrozen) {
-            const worthUsd = close != null ? (Number(payout) / 10 ** meta.decimals) * meta.multiplier * close : null;
+          if (blocked) {
+            // a voided market has no close; its refund is priced at the market's own baseline (the previous close)
+            const priceUsd = close ?? (fresh.baseline.toNumber() > 0 ? fresh.baseline.toNumber() / 1e8 : null);
+            const worthUsd = priceUsd != null ? (Number(payout) / 10 ** meta.decimals) * meta.multiplier * priceUsd : null;
             if (graceOver) {
               // forfeit_position: the payout goes to the treasury, the position closes (rent to its payer)
               const treasury = (await getOrCreateAssociatedTokenAccount(conn, proposer, mint, cfg.treasuryOwner, false, "confirmed", undefined, tokenProgram)).address;
@@ -252,13 +259,13 @@ async function settle(markets, cfg) {
               try { ({ sig: fsig, landed: fok } = await sendSigned(conn, ftx, [proposer], { beforeSend: (s) => { fsig = s; } })); } catch (e) { fnote = String(e?.message ?? e).split("\n")[0].slice(0, 160); }
               if (!fok) { const still = await program.account.position.fetchNullable(ppk).catch(() => undefined); if (still !== null) throw new Error(fnote ?? "forfeit did not land"); }
               fs.appendFileSync(SETTLEMENTS, JSON.stringify({ at: new Date().toISOString(), market: publicKey.toBase58(), id: m.id.toNumber(), metric: tag(m.metric), mint: mint.toBase58(), owner: p.owner.toBase58(), amounts: p.amounts.slice(0, fresh.nBuckets).map((x) => x.toString()), status: fresh.status, outcome: fresh.outcome, observed: fresh.proposedValue.toString(), kind: "forfeited", payout: "0", forfeited: payout.toString(), fee: fee.toString(), signature: fsig,
-                token, decimals: meta.decimals, multiplier: meta.multiplier, close, pools: fresh.pools.slice(0, fresh.nBuckets).map((x) => x.toString()), seed: fresh.seedAmount.toString(), note: `owner's token account ${acct ? "frozen" : "closed"} 30 days after resolution; payout forfeited to the treasury` }) + "\n");
-              log(`  forfeited ${p.owner.toBase58()} (${acct ? "frozen" : "closed"} account) amount=${payout} ${fsig}`);
+                token, decimals: meta.decimals, multiplier: meta.multiplier, close, pools: fresh.pools.slice(0, fresh.nBuckets).map((x) => x.toString()), seed: fresh.seedAmount.toString(), note: `owner's token account ${blocked} 30 days after resolution; payout forfeited to the treasury` }) + "\n");
+              log(`  forfeited ${p.owner.toBase58()} (${blocked} account) amount=${payout} ${fsig}`);
               continue;
             }
-            if (acct?.isFrozen || (worthUsd != null && worthUsd < ATA_RENT_USD)) {
+            if (acct || (worthUsd != null && worthUsd < ATA_RENT_USD)) {
               deferred++;
-              log(`  deferred ${p.owner.toBase58()}: token account ${acct ? "frozen by the issuer" : `closed, payout ≈ $${worthUsd.toFixed(2)} < rent $${ATA_RENT_USD}`}; forfeits to the treasury after ${new Date((fresh.resolvedAt.toNumber() + FORFEIT_GRACE_SECS) * 1000).toISOString().slice(0, 10)} unless paid before`);
+              log(`  deferred ${p.owner.toBase58()}: token account ${acct ? (acct.isFrozen ? "frozen by the issuer" : "set by its owner to require memos") : `closed, payout ≈ $${worthUsd.toFixed(2)} < rent $${ATA_RENT_USD}`}; forfeits to the treasury after ${new Date((fresh.resolvedAt.toNumber() + FORFEIT_GRACE_SECS) * 1000).toISOString().slice(0, 10)} unless paid before`);
               continue;
             }
           }

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { REFEREE_BPS, bind, codeFor, earnings, ensureCode, load, normalizeCode, pending, save, tierBps } from "./referrals.mjs";
+import { REFEREE_BPS, bind, bindMessage, codeFor, earnings, ensureCode, load, normalizeCode, parseSiws, pending, save, siwsStatement, tierBps } from "./referrals.mjs";
 
 const A = "DaBB7D5A6kEMrZzhfiaWN4XvykZBGK5J6PEX58zQVPmT", B = "FfZbH33d4ws3LB9Bdx7abSCvXKThBmtS18LWdSizQVYj", C = "op2Ve6ehakzUNvRgwZNQxAEL9SXMPBDrA3uzG9WwSfF";
 const MINT = "ESrJMtPaTTm2x5KzasvHQtZGbYwfXsoB89umc1FhCR8q";
@@ -33,6 +33,22 @@ test("bind rules: unknown code, self, second code refused; same code twice is a 
   ensureCode(db, C);
   assert.match(bind(db, { wallet: B, code: codeFor(C), cluster: "devnet" }).error, /already bound/);
   assert.equal(db.bindings[B].referrer, A);
+});
+
+test("bind rules: a ring (A refers B, B refers A, or through C) is refused", () => {
+  const db = load("/nonexistent"); ensureCode(db, A); ensureCode(db, B); ensureCode(db, C);
+  assert.deepEqual(bind(db, { wallet: B, code: codeFor(A), cluster: "devnet" }), { ok: true });
+  assert.match(bind(db, { wallet: A, code: codeFor(B), cluster: "devnet" }).error, /circle/);
+  assert.deepEqual(bind(db, { wallet: C, code: codeFor(B), cluster: "devnet" }), { ok: true });          // A → B → C
+  assert.match(bind(db, { wallet: A, code: codeFor(C), cluster: "devnet" }).error, /circle/);            // C → A would close it
+});
+
+test("bind message names the site and the time; a SIWS message parses back to domain, wallet, code, issue time", () => {
+  assert.equal(bindMessage(A, "ABC234", "devnet.sharepot.xyz", 1700000000), `sharepot-referral v2\ndomain=devnet.sharepot.xyz\nwallet=${A}\ncode=ABC234\nts=1700000000`);
+  const text = `devnet.sharepot.xyz wants you to sign in with your Solana account:\n${A}\n\n${siwsStatement("ABC234")}\n\nURI: https://devnet.sharepot.xyz/\nVersion: 1\nChain ID: devnet\nNonce: ABC234x1\nIssued At: 2026-09-18T03:00:00.000Z`;
+  assert.deepEqual(parseSiws(text), { domain: "devnet.sharepot.xyz", address: A, code: "ABC234", issuedAt: "2026-09-18T03:00:00.000Z" });
+  assert.equal(parseSiws(text.replace("Apply SharePot referral code", "Log in with code")), null);
+  assert.equal(parseSiws("hello"), null);
 });
 
 test("tiers: 20 % below 10k points, 25 % from 10k, 30 % from 100k", () => {

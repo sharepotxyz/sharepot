@@ -14,7 +14,12 @@ import { utcDate, addDays } from "./prices.mjs";
 const DATA = process.env.DATA_DIR ?? path.join(process.cwd(), "data");
 const now = Math.floor(Date.now() / 1000), today = utcDate(now);
 const mints = new Set();
-if (process.env.TOKENS_API) {
+//        TOKENS_FILE=<path> — the list verify-proposals.mjs writes from the chain's own market accounts (mainnet verifier):
+//        the site is never asked, so it cannot leave a token out of the verifier's samples.
+if (process.env.TOKENS_FILE) {
+  let list = null; try { list = JSON.parse(fs.readFileSync(process.env.TOKENS_FILE, "utf8")).tokens; } catch (e) { if (e?.code !== "ENOENT") throw e; }
+  for (const t of list ?? []) if (t.mint) mints.add(t.mint);
+} else if (process.env.TOKENS_API) {
   const { stocks } = await (await fetch(process.env.TOKENS_API, { signal: AbortSignal.timeout(15_000) })).json();
   for (const s of stocks) if (s.kind === "day") for (const t of s.tokens) if (t.mainnetMint) mints.add(t.mainnetMint);
 } else {

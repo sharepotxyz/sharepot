@@ -9,6 +9,7 @@ import {
   getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentInstruction, createMintToInstruction,
   createInitializeTransferFeeConfigInstruction, createHarvestWithheldTokensToMintInstruction,
   createCloseAccountInstruction, createFreezeAccountInstruction, createThawAccountInstruction,
+  createReallocateInstruction, createEnableRequiredMemoTransfersInstruction, createDisableRequiredMemoTransfersInstruction,
 } from "@solana/spl-token";
 import { assert } from "chai";
 import { Sharepot } from "../target/types/sharepot";
@@ -197,6 +198,37 @@ describe("sharepot: parimutuel pools staked in tokenized stocks", () => {
     await provider.sendAndConfirm(new Transaction().add(createThawAccountInstruction(xTSLA.ata.alice, xTSLA.mint, issuer.publicKey, [], T22)), [issuer]);
     await settle(k, bob, dave);                                                                     // the loser settles as usual
     let mk = await program.account.market.fetch(k.m); assert.equal(mk.positionsOpen, 0);
+    await sweep(k, dave);
+    assert.isNull(await program.account.market.fetchNullable(k.m));
+  });
+
+  it("forfeit: an owner who set their token account to require memos cannot be paid either (it would hold the market open for ever); switching it off makes them payable again", async () => {
+    const k = await createMarket(xTSLA, -1, 6);
+    await bet(k, alice, "up", 100 * T); await bet(k, bob, "down", 100 * T); await bet(k, carol, "up", 10 * T);
+    // carol turns on "required memo transfers" on her own account (a Token-2022 option any owner can enable)
+    await provider.sendAndConfirm(new Transaction().add(
+      createReallocateInstruction(xTSLA.ata.carol, carol.publicKey, [ExtensionType.MemoTransfer], carol.publicKey, [], T22),
+      createEnableRequiredMemoTransfersInstruction(xTSLA.ata.carol, carol.publicKey, [], T22)), [carol]);
+    await sleep(7500);
+    await propose(k, 100); await finalize(k);
+    await expectErr(settle(k, carol, dave), "memo");                                                // the payout has no memo: refused by the token program
+    const forfeit = (owner: PublicKey, cranker: Keypair) =>
+      program.methods.forfeitPosition().accounts({ config: configPda, market: k.m, position: posPda(k.m, owner), payer: owner, vault: k.v, mint: xTSLA.mint, ownerAta: getAssociatedTokenAddressSync(xTSLA.mint, owner, false, T22), treasury: xTSLA.ata.admin, cranker: cranker.publicKey, tokenProgram: T22 }).signers(cranker === admin ? [] : [cranker]).rpc();
+    await expectErr(forfeit(carol.publicKey, dave), "NotForfeitableYet");                          // a stranger still waits 30 days
+    await expectErr(forfeit(alice.publicKey, admin), "OwnerCanBePaid");                             // alice is fine
+    // carol switches it off again: she is payable, so she is settled, never forfeited
+    await provider.sendAndConfirm(new Transaction().add(createDisableRequiredMemoTransfersInstruction(xTSLA.ata.carol, carol.publicKey, [], T22)), [carol]);
+    await expectErr(forfeit(carol.publicKey, admin), "OwnerCanBePaid");
+    const c0 = await bal(xTSLA, xTSLA.ata.carol);
+    await settle(k, carol, dave); assert.isAbove((await bal(xTSLA, xTSLA.ata.carol)) - c0, 10 * T);
+    // and back on, for the forfeit path: the admin may forfeit at once
+    await provider.sendAndConfirm(new Transaction().add(createReallocateInstruction(xTSLA.ata.alice, alice.publicKey, [ExtensionType.MemoTransfer], alice.publicKey, [], T22), createEnableRequiredMemoTransfersInstruction(xTSLA.ata.alice, alice.publicKey, [], T22)), [alice]);
+    await expectErr(settle(k, alice, dave), "memo");
+    const t0 = await bal(xTSLA, xTSLA.ata.admin);
+    await forfeit(alice.publicKey, admin);
+    assert.isAbove((await bal(xTSLA, xTSLA.ata.admin)) - t0, 100 * T);
+    await provider.sendAndConfirm(new Transaction().add(createDisableRequiredMemoTransfersInstruction(xTSLA.ata.alice, alice.publicKey, [], T22)), [alice]);
+    await settle(k, bob, dave);
     await sweep(k, dave);
     assert.isNull(await program.account.market.fetchNullable(k.m));
   });

@@ -28,7 +28,23 @@ export function codeFor(wallet, len = 6) {
   return s;
 }
 export const normalizeCode = (c) => String(c ?? "").trim().toUpperCase().replace(/[O]/g, "0").replace(/[IL]/g, "1");
-export const bindMessage = (wallet, code) => `sharepot-referral v1\nwallet=${wallet}\ncode=${code}`;
+/** What the wallet signs to bind (plain text, so the wallet shows it). `domain` names the site the signature is for and
+ *  `ts` (unix seconds) when it was made: the API takes it only for BIND_MAX_AGE_SECS, so a signature obtained elsewhere
+ *  cannot be kept and used later. Wallets that support Sign-In-With-Solana sign a SIWS message instead (siwsBinding). */
+export const BIND_MAX_AGE_SECS = 600;
+export const bindMessage = (wallet, code, domain, ts) => `sharepot-referral v2\ndomain=${domain}\nwallet=${wallet}\ncode=${code}\nts=${ts}`;
+/** Parse a signed Sign-In-With-Solana message text (the wallet checks that `domain` is the page that asked, so a
+ *  phishing page cannot get one for this site). Returns { domain, address, code, issuedAt } or null when it is not a
+ *  SharePot referral sign-in. */
+export function parseSiws(text) {
+  const m = String(text).match(/^([^\s]+) wants you to sign in with your Solana account:\n([1-9A-HJ-NP-Za-km-z]{32,44})\n\n(.*?)\n\n/s);
+  if (!m) return null;
+  const st = m[3].match(/^Apply SharePot referral code ([A-Z0-9]{6,10}) to this wallet's first bet\.$/);
+  const issued = String(text).match(/\nIssued At: ([^\n]+)/);
+  if (!st || !issued) return null;
+  return { domain: m[1], address: m[2], code: st[1], issuedAt: issued[1] };
+}
+export const siwsStatement = (code) => `Apply SharePot referral code ${code} to this wallet's first bet.`;
 
 const EMPTY = () => ({ version: 1, wallets: {}, codes: {}, bindings: {} });
 export function load(file) {
@@ -61,6 +77,9 @@ export function bind(db, { wallet, code, cluster, now = Date.now() }) {
   const referrer = db.codes[code];
   if (!referrer) return { error: "unknown referral code" };
   if (referrer === wallet) return { error: "you cannot refer yourself" };
+  // no rings: if the code's owner is itself bound (directly or through others) to this wallet's code, the two would be
+  // paying each other's rebates out of the treasury
+  for (let r = db.bindings[referrer]?.referrer, hops = 0; r && hops < 64; r = db.bindings[r]?.referrer, hops++) if (r === wallet) return { error: "that wallet was referred by you: referrals cannot go in a circle" };
   const prev = db.bindings[wallet];
   if (prev) return prev.code === code ? { ok: true, already: true } : { error: "this wallet is already bound to another code" };
   db.bindings[wallet] = { code, referrer, at: new Date(now).toISOString(), cluster };

@@ -57,11 +57,11 @@ async function load() {
   } else {
     boardEl.innerHTML = `<div class="scroll"><table class="tbl"><thead><tr><th>#</th><th>Wallet</th><th class="r">Points</th><th class="r">Markets</th><th class="r">Won</th></tr></thead><tbody>${rows.map((e) => `
       <tr${e.wallet === me ? ` style="background:var(--ok-bg)"` : ""}>
-        <td class="mono">${e.rank}</td>
+        <td class="mono">${Number(e.rank)}</td>
         <td><a class="mono" href="${explorerAddress(e.wallet)}" target="_blank" rel="noopener">${esc(short(e.wallet))}</a>${e.wallet === me ? ` <b>you</b>` : ""}${e.test ? ` <span class="note">SharePot test</span>` : ""}</td>
         <td class="r mono"><b>${esc(fmtPoints(e.points))}</b></td>
-        <td class="r mono">${e.markets}</td>
-        <td class="r mono">${e.won} / ${e.markets}</td>
+        <td class="r mono">${Number(e.markets)}</td>
+        <td class="r mono">${Number(e.won)} / ${Number(e.markets)}</td>
       </tr>`).join("")}</tbody></table></div>
 `;
   }

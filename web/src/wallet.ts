@@ -6,7 +6,11 @@ import { Keypair, PublicKey, Transaction, VersionedTransaction } from "@solana/w
 import { connection } from "./chain";
 import { CLUSTER } from "./config";
 
-export type Session = { label: string; publicKey: PublicKey; signAndSend: (tx: Transaction) => Promise<string>; signMessage: (msg: Uint8Array) => Promise<Uint8Array>; disconnect: () => Promise<void> };
+/** Sign-In-With-Solana (wallet-standard `solana:signIn`): the wallet builds the message from these fields and checks
+ *  that `domain` is really the page asking, so a signature obtained on another site cannot be for this one. */
+export type SignInInput = { domain: string; address: string; statement: string; uri?: string; version?: string; chainId?: string; nonce?: string; issuedAt?: string };
+export type SignInOutput = { signedMessage: Uint8Array; signature: Uint8Array };
+export type Session = { label: string; publicKey: PublicKey; signAndSend: (tx: Transaction) => Promise<string>; signMessage: (msg: Uint8Array) => Promise<Uint8Array>; signIn?: (input: SignInInput) => Promise<SignInOutput>; disconnect: () => Promise<void> };
 const chain = CLUSTER === "mainnet" ? "solana:mainnet" : CLUSTER === "devnet" ? "solana:devnet" : "solana:localnet";
 
 export function listWallets(): Wallet[] {
@@ -30,7 +34,8 @@ export async function connectWallet(w: Wallet): Promise<Session> {
   };
   const disconnect = async () => { try { await (w.features as any)["standard:disconnect"]?.disconnect(); } catch {} };
   const signMessage = async (message: Uint8Array) => { const f = (w.features as any)["solana:signMessage"]; if (!f) throw new Error("This wallet cannot sign messages"); const [{ signature }] = await f.signMessage({ account: acc, message }); return signature as Uint8Array; };
-  return { label: w.name, publicKey, signAndSend, signMessage, disconnect };
+  const signIn = (w.features as any)["solana:signIn"] ? async (input: SignInInput) => { const [{ signedMessage, signature }] = await (w.features as any)["solana:signIn"].signIn(input); return { signedMessage, signature }; } : undefined;
+  return { label: w.name, publicKey, signAndSend, signMessage, signIn, disconnect };
 }
 
 /** Test-only burner wallet kept in localStorage (never offered on mainnet). */

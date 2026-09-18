@@ -89,7 +89,9 @@ async function independentValue(spec, now, thr) {
     const ev = await closeMove(spec.symbol, spec.date, now, thr);
     return ev.ok ? { value: ev.value, detail: `${ev.detail.prevClose} → ${ev.detail.close} (${ev.detail.source}${ev.detail.crossCheck?.agreed ? " + nasdaq" : ""})` } : { error: ev.reason };
   }
-  const mint = await mainnetMintOf(spec.symbol); if (!mint) return { error: `no mainnet mint known for ${spec.symbol}` };
+  // On mainnet the market account itself says which token it settles on; the app host's symbol → mint map is only
+  // needed on devnet, where markets sit on mock mints. Nothing the app host serves can point the check at another coin.
+  const mint = CLUSTER === "mainnet" ? spec.mint : await mainnetMintOf(spec.symbol); if (!mint) return { error: `no mainnet mint known for ${spec.symbol}` };
   // own samples first (same rule as the resolver, this host's data)
   const own = chainMove(DATA, mint, spec.symbol, spec.date, now, thr);
   if (own.ok) return { value: own.value, detail: `$${own.detail.baseline} → $${own.detail.close} (own samples ${own.detail.prevSamples}/${own.detail.samples}${own.detail.crossCheck?.agreed ? ", dexscreener agrees" : ""})` };
@@ -106,12 +108,20 @@ const now = Math.floor(Date.now() / 1000);
 // Markets are PDAs of their ids (0 … market_count−1): read them by address in batches, which needs no
 // getProgramAccounts (not on every RPC plan) and no list from the app host — nothing it says can hide a market.
 const marketPda = (id) => PublicKey.findProgramAddressSync([Buffer.from("market"), new anchor.BN(id).toArrayLike(Buffer, "le", 8)], program.programId)[0];
-const count = cfg.marketCount.toNumber(), proposed = [];
+const count = cfg.marketCount.toNumber(), proposed = [], sampleList = new Map();
 for (let i = 0; i < count; i += 100) {
   const keys = Array.from({ length: Math.min(100, count - i) }, (_, j) => marketPda(i + j));
   const accs = await program.account.market.fetchMultiple(keys);
-  accs.forEach((a, j) => { if (a && a.status === 1) proposed.push({ publicKey: keys[j], account: a }); });
+  accs.forEach((a, j) => {
+    if (!a) return;
+    if (a.status === 1) proposed.push({ publicKey: keys[j], account: a });
+    // every live on-chain-price market's token, for this host's own sampler (sample-prices.mjs TOKENS_FILE): read from
+    // the chain, so the app host cannot leave a token out of the verifier's samples
+    const sp = a.status <= 1 ? parseMetric(tag(a.metric)) : null;
+    if (sp?.kind === "day") sampleList.set(a.mint.toBase58(), { symbol: sp.symbol, market: keys[j].toBase58() });
+  });
 }
+if (CLUSTER === "mainnet") { const f = path.join(DATA, "tokens.json"), tmp = `${f}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify({ at: new Date().toISOString(), tokens: [...sampleList].map(([mint, t]) => ({ mint, ...t })) })); fs.renameSync(tmp, f); }
 log(`cluster=${CLUSTER} proposed=${proposed.length}${DRY ? " DRY RUN" : ""}`);
 let checked = 0, agreed = 0, voided = 0; const late = [];
 for (const { publicKey, account: m } of proposed) {
@@ -121,7 +131,7 @@ for (const { publicKey, account: m } of proposed) {
   if (done && done.proposedAt === m.proposedAt.toNumber() && done.verdict !== "pending") continue;   // same proposal, already judged
   if (!spec) { log(`#${id}: unknown metric ${metric}`); continue; }
   const thr = m.thresholds.slice(0, m.nBuckets - 1).map((t) => t.toNumber()), pv = m.proposedValue.toNumber(), pb = m.proposedOutcome;
-  let r; try { r = await independentValue(spec, now, thr); } catch (e) { r = { error: String(e?.message ?? e).slice(0, 160) }; }
+  let r; try { r = await independentValue({ ...spec, mint: m.mint.toBase58() }, now, thr); } catch (e) { r = { error: String(e?.message ?? e).slice(0, 160) }; }
   checked++;
   if (r.error) {
     log(`#${id} ${metric}: cannot verify yet — ${r.error} (window closes ${new Date(windowEnd * 1000).toISOString()})`);

@@ -182,10 +182,13 @@ function leaderboardCached(key, since) {
 }
 
 // ---------- helpers ----------
-const seenAddr = new Map(), seenIp = new Map(), seenDispute = new Map(), seenFeedback = new Map(); let seenDay = "", faucetToday = 0, feedbackToday = 0;
+const seenAddr = new Map(), seenIp = new Map(), seenDispute = new Map(), seenDisputeSig = new Set(), seenFeedback = new Map(); let seenDay = "", faucetToday = 0, feedbackToday = 0, disputesToday = 0;
+const DISPUTES_DAILY_GLOBAL = Number(process.env.DISPUTES_DAILY_GLOBAL ?? 100);
 const dayKey = () => new Date().toISOString().slice(0, 10);
-function rollDay() { const d = dayKey(); if (d !== seenDay) { seenDay = d; seenAddr.clear(); seenIp.clear(); seenDispute.clear(); seenFeedback.clear(); seenLookup.clear(); faucetToday = 0; feedbackToday = 0; } }
-// Behind Cloudflare the real client is CF-Connecting-IP; direct localhost callers fall back to the socket address.
+function rollDay() { const d = dayKey(); if (d !== seenDay) { seenDay = d; seenAddr.clear(); seenIp.clear(); seenDispute.clear(); seenDisputeSig.clear(); seenFeedback.clear(); seenLookup.clear(); betCache.clear(); faucetToday = 0; feedbackToday = 0; disputesToday = 0; } }
+// The client address: Caddy sets CF-Connecting-IP on every proxied request to the address it worked out itself (the
+// Cloudflare-forwarded client when the connection came from a Cloudflare range, else the peer) — so a caller cannot
+// pick its own. Direct localhost callers (tests) fall back to the socket address.
 const clientIp = (req) => String(req.headers["cf-connecting-ip"] ?? req.socket.remoteAddress ?? "?").trim();
 const json = (res, code, body, extra = {}) => { res.writeHead(code, { "content-type": "application/json", "access-control-allow-origin": "*", "access-control-allow-headers": "content-type", "access-control-allow-methods": "GET,POST,OPTIONS", ...extra }); res.end(JSON.stringify(body)); };
 const readBody = (req, max = 4096) => new Promise((ok, err) => { let b = ""; req.on("data", (c) => { b += c; if (b.length > max) { err(Object.assign(new Error("body too large"), { status: 413 })); req.destroy(); } }); req.on("end", () => ok(b)); req.on("error", err); });
@@ -204,17 +207,20 @@ const betCache = new Map();   // wallet → { at, open, settled }
 // A cache miss costs one getProgramAccounts call on the RPC this process also reads the markets with. A stranger can
 // trigger misses at will (any address is a valid question), so they are budgeted per network per day and globally per
 // minute; over budget the answer is 429, never a slower site.
+// Reads (GET /referral/:wallet, any address) and writes (bind / create a code: the wallet in question is acting) have
+// separate per-minute budgets, so a stranger cycling through random addresses cannot stop real bindings.
 const LOOKUP_IP_DAILY = Number(process.env.LOOKUP_IP_DAILY ?? 60), LOOKUP_PER_MINUTE = Number(process.env.LOOKUP_PER_MINUTE ?? 30);
-const seenLookup = new Map(); let lookupMinute = { at: 0, n: 0 };
-function chargeLookup(ip) {
-  rollDay(); const minute = Math.floor(Date.now() / 60_000); if (lookupMinute.at !== minute) lookupMinute = { at: minute, n: 0 };
-  if (lookupMinute.n >= LOOKUP_PER_MINUTE || (seenLookup.get(ip) ?? 0) >= LOOKUP_IP_DAILY) throw Object.assign(new Error("too many wallet lookups; try again later"), { status: 429 });
-  lookupMinute.n++; seenLookup.set(ip, (seenLookup.get(ip) ?? 0) + 1);
+const seenLookup = new Map(); let lookupMinute = { at: 0, get: 0, post: 0 };
+function chargeLookup(ip, pool = "get") {
+  rollDay(); const minute = Math.floor(Date.now() / 60_000); if (lookupMinute.at !== minute) lookupMinute = { at: minute, get: 0, post: 0 };
+  if (lookupMinute[pool] >= LOOKUP_PER_MINUTE || (seenLookup.get(ip) ?? 0) >= LOOKUP_IP_DAILY) throw Object.assign(new Error("too many wallet lookups; try again later"), { status: 429 });
+  lookupMinute[pool]++; seenLookup.set(ip, (seenLookup.get(ip) ?? 0) + 1);
+  if (betCache.size > 5000) betCache.clear();
 }
 // "No bets yet" goes stale the moment the first bet lands, so it is only trusted for 10 s; a positive answer for 60 s.
 async function betHistory(wallet, fresh = false, ip = "?") {
   const hit = betCache.get(wallet); if (!fresh && hit && Date.now() - hit.at < (hit.open + hit.settled ? 60_000 : 10_000)) return hit;
-  chargeLookup(ip);
+  chargeLookup(ip, fresh ? "post" : "get");
   const v = { at: Date.now(), open: await openPositionsOf(wallet), settled: settledRowsOf(wallet).length };
   betCache.set(wallet, v); return v;
 }
@@ -360,8 +366,28 @@ const server = http.createServer(async (req, res) => {
       let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: "bad body" }); }
       const wallet = String(b.wallet ?? ""), code = referrals.normalizeCode(b.code);
       if (!isPubkey(wallet) || !referrals.CODE_RE.test(code)) return json(res, 400, { error: "wallet and code required" });
-      let ok = false; try { ok = nacl.sign.detached.verify(new TextEncoder().encode(referrals.bindMessage(wallet, code)), bs58.decode(String(b.signature ?? "")), bs58.decode(wallet)); } catch {}
-      if (!ok) return json(res, 401, { error: "signature does not match the wallet" });
+      // Two ways to prove the wallet asked for THIS binding on THIS site, recently:
+      //  - Sign-In-With-Solana: the wallet itself checks the domain in the message is the page that asked, so a page
+      //    elsewhere cannot obtain one for sharepot; the signed bytes come back with the signature.
+      //  - a plain v2 message naming the site and the time, for wallets without signIn (and the test wallet).
+      // Either is accepted for BIND_MAX_AGE_SECS only, so a signature cannot be kept and replayed later.
+      const host = new URL(SITE_URL).host, nowS = Math.floor(Date.now() / 1000);
+      let ok = false, why = "signature does not match the wallet";
+      try {
+        if (b.signedMessage) {
+          const bytes = bs58.decode(String(b.signedMessage)), s = referrals.parseSiws(Buffer.from(bytes).toString("utf8"));
+          if (!s) why = "not a SharePot referral sign-in";
+          else if (s.domain !== host) why = `sign-in was for ${s.domain}, not ${host}`;
+          else if (s.address !== wallet || s.code !== code) why = "sign-in names another wallet or code";
+          else if (!(Math.abs(nowS - Date.parse(s.issuedAt) / 1000) <= referrals.BIND_MAX_AGE_SECS)) why = "sign-in is too old; try again";
+          else ok = nacl.sign.detached.verify(bytes, bs58.decode(String(b.signature ?? "")), bs58.decode(wallet));
+        } else {
+          const ts = Number(b.ts);
+          if (!Number.isInteger(ts) || Math.abs(nowS - ts) > referrals.BIND_MAX_AGE_SECS) why = "signature is too old; try again";
+          else ok = nacl.sign.detached.verify(new TextEncoder().encode(referrals.bindMessage(wallet, code, host, ts)), bs58.decode(String(b.signature ?? "")), bs58.decode(wallet));
+        }
+      } catch {}
+      if (!ok) return json(res, 401, { error: why });
       const db = referrals.load(REFERRALS_FILE);
       if (db.bindings[wallet]) return json(res, db.bindings[wallet].code === code ? 200 : 409, db.bindings[wallet].code === code ? { ok: true, already: true } : { error: "this wallet is already bound to another code", permanent: true });
       if (!referrals.referrerOf(db, code)) return json(res, 404, { error: "unknown referral code", permanent: true });
@@ -382,12 +408,23 @@ const server = http.createServer(async (req, res) => {
     if (p === "/dispute" && req.method === "POST") {
       rollDay(); const ip = clientIp(req);
       seenDispute.set(ip, (seenDispute.get(ip) ?? 0) + 1); if (seenDispute.get(ip) > 20) return json(res, 429, { error: "too many disputes from this network today" });
+      if (disputesToday >= DISPUTES_DAILY_GLOBAL) return json(res, 429, { error: "too many disputes today; email hello@sharepot.xyz" });
       let b; try { b = JSON.parse(await readBody(req, 64 * 1024)); } catch { return json(res, 400, { error: "bad body" }); }
       const market = String(b.market ?? ""), wallet = String(b.wallet ?? ""), reason = String(b.reason ?? "").slice(0, 2000), claimed = b.claimedValue == null ? null : String(b.claimedValue).slice(0, 40);
       if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(market) || !/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(wallet) || reason.length < 5) return json(res, 400, { error: "market, wallet and a reason (≥5 chars) are required" });
       const msg = `sharepot-dispute v1\nmarket=${market}\nwallet=${wallet}\nclaimed=${claimed ?? ""}\nreason=${reason}`;
       let ok = false; try { ok = nacl.sign.detached.verify(new TextEncoder().encode(msg), bs58.decode(String(b.signature ?? "")), bs58.decode(wallet)); } catch {}
       if (!ok) return json(res, 401, { error: "signature does not match the wallet" });
+      const sigKey = String(b.signature).slice(0, 120); if (seenDisputeSig.has(sigKey)) return json(res, 409, { error: "this dispute was already filed" });
+      // Only a market with a proposal on it can be disputed, and only by a wallet with a stake in it: anything else is
+      // noise (and each noise line would page the operator).
+      const mk = (await chainState()).markets?.find((x) => x.pubkey === market);
+      if (!mk || mk.status !== 1) return json(res, 404, { error: "no proposed result to dispute on that market" });
+      const posPda = PublicKey.findProgramAddressSync([Buffer.from("position"), new PublicKey(market).toBuffer(), new PublicKey(wallet).toBuffer()], ro.programId)[0];
+      if (!(await conn.getAccountInfo(posPda, "confirmed"))) return json(res, 403, { error: "only a wallet with a stake in this market can dispute its result" });
+      const open = fs.existsSync(DISPUTES) ? fs.readFileSync(DISPUTES, "utf8").split("\n").filter(Boolean).map(parseLine).filter((d) => d && d.market === market && d.wallet === wallet && d.status === "open") : [];
+      if (open.length) return json(res, 409, { error: "you already have an open dispute on this market", id: open[0].id });
+      seenDisputeSig.add(sigKey); disputesToday++;
       const rec = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), at: new Date().toISOString(), market, wallet, reason, claimedValue: claimed, status: "open" };
       fs.appendFileSync(DISPUTES, JSON.stringify(rec) + "\n");
       console.log("dispute", rec.id, market, reason.slice(0, 120));

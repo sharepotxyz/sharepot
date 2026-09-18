@@ -41,8 +41,18 @@ export async function bindReferralAfterBet(s: Session): Promise<string | null> {
   const code = pendingReferral(); if (!code) return null;
   const wallet = s.publicKey.toBase58();
   try {
-    const sig = await s.signMessage(new TextEncoder().encode(`sharepot-referral v1\nwallet=${wallet}\ncode=${code}`));
-    const r = await fetch(`${API_BASE}/referral/bind`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ wallet, code, signature: bs58(sig) }) });
+    // Sign-In-With-Solana where the wallet offers it: the wallet checks the domain is this page, so no other site can
+    // collect a binding for sharepot. Otherwise a plain message naming the site and the time (valid 10 minutes).
+    let body: Record<string, unknown>;
+    if (s.signIn) {
+      const { signedMessage, signature } = await s.signIn({ domain: location.host, address: wallet, statement: `Apply SharePot referral code ${code} to this wallet's first bet.`, uri: location.origin + "/", version: "1", nonce: `${code}${Math.random().toString(36).slice(2, 10)}`, issuedAt: new Date().toISOString() });
+      body = { wallet, code, signedMessage: bs58(signedMessage), signature: bs58(signature) };
+    } else {
+      const ts = Math.floor(Date.now() / 1000);
+      const sig = await s.signMessage(new TextEncoder().encode(`sharepot-referral v2\ndomain=${location.host}\nwallet=${wallet}\ncode=${code}\nts=${ts}`));
+      body = { wallet, code, ts, signature: bs58(sig) };
+    }
+    const r = await fetch(`${API_BASE}/referral/bind`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     const j = await r.json();
     if (r.ok) { clear(); document.getElementById("refbar")?.remove(); document.dispatchEvent(new Event("sharepot:referral-bound")); return j.already ? null : `Referral link applied: ${(10).toFixed(0)}% of the fees on your winnings come back to you.`; }
     if (j.permanent) { clear(); document.getElementById("refbar")?.remove(); }   // wrong wallet for this link; stop asking

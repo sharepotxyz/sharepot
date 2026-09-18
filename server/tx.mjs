@@ -32,6 +32,7 @@ export async function sendSigned(conn, tx, signers, { beforeSend, lastValidBlock
 
 /** True once `sig` is confirmed; false once its blockhash expired without it. Throws if it landed with an error. */
 export async function landed(conn, sig, lastValidBlockHeight) {
+  let processedGrace = 20;   // a transaction still only "processed" after its blockhash expired gets ~30 s more to confirm
   for (;;) {
     try {
       const st = (await conn.getSignatureStatuses([sig])).value[0];
@@ -41,6 +42,12 @@ export async function landed(conn, sig, lastValidBlockHeight) {
         // expired: one last look in the ledger, in case it landed while the status cache was unreachable
         const h = (await conn.getSignatureStatuses([sig], { searchTransactionHistory: true })).value[0];
         if (h?.err) throw new Error(`transaction failed on-chain: ${JSON.stringify(h.err)}`);
+        if (h && h.confirmationStatus !== "confirmed" && h.confirmationStatus !== "finalized") {
+          // seen by a node but not yet confirmed: neither landed nor void. Wait a little; then leave it to a later
+          // reconcile rather than call it either way ("void" would pay again, "landed" would never pay).
+          if (processedGrace-- > 0) { await sleep(1500); continue; }
+          throw new Error("transaction was still unconfirmed when its blockhash expired; its status must be asked again later");
+        }
         return !!h;
       }
     } catch (e) { if (!transient(e)) throw e; }

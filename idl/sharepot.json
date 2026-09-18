@@ -183,7 +183,8 @@
     {
       "name": "forfeit_position",
       "docs": [
-        "A position whose owner cannot receive the stock — their associated token account for it is gone or frozen —",
+        "A position whose owner cannot receive the stock — their associated token account for it is gone, frozen or set to",
+        "refuse transfers without a memo —",
         "would keep the market from ever being swept (settle_position needs a live account to pay into), and if the",
         "crank paid the rent to recreate such accounts, one dust bet per throwaway wallet would drain it. So once",
         "FORFEIT_GRACE_SECS have passed since the market resolved (the admin: at once), anyone may forfeit such a",
@@ -1285,7 +1286,7 @@
     {
       "code": 6020,
       "name": "OwnerCanBePaid",
-      "msg": "the owner's token account can receive the payout: settle the position instead"
+      "msg": "the owner's token account can receive the payout (it exists, is not frozen and needs no memo): settle the position instead"
     },
     {
       "code": 6021,

@@ -5,18 +5,20 @@
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
 S=/home/sharepot
+# every job runs under flock: a slow run (rate-limited RPC) must never overlap the next tick — two resolvers at once
+# would record one payout twice, two openers would open one market twice. `mkdir -p $S/locks` once.
 
 # keep one market per listed token open for betting
-*/30 * * * * cd $S/apps/sharepot && CLUSTER=devnet STATE=$S/secrets/devnet/state.json DATA_DIR=$S/data ANCHOR_PROVIDER_URL=https://api.devnet.solana.com ANCHOR_WALLET=$S/secrets/devnet/proposer.json node server/open-markets.mjs >> $S/logs/open-markets.log 2>&1
+*/30 * * * * cd $S/apps/sharepot && CLUSTER=devnet STATE=$S/secrets/devnet/state.json DATA_DIR=$S/data ANCHOR_PROVIDER_URL=https://api.devnet.solana.com ANCHOR_WALLET=$S/secrets/devnet/proposer.json flock -n $S/locks/open-markets.lock node server/open-markets.mjs >> $S/logs/open-markets.log 2>&1
 
 # on-chain price markets (pre-IPO tokens, memes): sample Jupiter quotes every minute (a day's close is the median of its
 # last hour); at 11:00 UTC pick tomorrow's ten most-traded memes, so their pools open at 11:30 before today's 12:00 lock.
 # The host clock is UTC.
-* * * * * cd $S/apps/sharepot && DATA_DIR=$S/data node server/sample-prices.mjs >> $S/logs/sample-prices.log 2>&1
-0 11 * * * cd $S/apps/sharepot && DATA_DIR=$S/data node server/select-chain.mjs >> $S/logs/select-chain.log 2>&1
+* * * * * cd $S/apps/sharepot && DATA_DIR=$S/data flock -n $S/locks/sample-prices.lock node server/sample-prices.mjs >> $S/logs/sample-prices.log 2>&1
+0 11 * * * cd $S/apps/sharepot && DATA_DIR=$S/data flock -n $S/locks/select-chain.lock node server/select-chain.mjs >> $S/logs/select-chain.log 2>&1
 
 # referral rebates (server/referrals.mjs) are NOT paid from this host: deploy/referral-payout-remote.sh runs weekly
 # where the treasury key lives, pulls settlements + bindings from here, pays from the treasury and pushes the ledger back.
 
 # propose results after the close, finalize after the dispute window, pay out and sweep
-*/10 * * * * cd $S/apps/sharepot && CLUSTER=devnet CLUSTER_RPC=https://api.devnet.solana.com DATA_DIR=$S/data SHAREPOT_SECRETS=$S/secrets/devnet node server/resolve.mjs >> $S/logs/resolve.log 2>&1
+*/10 * * * * cd $S/apps/sharepot && CLUSTER=devnet CLUSTER_RPC=https://api.devnet.solana.com DATA_DIR=$S/data SHAREPOT_SECRETS=$S/secrets/devnet flock -n $S/locks/resolve.lock node server/resolve.mjs >> $S/logs/resolve.log 2>&1

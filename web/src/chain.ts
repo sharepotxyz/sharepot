@@ -65,7 +65,9 @@ export function toView(pubkey: PublicKey, a: any, mi: MintInfo): MarketView {
 // Reads go through the API's 15 s cache first (one small JSON instead of a getProgramAccounts round-trip on every page
 // view) and fall back to the RPC. `fresh: true` forces the RPC, used right after the user's own transaction.
 const fromApi = async (p: string) => { if (!API_BASE) throw new Error("no api"); const r = await fetch(API_BASE + p); if (!r.ok) throw new Error("api " + r.status); return r.json(); };
-const viewFromJson = (j: any): MarketView => ({ ...j, pubkey: new PublicKey(j.pubkey), mint: new PublicKey(j.mint), tokenProgram: new PublicKey(j.tokenProgram) });
+// A market from the API must be the program's own account for that id (its PDA): a wrong or forged address is never
+// handed to a transaction.
+const viewFromJson = (j: any): MarketView => { const pubkey = new PublicKey(j.pubkey); if (!marketPda(j.id).equals(pubkey)) throw new Error(`market ${j.id} is not at its program address`); return { ...j, pubkey, mint: new PublicKey(j.mint), tokenProgram: new PublicKey(j.tokenProgram) }; };
 const cfgFromJson = (c: any) => ({ ...c, admin: new PublicKey(c.admin), proposer: new PublicKey(c.proposer), treasuryOwner: new PublicKey(c.treasuryOwner), earlyBirdSecs: new BN(c.earlyBirdSecs), disputeWindowSecs: new BN(c.disputeWindowSecs), minBet: new BN(c.minBet), marketCount: new BN(c.marketCount) });
 // The server embeds a snapshot of markets + config in the page (window.__BOOT__); the first read of each uses it, so
 // first paint needs no API round trip. Later reads (auto-refresh, after a bet) go to the API or the RPC as before.
