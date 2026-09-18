@@ -18,12 +18,15 @@ import idlJson from "../idl/sharepot.json" with { type: "json" };
 import { closeMove, chainMove, chainClose, parseMetric, movePpm, bucketOf, utcMidnight, addDays } from "./prices.mjs";
 import { notify } from "./notify.mjs";
 import { sendSigned } from "./tx.mjs";
+import { unverifiedAction } from "./verify-policy.mjs";
 
 const CLUSTER = process.env.CLUSTER ?? "devnet";
 const RPC = process.env.CLUSTER_RPC ?? "https://api.devnet.solana.com";
 const DATA = process.env.DATA_DIR ?? path.join(process.cwd(), "verify-data");
 const API = process.env.API ?? (CLUSTER === "mainnet" ? "https://sharepot.xyz" : "https://devnet.sharepot.xyz");
 const DRY = process.env.DRY_RUN === "1";
+// Real money never settles on a value this host could not re-derive (verify-policy.mjs); devnet keeps its markets.
+const VOID_UNVERIFIED = (process.env.VOID_UNVERIFIED ?? (CLUSTER === "mainnet" ? "1" : "0")) === "1";
 // Two honest DEX feeds can differ a little; a day-market value closer than this to a range boundary is reported, not acted on.
 const AMBIGUOUS_PPM = Number(process.env.AMBIGUOUS_PPM ?? 5000);
 const MIN_CANDLES = 30;
@@ -124,6 +127,12 @@ for (let i = 0; i < count; i += 100) {
 if (CLUSTER === "mainnet") { const f = path.join(DATA, "tokens.json"), tmp = `${f}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify({ at: new Date().toISOString(), tokens: [...sampleList].map(([mint, t]) => ({ mint, ...t })) })); fs.renameSync(tmp, f); }
 log(`cluster=${CLUSTER} proposed=${proposed.length}${DRY ? " DRY RUN" : ""}`);
 let checked = 0, agreed = 0, voided = 0; const late = [];
+async function voidMarket(publicKey) {
+  const tx = await program.methods.voidMarket().accounts({ config: configPda, market: publicKey, admin: admin.publicKey }).transaction();
+  const { sig, landed } = await sendSigned(conn, tx, [admin]);
+  if (!landed) throw new Error("void did not land before its blockhash expired");
+  return sig;
+}
 for (const { publicKey, account: m } of proposed) {
   const key = publicKey.toBase58(), id = m.id.toNumber(), metric = tag(m.metric), spec = parseMetric(metric);
   const windowEnd = m.proposedAt.toNumber() + cfg.disputeWindowSecs.toNumber();
@@ -135,8 +144,24 @@ for (const { publicKey, account: m } of proposed) {
   checked++;
   if (r.error) {
     log(`#${id} ${metric}: cannot verify yet — ${r.error} (window closes ${new Date(windowEnd * 1000).toISOString()})`);
-    // say so one hour into the window, while there is still time to act — not in its last hour (a first-run 429 clears well before that)
-    if (now - m.proposedAt.toNumber() > 3600) late.push(`#${id} ${metric}: 提案 ${pv} ppm → 第 ${pb} 格;${r.error}(窗到 ${new Date(windowEnd * 1000).toISOString()})`);
+    // the clock is read again here: a run over many markets takes minutes, and the deadline is a real one
+    const act = unverifiedAction({ now: Math.floor(Date.now() / 1000), proposedAt: m.proposedAt.toNumber(), windowEnd, voidUnverified: VOID_UNVERIFIED });
+    if (act === "void") {
+      log(`#${id} ${metric}: UNVERIFIED with the window closing — voiding, every stake refunded`);
+      if (DRY) { log(`  would void #${id}`); continue; }
+      try {
+        const sig = await voidMarket(publicKey); voided++;
+        log(`  VOIDED #${id} ${sig}`);
+        notify("⛔ 核對不到,已自動作廢退款", `#${id} ${metric}\n提案 ${pv} ppm → 第 ${pb} 格,但獨立查價到窗快關都沒答案:${r.error}\n沒核對過的結果不放行,已 void,下一輪全額退款。不需處理;若連續發生請看東京取樣(sample-cron)與價源。`, `verify-void:${key}`, 60);
+        state[key] = { proposedAt: m.proposedAt.toNumber(), verdict: "voided-unverified", proposed: pv, error: r.error, signature: sig, at: new Date().toISOString() }; saveState();
+      } catch (e) {
+        log(`  void failed: ${String(e?.message ?? e).slice(0, 160)}`);
+        notify("⛔ 核對不到且自動作廢失敗", `#${id} ${metric}\n${String(e?.message ?? e).slice(0, 200)}\n下一輪(10 分內)會自動再試;窗到 ${new Date(windowEnd * 1000).toISOString()},過了就會照提案結算。`, `verify-fail:${key}`, 60);
+      }
+      continue;
+    }
+    // say so an hour into the window, not in its last hour (a first-run 429 clears well before that)
+    if (act === "report") late.push(`#${id} ${metric}: 提案 ${pv} ppm → 第 ${pb} 格;${r.error}(窗到 ${new Date(windowEnd * 1000).toISOString()})`);
     state[key] = { proposedAt: m.proposedAt.toNumber(), verdict: "pending", error: r.error, at: new Date().toISOString() }; saveState();
     continue;
   }
@@ -149,25 +174,22 @@ for (const { publicKey, account: m } of proposed) {
   }
   if (spec.kind === "day" && dist <= AMBIGUOUS_PPM) {
     log(`#${id} ${metric}: AMBIGUOUS — proposed ${pv} ppm (range ${pb}), independent ${r.value} ppm (range ${mb}) ${r.detail}; ${dist} ppm from a boundary`);
-    notify("⚠️ 核對落在邊界", `#${id} ${metric}\n提案 ${pv} ppm → 第 ${pb} 格;獨立查價 ${r.value} ppm → 第 ${mb} 格\n${r.detail}\n離邊界 ${dist} ppm(${(dist / 10000).toFixed(2)}%),兩個 DEX 價源本來就會差一點,沒自動作廢。要退款就:node scripts/void-markets.mjs ${id}(爭議窗到 ${new Date(windowEnd * 1000).toISOString()})`, `verify-amb:${key}`, 720);
+    notify("⚠️ 核對落在邊界", `#${id} ${metric}\n提案 ${pv} ppm → 第 ${pb} 格;獨立查價 ${r.value} ppm → 第 ${mb} 格\n${r.detail}\n離邊界 ${dist} ppm(${(dist / 10000).toFixed(2)}%),兩個 DEX 價源本來就會差一點,照提案結算、沒作廢。僅供知悉,不需處理。`, `verify-amb:${key}`, 720);
     state[key] = { proposedAt: m.proposedAt.toNumber(), verdict: "ambiguous", proposed: pv, independent: r.value, at: new Date().toISOString() }; saveState();
     continue;
   }
   log(`#${id} ${metric}: MISMATCH — proposed ${pv} ppm (range ${pb}), independent ${r.value} ppm (range ${mb}) ${r.detail}`);
   if (DRY) { log(`  would void #${id}`); continue; }
   try {
-    const tx = await program.methods.voidMarket().accounts({ config: configPda, market: publicKey, admin: admin.publicKey }).transaction();
-    const { sig, landed } = await sendSigned(conn, tx, [admin]);
-    if (!landed) throw new Error("void did not land before its blockhash expired");
-    voided++;
+    const sig = await voidMarket(publicKey); voided++;
     log(`  VOIDED #${id} ${sig}`);
     notify("⛔ 提案與獨立查價不符,已作廢退款", `#${id} ${metric}\n提案 ${pv} ppm → 第 ${pb} 格;獨立查價 ${r.value} ppm → 第 ${mb} 格\n${r.detail}\n已用 admin 金鑰 void,下一輪全額退款。若 app 主機沒被動過,請查價源;若提案者被入侵,先換 proposer 金鑰(scripts/update-config.mjs proposer=…)`, `verify-void:${key}`, 60);
     state[key] = { proposedAt: m.proposedAt.toNumber(), verdict: "voided", proposed: pv, independent: r.value, signature: sig, at: new Date().toISOString() }; saveState();
   } catch (e) {
     log(`  void failed: ${String(e?.message ?? e).slice(0, 160)}`);
-    notify("⛔ 提案不符且自動作廢失敗", `#${id} ${metric}\n提案 ${pv} ppm(第 ${pb} 格)vs 獨立 ${r.value} ppm(第 ${mb} 格)\n${String(e?.message ?? e).slice(0, 200)}\n請手動:node scripts/void-markets.mjs ${id}(窗到 ${new Date(windowEnd * 1000).toISOString()})`, `verify-fail:${key}`, 60);
+    notify("⛔ 提案不符且自動作廢失敗", `#${id} ${metric}\n提案 ${pv} ppm(第 ${pb} 格)vs 獨立 ${r.value} ppm(第 ${mb} 格)\n${String(e?.message ?? e).slice(0, 200)}\n下一輪(10 分內)會自動再試;窗到 ${new Date(windowEnd * 1000).toISOString()}。連續失敗才需要看 admin 金鑰餘額與 RPC。`, `verify-fail:${key}`, 60);
   }
 }
 // devnet: play money, and nothing the reader could do about a missing price source — the log line is enough
-if (late.length && CLUSTER === "mainnet") notify("⚠️ 提案超過 1 小時還沒核對到", `${late.length} 個盤獨立查價還沒答案:\n${late.slice(0, 15).join("\n")}\n要保險就手動 void:node scripts/void-markets.mjs <id>`, "verify-late", 360);
+if (late.length && CLUSTER === "mainnet") notify("⚠️ 提案超過 1 小時還沒核對到", `${late.length} 個盤獨立查價還沒答案:\n${late.slice(0, 15).join("\n")}\n每 10 分會重試;到窗關前 45 分仍沒答案就自動作廢退款。僅供知悉,不需處理。`, "verify-late", 360);
 log(`done: checked ${checked}, agreed ${agreed}, voided ${voided}, unverifiable ${late.length}`);
