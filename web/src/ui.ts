@@ -9,7 +9,9 @@ import { bindIfPending, captureReferral } from "./referral";
 /** HTML-escape anything that did not originate in our own source. */
 export const esc = (v: unknown) => String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
 export const isBase58 = (s: unknown) => typeof s === "string" && /^[1-9A-HJ-NP-Za-km-z]{32,90}$/.test(s);
-export const fmtTs = (ts: number) => new Date(ts * 1000).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" });
+// Every moment on the site is the viewer's own clock and says so ("18 Sept 2026, 14:10 GMT+8"); only the rules' fixed
+// definitions (12:00 UTC, 09:30 New York) name another zone, and they name it.
+export const fmtTs = (ts: number) => new Date(ts * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "shortOffset" });
 export const short = (pk: PublicKey | string) => { const s = pk.toString(); return s.slice(0, 4) + "…" + s.slice(-4); };
 export function statusPill(m: MarketView) {
   const now = Date.now() / 1000;
