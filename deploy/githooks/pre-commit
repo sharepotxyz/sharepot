@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Runs before every commit (git config core.hooksPath deploy/githooks): the mechanical security checks must pass.
+# Localnet contract suite is skipped here (3 min) unless the program source is staged; the Stop gate / deploy run it.
+if [ -x /root/stocklana/security-check.sh ]; then
+  if git diff --cached --quiet -- programs/; then SKIP_LOCALNET=1 /root/stocklana/security-check.sh; else /root/stocklana/security-check.sh; fi
+  rc=$?
+  [ "$rc" = 0 ] || { echo "commit refused: security checks failed (see above)"; exit "$rc"; }
+fi
+exit 0
