@@ -167,5 +167,6 @@ for (const { publicKey, account: m } of proposed) {
     notify("⛔ 提案不符且自動作廢失敗", `#${id} ${metric}\n提案 ${pv} ppm(第 ${pb} 格)vs 獨立 ${r.value} ppm(第 ${mb} 格)\n${String(e?.message ?? e).slice(0, 200)}\n請手動:node scripts/void-markets.mjs ${id}(窗到 ${new Date(windowEnd * 1000).toISOString()})`, `verify-fail:${key}`, 60);
   }
 }
-if (late.length) notify("⚠️ 爭議窗快關、還沒核對到", `${late.length} 個盤獨立查價還沒答案:\n${late.slice(0, 15).join("\n")}\n要保險就手動 void:node scripts/void-markets.mjs <id>`, "verify-late", 360);
+// devnet: play money, and nothing the reader could do about a missing price source — the log line is enough
+if (late.length && CLUSTER === "mainnet") notify("⚠️ 爭議窗快關、還沒核對到", `${late.length} 個盤獨立查價還沒答案:\n${late.slice(0, 15).join("\n")}\n要保險就手動 void:node scripts/void-markets.mjs <id>`, "verify-late", 360);
 log(`done: checked ${checked}, agreed ${agreed}, voided ${voided}, unverifiable ${late.length}`);
