@@ -151,7 +151,7 @@ gets its account opened once the rebate reaches $10.
   input gives a wrong range. What stops it is the six-hour window and a second machine: `server/verify-proposals.mjs`
   runs every ten minutes on a different host that holds the admin key, fetches the closes itself (for on-chain closes:
   from its own per-minute samples), and **voids a proposal whose range it cannot reproduce** — a full refund, never a
-  different winner. On mainnet a proposal it still cannot check 45 minutes before the window closes (no price source
+  different winner. A proposal it still cannot check 45 minutes before the window closes (no price source
   answered) is voided too: nothing settles on a value nobody re-derived (`server/verify-policy.mjs`). For an on-chain close, a disagreement within 0.5 % of a threshold only pages the operator (two samplers never see the same quotes). Disputes are recorded off-chain and
   have no on-chain effect by themselves.
 * **The admin is fully trusted.** The admin can finalize inside the window, void any open or proposed market

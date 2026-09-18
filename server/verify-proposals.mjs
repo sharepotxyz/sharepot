@@ -25,8 +25,9 @@ const RPC = process.env.CLUSTER_RPC ?? "https://api.devnet.solana.com";
 const DATA = process.env.DATA_DIR ?? path.join(process.cwd(), "verify-data");
 const API = process.env.API ?? (CLUSTER === "mainnet" ? "https://sharepot.xyz" : "https://devnet.sharepot.xyz");
 const DRY = process.env.DRY_RUN === "1";
-// Real money never settles on a value this host could not re-derive (verify-policy.mjs); devnet keeps its markets.
-const VOID_UNVERIFIED = (process.env.VOID_UNVERIFIED ?? (CLUSTER === "mainnet" ? "1" : "0")) === "1";
+// Nothing settles on a value this host could not re-derive (verify-policy.mjs). Devnet behaves and alerts exactly as
+// mainnet does, so what fires there is what will fire with real money. VOID_UNVERIFIED=0 switches it off.
+const VOID_UNVERIFIED = (process.env.VOID_UNVERIFIED ?? "1") === "1";
 // Two honest DEX feeds can differ a little; a day-market value closer than this to a range boundary is reported, not acted on.
 const AMBIGUOUS_PPM = Number(process.env.AMBIGUOUS_PPM ?? 5000);
 const MIN_CANDLES = 30;
@@ -190,6 +191,5 @@ for (const { publicKey, account: m } of proposed) {
     notify("⛔ 提案不符且自動作廢失敗", `#${id} ${metric}\n提案 ${pv} ppm(第 ${pb} 格)vs 獨立 ${r.value} ppm(第 ${mb} 格)\n${String(e?.message ?? e).slice(0, 200)}\n下一輪(10 分內)會自動再試;窗到 ${new Date(windowEnd * 1000).toISOString()}。連續失敗才需要看 admin 金鑰餘額與 RPC。`, `verify-fail:${key}`, 60);
   }
 }
-// devnet: play money, and nothing the reader could do about a missing price source — the log line is enough
-if (late.length && CLUSTER === "mainnet") notify("⚠️ 提案超過 1 小時還沒核對到", `${late.length} 個盤獨立查價還沒答案:\n${late.slice(0, 15).join("\n")}\n每 10 分會重試;到窗關前 45 分仍沒答案就自動作廢退款。僅供知悉,不需處理。`, "verify-late", 360);
+if (late.length) notify("⚠️ 提案超過 1 小時還沒核對到", `${late.length} 個盤獨立查價還沒答案:\n${late.slice(0, 15).join("\n")}\n每 10 分會重試;到窗關前 45 分仍沒答案就自動作廢退款。僅供知悉,不需處理。`, "verify-late", 360);
 log(`done: checked ${checked}, agreed ${agreed}, voided ${voided}, unverifiable ${late.length}`);
