@@ -5,25 +5,18 @@ import { STATUS, connection, type MarketView } from "./chain";
 import { CATEGORIES, STOCK_NAMES, STOCK_ORDER, issuerOf, priceOf, symbolOf, tokenSymbol, uiAmount } from "./stocks";
 import { connectWallet, devWallet, listWallets, type Session } from "./wallet";
 import { bindIfPending, captureReferral } from "./referral";
+import { localizeUtc } from "./time";
 
 /** HTML-escape anything that did not originate in our own source. */
 export const esc = (v: unknown) => String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
 export const isBase58 = (s: unknown) => typeof s === "string" && /^[1-9A-HJ-NP-Za-km-z]{32,90}$/.test(s);
-// Every moment on the site is the viewer's own clock and says so ("18 Sept 2026, 14:10 GMT+8"); only the rules' fixed
-// definitions (12:00 UTC, 09:30 New York) name another zone, and they name it.
-export const fmtTs = (ts: number) => new Date(ts * 1000).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "shortOffset" });
+export { fmtTs, timeLeft } from "./time";
 export const short = (pk: PublicKey | string) => { const s = pk.toString(); return s.slice(0, 4) + "…" + s.slice(-4); };
 export function statusPill(m: MarketView) {
   const now = Date.now() / 1000;
   const label = m.status === 0 ? (now < m.openTs ? "Upcoming" : now < m.closeTs ? "Betting open" : "Awaiting close") : m.status === 1 ? "Result proposed" : STATUS[m.status];
   const cls = m.status === 0 ? (now < m.closeTs ? "open" : "trading") : m.status === 1 ? "proposed" : STATUS[m.status].toLowerCase();
   return `<span class="pill ${cls}">${label}</span>`;
-}
-/** "2d 4h", "5h 12m", "8m" until ts; "closed" once passed. */
-export function timeLeft(ts: number) {
-  const s = ts - Date.now() / 1000; if (s <= 0) return "closed";
-  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
-  return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 // big drop → big gain runs red → green (finance convention)
 const COLORS_4 = ["#e5484d", "#f5a524", "#6cc68e", "#12a150"];
@@ -40,6 +33,7 @@ type TopbarOpts = { active?: string; q?: string; onSearch?: (q: string) => void;
 let topOpts: TopbarOpts = {};
 export function mountTopbar(opts: TopbarOpts = {}) {
   topOpts = opts;
+  localizeUtc();
   // test networks only: the faucet page, linked from the nav and the network badge (the badge stays visible on phones)
   const faucetOn = IS_TEST && !!API_BASE, net = CLUSTER === "devnet" ? "Devnet" : CLUSTER;
   const nb = document.getElementById("netbadge");

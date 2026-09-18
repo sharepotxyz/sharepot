@@ -50,7 +50,7 @@ select{font:inherit;font-size:13.5px;color:var(--fg);background:var(--surface);b
 .menu a.mi.cta{color:var(--accent);font-weight:600}
 a.netbadge:hover{text-decoration:none;filter:brightness(.97)}
 .fwrap{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:24px;align-items:start;padding-bottom:40px}
-.fcard{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px;display:grid;gap:14px}
+.fcard{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px;display:grid;grid-template-columns:minmax(0,1fr);gap:14px}.fcard>.tbl{min-width:0}
 .ftoks{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}.ftok{display:flex;align-items:center;gap:6px;background:var(--surface2);border-radius:999px;padding:3px 10px 3px 3px;font-size:13px}.ftok .tick.sm{width:24px;height:24px;border-radius:999px;font-size:7.5px}
 .fsteps{margin:0;padding-left:18px;display:grid;gap:6px;font-size:14px}
 @media(max-width:900px){.fwrap{grid-template-columns:1fr}}
@@ -102,6 +102,11 @@ a.netbadge:hover{text-decoration:none;filter:brightness(.97)}
 .oname b{font-weight:600}.oname small{color:var(--dim);font-family:var(--mono);font-size:12px;white-space:nowrap}
 .ochance{font-size:17px;font-weight:700}.opays,.opool{font-size:13.5px}.opool{color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pickbtn{padding:6px 10px;font-size:13px;width:100%}.orow.sel .pickbtn{background:var(--accent);border-color:var(--accent);color:#fff}
+.tline{list-style:none;margin:14px 0 0;padding:0;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+@media(max-width:760px){.tline{grid-template-columns:1fr 1fr}}
+.tline li{border-top:3px solid var(--line);padding-top:8px;display:grid;gap:2px;align-content:start;font-size:12.5px;color:var(--dim);min-width:0}
+.tline li b{font-size:13px;color:var(--fg);font-weight:600}.tline li.done{border-top-color:var(--dim)}.tline li.done b{color:var(--dim)}
+.tline li.next{border-top-color:var(--accent)}.tline li.next span{color:var(--fg)}.tline li em{font-style:normal;color:var(--accent);font-weight:600}
 .result{margin-top:12px;background:var(--ok-bg);border-radius:12px;padding:12px 14px;font-size:14px}
 .tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-top:26px}
 .tab{border:0;background:none;border-radius:0;padding:10px 12px;color:var(--dim);font-weight:500;border-bottom:2px solid transparent}.tab.on{color:var(--fg);border-bottom-color:var(--fg)}

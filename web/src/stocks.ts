@@ -5,6 +5,7 @@
 // splits), and so does this page. Thresholds are the move in ppm (1 ppm = 0.01 bp).
 import type { MarketView } from "./chain";
 import { API_BASE } from "./config";
+import { dayEnd, fmtDay, fmtHm } from "./time";
 
 type TokenInfo = { token: string; issuer: string; decimals: number; symbol: string; name: string; faucetUi?: number; mainnetMint?: string };
 export type Category = "stocks" | "preipo" | "memes";
@@ -49,9 +50,14 @@ export const stockName = (m: MarketView) => STOCK_NAMES[symbolOf(m)] ?? symbolOf
 export const tokenSymbol = (m: MarketView) => tokenInfo(m)?.token ?? "shares";
 export const issuerOf = (m: MarketView) => tokenInfo(m)?.issuer ?? "";
 export const sessionLabel = (date: string) => new Date(date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+/** The moment the price that settles a market is fixed: the end of the UTC day, or the New York closing bell (the
+ *  result is asked for server/stock-templates.json resolveDelaySecs = 30 min after it, early closes included). */
+export const closeMoment = (m: MarketView, p = parseMetric(m.metric)) => (p?.kind === "day" ? dayEnd(p.date) : m.resolveAfterTs - 1800);
 export function question(m: MarketView) {
   const p = parseMetric(m.metric); if (!p) return m.metric;
-  return p.kind === "day" ? `Where does ${p.symbol} close on ${sessionLabel(p.date)} (UTC)?` : `Where does ${p.symbol} close on ${sessionLabel(p.date)}?`;
+  // an on-chain day closes at a moment (the end of the UTC day): name it on the viewer's clock, not as "a UTC date"
+  const c = closeMoment(m, p);
+  return `Where does ${p.symbol} close at ${fmtHm(c)} on ${fmtDay(c)}?`;
 }
 
 /** A move in ppm as a signed percentage, floored to whole basis points. Thresholds are whole basis points, so the

@@ -135,7 +135,8 @@ for (const { publicKey, account: m } of proposed) {
   checked++;
   if (r.error) {
     log(`#${id} ${metric}: cannot verify yet — ${r.error} (window closes ${new Date(windowEnd * 1000).toISOString()})`);
-    if (windowEnd - now < 3600) late.push(`#${id} ${metric}: 提案 ${pv} ppm → 第 ${pb} 格;${r.error}`);
+    // say so one hour into the window, while there is still time to act — not in its last hour (a first-run 429 clears well before that)
+    if (now - m.proposedAt.toNumber() > 3600) late.push(`#${id} ${metric}: 提案 ${pv} ppm → 第 ${pb} 格;${r.error}(窗到 ${new Date(windowEnd * 1000).toISOString()})`);
     state[key] = { proposedAt: m.proposedAt.toNumber(), verdict: "pending", error: r.error, at: new Date().toISOString() }; saveState();
     continue;
   }
@@ -168,5 +169,5 @@ for (const { publicKey, account: m } of proposed) {
   }
 }
 // devnet: play money, and nothing the reader could do about a missing price source — the log line is enough
-if (late.length && CLUSTER === "mainnet") notify("⚠️ 爭議窗快關、還沒核對到", `${late.length} 個盤獨立查價還沒答案:\n${late.slice(0, 15).join("\n")}\n要保險就手動 void:node scripts/void-markets.mjs <id>`, "verify-late", 360);
+if (late.length && CLUSTER === "mainnet") notify("⚠️ 提案超過 1 小時還沒核對到", `${late.length} 個盤獨立查價還沒答案:\n${late.slice(0, 15).join("\n")}\n要保險就手動 void:node scripts/void-markets.mjs <id>`, "verify-late", 360);
 log(`done: checked ${checked}, agreed ${agreed}, voided ${voided}, unverifiable ${late.length}`);

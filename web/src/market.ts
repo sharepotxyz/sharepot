@@ -3,7 +3,8 @@
 import { bs58 } from "./wallet";
 import { NO_OUTCOME, buildPlaceBetTx, confirmBySig, currentFeeBps, earlyBirdUntil, fetchConfig, fetchMarkets, fetchPosition, impliedPayout, totalPool, type MarketView } from "./chain";
 import { STATUS_LABEL, buildEvents, eventKey, payoutMultiple, statusOf, type EventView } from "./events";
-import { CATEGORY_NAME, bucketLabel, bucketName, fmtAmt, fmtMove, fmtPx, fmtUsd, issuerOf, loadPrices, loadStocks, markOf, prevCloseOf, priceOf, question, sessionLabel, toRaw, tokenSymbol, uiAmount, usdOf } from "./stocks";
+import { CATEGORY_NAME, bucketLabel, bucketName, fmtAmt, fmtMove, fmtPx, fmtUsd, issuerOf, loadPrices, loadStocks, markOf, closeMoment, prevCloseOf, priceOf, question, sessionLabel, toRaw, tokenSymbol, uiAmount, usdOf } from "./stocks";
+import { dayEnd, dayStart, fmtDay, fmtHm, fmtHmRange, fmtTsShort } from "./time";
 import { balances, bucketColor, esc, fmtTs, getSession, mountTopbar, onSession, openWalletMenu, refreshBalances, shareBalance, tickerBadge, timeLeft, trackStocks } from "./ui";
 import { API_BASE, IS_TEST, explorerTx } from "./config";
 import { bindReferralAfterBet } from "./referral";
@@ -46,13 +47,14 @@ function render() {
     const action = st === "open" ? `<button class="pickbtn" data-b="${i}">${bucket === i ? "Selected" : "Pick"}</button>` : won ? `<span class="pill open">Won</span>` : prop ? `<span class="pill proposed">Proposed</span>` : "";
     return `<div class="orow${bucket === i && st === "open" ? " sel" : ""}${won ? " win" : ""}" style="--c:${bucketColor(m, i)}"><span class="oname"><i></i><b>${esc(name(i))}</b>${bucketName(m, i) ? `<small>${esc(bucketLabel(m, i))}</small>` : ""}</span><span class="ochance">${pct}</span><span class="opays">${mult ? mult.toFixed(2) + "×" : st === "open" ? "whole pot" : "—"}</span><span class="opool">${fmtAmt(m, p, 3)} ${esc(tok)}</span><span>${action}</span></div>`;
   }).join("");
-  const res = m.status === 2 || m.status === 4 ? (m.outcome === NO_OUTCOME ? `Voided — every stake refunded.` : `Result: <b>${esc(full(m.outcome))}</b> · move ${fmtMove(m.proposedValue)} · payouts sent automatically.`)
-    : m.status === 3 ? `Voided — every stake refunded.` : m.status === 1 ? `Proposed result: <b>${esc(full(m.proposedOutcome))}</b> · move ${fmtMove(m.proposedValue)} · final after ${fmtTs(m.proposedAt + cfg.disputeWindowSecs.toNumber())} unless disputed.` : "";
+  const res = m.status === 2 || m.status === 4 ? (m.outcome === NO_OUTCOME ? `Voided — every stake refunded.` : `Result: <b>${esc(full(m.outcome))}</b> · move ${fmtMove(m.proposedValue)} · ${m.pools[m.outcome] === 0 ? "nobody picked this range, so every stake was refunded in full, no fee." : "payouts sent automatically."}`)
+    : m.status === 3 ? `Voided — every stake refunded.` : m.status === 1 ? `Proposed result: <b>${esc(full(m.proposedOutcome))}</b> · move ${fmtMove(m.proposedValue)} · final ${fmtTs(m.proposedAt + cfg.disputeWindowSecs.toNumber())} (in ${timeLeft(m.proposedAt + cfg.disputeWindowSecs.toNumber())}) unless disputed.${m.pools[m.proposedOutcome] === 0 ? " Nobody picked this range: if it stands, every stake is refunded in full, no fee." : ""}` : "";
   root.innerHTML = `<div class="evpage">
     <div class="evtop">
-      <nav class="crumb"><a href="/">Markets</a><span>›</span><a href="/?cat=${encodeURIComponent(ev.category)}">${esc(CATEGORY_NAME[ev.category] ?? ev.category)}</a><span>›</span><a href="/?cat=${encodeURIComponent(ev.category)}&stock=${encodeURIComponent(ev.symbol)}">${esc(ev.name)}</a><span>›</span><span>${esc(sessionLabel(ev.date))}</span></nav>
+      <nav class="crumb"><a href="/">Markets</a><span>›</span><a href="/?cat=${encodeURIComponent(ev.category)}">${esc(CATEGORY_NAME[ev.category] ?? ev.category)}</a><span>›</span><a href="/?cat=${encodeURIComponent(ev.category)}&stock=${encodeURIComponent(ev.symbol)}">${esc(ev.name)}</a><span>›</span><span>${esc(fmtDay(closeMoment(m)))}</span></nav>
       <header class="evhdr">${tickerBadge(ev.symbol, true)}<div><h1>${esc(question(m))}</h1>
-        <div class="evmeta"><span class="pill ${st}">${STATUS_LABEL[st]}</span>${st === "open" ? `<span>Bets close in ${timeLeft(m.closeTs)}</span>` : ""}${ev.potUsd != null ? `<span>${fmtUsd(ev.potUsd)} pot across ${ev.markets.length} pool${ev.markets.length === 1 ? "" : "s"}</span>` : ""}<span>${ev.bettors} bettor${ev.bettors === 1 ? "" : "s"}</span>${ev.kind === "day" && priceOf(m) ? `<span title="Live Jupiter quote">now ${fmtPx(priceOf(m)!)}</span>` : ""}${ev.kind === "day" ? (() => { const pc = prevCloseOf(m); return pc && pc.date === new Date(Date.parse(ev.date + "T00:00:00Z") - 864e5).toISOString().slice(0, 10) ? `<span title="Median of the closing-hour quotes, ${esc(pc.date)}">prev close ${fmtPx(pc.close)}</span>` : `<span class="note">prev close known after ${esc(ev.date)} 00:00 UTC</span>`; })() : ""}${ev.kind === "day" && markOf(m) ? `<span title="The issuer's official mark price">issuer mark ${fmtPx(markOf(m)!)}</span>` : ""}</div></div></header>
+        <div class="evmeta"><span class="pill ${st}">${STATUS_LABEL[st]}</span>${st === "open" ? `<span>Bets close in ${timeLeft(m.closeTs)}</span>` : ""}${ev.potUsd != null ? `<span>${fmtUsd(ev.potUsd)} pot across ${ev.markets.length} pool${ev.markets.length === 1 ? "" : "s"}</span>` : ""}<span>${ev.bettors} bettor${ev.bettors === 1 ? "" : "s"}</span>${ev.kind === "day" && priceOf(m) ? `<span title="Live Jupiter quote">now ${fmtPx(priceOf(m)!)}</span>` : ""}${ev.kind === "day" ? (() => { const pc = prevCloseOf(m); return pc && pc.date === new Date(Date.parse(ev.date + "T00:00:00Z") - 864e5).toISOString().slice(0, 10) ? `<span title="Median of the quotes in the hour before ${esc(fmtTs(dayStart(ev.date)))}">prev close ${fmtPx(pc.close)}</span>` : `<span class="note">prev close known after ${esc(fmtTs(dayStart(ev.date)))}</span>`; })() : ""}${ev.kind === "day" && markOf(m) ? `<span title="The issuer's official mark price">issuer mark ${fmtPx(markOf(m)!)}</span>` : ""}</div></div></header>
+      ${timeline()}
       <div class="toks" role="tablist" aria-label="Pool (token)">${ev.markets.map((x) => `<button role="tab" aria-selected="${x.id === m.id}" class="tok${x.id === m.id ? " on" : ""}" data-id="${x.id}"><b>${esc(tokenSymbol(x))}</b><span>${esc(issuerOf(x))}</span><em>${fmtAmt(x, totalPool(x) + x.seed, 3)} in pot ${usdOf(x, totalPool(x) + x.seed)}</em></button>`).join("")}</div>
       ${ev.markets.length > 1 ? `<p class="note">Each issuer's token has its own pool; all ${ev.markets.length} pools share these ranges and the same result.</p>` : ""}
       <div class="otable"><div class="orow ohead"><span>Range (move vs previous close)</span><span>Chance</span><span>Pays</span><span class="opool">Pool</span><span></span></div>${rows}</div>
@@ -71,6 +73,22 @@ function render() {
   renderTab(); renderTrade();
 }
 
+/** The market's whole schedule on the viewer's clock: what has happened, what comes next and when. */
+function timeline() {
+  const now = Date.now() / 1000, win = cfg.disputeWindowSecs.toNumber(), voided = m.status === 3 || ((m.status === 2 || m.status === 4) && m.outcome === NO_OUTCOME);
+  const proposedTs = m.proposedAt || m.resolveAfterTs, finalTs = proposedTs + win, settled = m.status >= 2;
+  const steps: { label: string; when: string; ts: number; done: boolean }[] = [
+    { label: "Betting opens", when: fmtTsShort(m.openTs), ts: m.openTs, done: now >= m.openTs },
+    { label: "Betting closes", when: fmtTsShort(m.closeTs), ts: m.closeTs, done: now >= m.closeTs },
+    ev!.kind === "day" ? { label: "Closing price forms", when: `${fmtHmRange(dayEnd(ev!.date) - 3600, dayEnd(ev!.date))}, ${fmtDay(dayEnd(ev!.date))}`, ts: dayEnd(ev!.date), done: now >= dayEnd(ev!.date) }
+      : { label: "New York close", when: fmtTsShort(closeMoment(m)), ts: closeMoment(m), done: now >= closeMoment(m) },
+    { label: m.proposedAt ? "Result proposed" : "Result proposed from", when: fmtTsShort(proposedTs), ts: proposedTs, done: !!m.proposedAt || settled },
+    { label: voided ? "Voided, stakes refunded" : settled ? "Final, payouts sent" : m.proposedAt ? "Final, payouts sent" : "Final, payouts sent (est.)", when: settled && !m.proposedAt ? "" : fmtTsShort(finalTs), ts: finalTs, done: settled },
+  ];
+  const next = steps.findIndex((x) => !x.done);
+  return `<ol class="tline">${steps.map((x, i) => `<li class="${x.done ? "done" : i === next ? "next" : ""}"><b>${x.label}</b><span>${esc(x.when)}</span>${i === next && x.ts > now ? `<em>in ${timeLeft(x.ts)}</em>` : ""}</li>`).join("")}</ol>`;
+}
+
 // ---------- tabs ----------
 const atBell = (ts: number) => new Date(ts * 1000).toLocaleTimeString("en-GB", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit" }) === "09:30";
 function renderTab() {
@@ -79,17 +97,17 @@ function renderTab() {
     const top = Math.abs(m.thresholds[m.nBuckets - 2] ?? 0) / 10000, pct = top ? top.toFixed(top % 1 ? 1 : 0) + "%" : "";
     const iss = issuerOf(m), issuerFee = iss === "Tessera" ? "0.2%" : iss === "PreStocks" ? "0.5%" : null;
     el.innerHTML = `<ul>
-      <li><b>Question.</b> Where does ${sym} close on ${esc(sessionLabel(ev!.date))} (UTC), measured against the previous day's close? ${m.nBuckets} ranges; the one containing the move wins.</li>
-      <li><b>Betting</b> opens ${fmtTs(m.openTs)} (11:00 UTC the day before, while the previous day's pool is still taking bets) and stops ${fmtTs(m.closeTs)} (12:00 UTC) — halfway through the day, before most of the answer exists.</li>
-      <li><b>Result.</b> There is no exchange close for this token, so a day's close is the <b>median of one Jupiter quote per minute during the day's last hour</b> (23:00–24:00 UTC); the move is ${esc(sessionLabel(ev!.date))}'s close ÷ the previous day's close − 1. The previous day's close is not known when betting opens (it forms at 00:00 UTC) — as a stock pool opens before the previous session has closed. Proposed after ${fmtTs(m.resolveAfterTs)} with every sampled quote of both days published and their hash on-chain; disputable for ${cfg.disputeWindowSecs.toNumber() / 3600} h. Fewer than 40 usable quotes on either day (a delisted token, a dead feed) voids the market with a full refund.</li>
+      <li><b>Question.</b> Where does ${sym} close at ${esc(fmtTs(dayEnd(ev!.date)))}, measured against its close 24 hours earlier? ${m.nBuckets} ranges; the one containing the move wins.</li>
+      <li><b>Betting</b> opens ${fmtTs(m.openTs)}, while the previous day's pool is still taking bets, and stops ${fmtTs(m.closeTs)} — twelve hours before the close, before most of the answer exists.</li>
+      <li><b>Result.</b> There is no exchange close for this token, so the close is the <b>median of one Jupiter quote per minute during the last hour</b>, ${esc(fmtHmRange(dayEnd(ev!.date) - 3600, dayEnd(ev!.date)))} on ${esc(fmtDay(dayEnd(ev!.date)))}; the move is that close ÷ the close 24 hours earlier − 1. The earlier close is not known when betting opens (it forms at ${esc(fmtTs(dayStart(ev!.date)))}) — as a stock pool opens before the previous session has closed. Proposed after ${fmtTs(m.resolveAfterTs)} with every sampled quote of both days published and their hash on-chain; disputable for ${cfg.disputeWindowSecs.toNumber() / 3600} h. Fewer than 40 usable quotes on either day (a delisted token, a dead feed) voids the market with a full refund.</li>
       <li><b>Payouts</b> are in ${tok}: winners get their stake back plus a share of the losing ranges, pushed to wallets automatically. Fee ${(cfg.feeBps - cfg.earlyBirdDiscountBps) / 100}% of winnings until ${fmtTs(earlyBirdUntil(cfg, m))}, then ${cfg.feeBps / 100}% — never on your stake.</li>
       ${issuerFee ? `<li><b>Issuer transfer fee.</b> ${esc(iss)} charges ${issuerFee} on every transfer of ${tok}, including into and out of this pool. Your stake counts as what actually arrives in the pool, and a payout lands net of that fee. That fee goes to ${esc(iss)}, not to SharePot.</li>` : ""}
-      ${ev!.category === "memes" ? `<li><b>Why this token.</b> Memes are picked every day at 11:00 UTC for the next day: the ten Solana tokens with the most 24-hour traded volume whose mint and freeze authorities are gone, with at least $500k of liquidity and a first pool at least 3 days old. Tomorrow's list can differ from today's; an open market always settles.</li>` : `<li><b>Reference price.</b> The issuer publishes a mark price from private-market data; it moves rarely and is shown for context only. The pool settles on the on-chain price, which trades around it.</li>`}
+      ${ev!.category === "memes" ? `<li><b>Why this token.</b> Memes are picked every day at ${esc(fmtHm(m.openTs))} for the following pool: the ten Solana tokens with the most 24-hour traded volume whose mint and freeze authorities are gone, with at least $500k of liquidity and a first pool at least 3 days old. Tomorrow's list can differ from today's; an open market always settles.</li>` : `<li><b>Reference price.</b> The issuer publishes a mark price from private-market data; it moves rarely and is shown for context only. The pool settles on the on-chain price, which trades around it.</li>`}
       <li><b>Ranges</b> are cut at ±${pct || "the token's typical daily move"}, the token's median absolute daily move over its last 60 days, so "flat" and the two tails started out about equally likely.</li></ul>`;
   } else if (tab === "rules") {
     el.innerHTML = `<ul>
-      <li><b>Question.</b> Where does ${sym} close on ${esc(sessionLabel(ev!.date))}, measured against the previous session's close? Four ranges; the one containing the move wins.</li>
-      <li><b>Betting</b> opens ${fmtTs(m.openTs)}${atBell(m.openTs) ? " (previous opening bell)" : ""} and stops ${fmtTs(m.closeTs)}${atBell(m.closeTs) ? " — the opening bell, 09:30 New York — before any of the answer exists" : ""}.</li>
+      <li><b>Question.</b> Where does ${sym} close at the New York closing bell, ${esc(fmtTs(closeMoment(m)))}, measured against the previous session's close? Four ranges; the one containing the move wins.</li>
+      <li><b>Betting</b> opens ${fmtTs(m.openTs)}${atBell(m.openTs) ? " (previous opening bell)" : ""} and stops ${fmtTs(m.closeTs)}${atBell(m.closeTs) ? " — the New York opening bell — before any of the answer exists" : ""}.</li>
       <li><b>Result</b> = total-return move: (official close + any dividend going ex that day) ÷ previous official close − 1, closes on the same share basis across splits. Proposed after ${fmtTs(m.resolveAfterTs)} with the raw price data and its hash on-chain; disputable for ${cfg.disputeWindowSecs.toNumber() / 3600} h.</li>
       <li><b>Payouts</b> are in ${tok}: winners get their stake back plus a share of the losing ranges, pushed to wallets automatically. Fee ${(cfg.feeBps - cfg.earlyBirdDiscountBps) / 100}% of winnings until ${fmtTs(earlyBirdUntil(cfg, m))}, then ${cfg.feeBps / 100}% — never on your stake.</li>
       <li><b>Dividends and splits on the token</b> are applied by the issuer to every balance alike (a multiplier), pools included, so every stake keeps its share. A spin-off, a delisting merger or a full-session halt voids the market with a full refund.</li>
@@ -110,7 +128,7 @@ function renderTrade() {
   const s = getSession(), st = statusOf(m), tok = esc(tokenSymbol(m)), held = shareBalance(m), fee = currentFeeBps(cfg, m), tot = totalPool(m);
   if (st !== "open") {
     const next = `<a href="/?cat=${ev!.category}&stock=${encodeURIComponent(ev!.symbol)}">See the open ${esc(ev!.symbol)} market →</a>`;
-    box.innerHTML = `<div class="tcard"><div class="thead"><b>${STATUS_LABEL[st]}</b></div><p class="note" style="margin:0">${st === "trading" ? `Bets closed ${ev!.kind === "day" ? "at 12:00 UTC" : "at the opening bell"}; the result comes after ${fmtTs(m.resolveAfterTs)}.` : st === "proposed" ? "The result is in its dispute window; payouts follow automatically." : "This market is settled. Payouts have been sent."}</p>${next}</div><div id="pos"></div>`;
+    box.innerHTML = `<div class="tcard"><div class="thead"><b>${STATUS_LABEL[st]}</b></div><p class="note" style="margin:0">${st === "trading" ? `Bets closed ${fmtTs(m.closeTs)}; the result comes after ${fmtTs(m.resolveAfterTs)} and is final about ${fmtTs(m.resolveAfterTs + cfg.disputeWindowSecs.toNumber())}.` : st === "proposed" ? `The result is in its dispute window until ${fmtTs(m.proposedAt + cfg.disputeWindowSecs.toNumber())} (${timeLeft(m.proposedAt + cfg.disputeWindowSecs.toNumber())} left); payouts follow automatically.` : "This market is settled. Payouts have been sent."}</p>${next}</div><div id="pos"></div>`;
     showPosition(); return;
   }
   box.innerHTML = `<div class="tcard">
@@ -204,9 +222,10 @@ async function loadEvidence() {
     const sha = [...new Uint8Array(await crypto.subtle.digest("SHA-256", raw))].map((b) => b.toString(16).padStart(2, "0")).join("");
     const match = sha === m.snapshotHash;
     const div = Number(e.dividend) > 0 ? ` + $${esc(e.dividend)} dividend going ex` : "";
+    const dayTs = (d: any) => (/^\d{4}-\d{2}-\d{2}$/.test(String(d)) ? fmtTs(dayEnd(String(d))) : String(d));
     const fp = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString("en-US", { maximumFractionDigits: n < 1 ? 8 : 4 }) : esc(v); };
     el.innerHTML = e.samples != null
-      ? `<div><b>${esc(e.symbol)}</b> close ${esc(e.prevDate)} <span class="mono">$${fp(e.baseline)}</span> (median of ${esc(e.prevSamples)} quotes) → ${esc(e.date)} <span class="mono">$${fp(e.close)}</span> (median of ${esc(e.samples)} quotes, 23:00–24:00 UTC) = <span class="mono">${fmtMove(e.movePpm)}</span></div>`
+      ? `<div><b>${esc(e.symbol)}</b> close ${esc(dayTs(e.prevDate))} <span class="mono">$${fp(e.baseline)}</span> (median of ${esc(e.prevSamples)} quotes) → ${esc(dayTs(e.date))} <span class="mono">$${fp(e.close)}</span> (median of ${esc(e.samples)} quotes in the hour before) = <span class="mono">${fmtMove(e.movePpm)}</span></div>`
       : `<div><b>${esc(e.symbol)}</b> close ${esc(e.prevDate)} <span class="mono">$${esc(e.prevClose)}</span> → ${esc(e.date)} <span class="mono">$${esc(e.close)}</span>${div} = <span class="mono">${fmtMove(e.movePpm)}</span>${e.split ? ` · split ${esc(e.split)} that day` : ""}</div>`;
     el.innerHTML +=
       `<div><a href="${API_BASE}/evidence/${m.id}/raw" target="_blank" rel="noopener">${e.samples != null ? "sampled quotes" : "raw price response"}</a> · sha256 <span class="hash">${sha.slice(0, 16)}…</span> · <span class="${match ? "" : "warn"}">${match ? "✓ matches the hash stored on-chain" : "✗ does not match the on-chain hash"}</span></div>
