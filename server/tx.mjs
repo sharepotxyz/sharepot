@@ -9,8 +9,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const transient = (e) => /429|Too Many|fetch failed|ECONNRESET|timed? ?out|503|502/i.test(String(e?.message ?? e));
 
 /** Signs, sends and waits. Returns { sig, landed }. Throws on a definite failure (rejected by preflight, or failed on-chain).
- *  `beforeSend(sig)` runs once the signature is known and before anything reaches the network: the place to record it. */
-export async function sendSigned(conn, tx, signers, { beforeSend, lastValidBlockHeight: lvbh } = {}) {
+ *  `beforeSend(sig)` runs once the signature is known and before anything reaches the network: the place to record it.
+ *  `send(raw)` replaces the RPC's sendRawTransaction (e.g. a Jito bundle, jito.mjs); landing is still read from the RPC. */
+export async function sendSigned(conn, tx, signers, { beforeSend, lastValidBlockHeight: lvbh, send } = {}) {
   let sig, raw, lastValidBlockHeight = lvbh;
   if (tx.version !== undefined) {
     // a VersionedTransaction (e.g. built by Jupiter) already carries its blockhash; the caller passes its expiry height
@@ -23,7 +24,7 @@ export async function sendSigned(conn, tx, signers, { beforeSend, lastValidBlock
   }
   if (beforeSend) await beforeSend(sig);
   for (let tries = 1; ; tries++) {
-    try { await conn.sendRawTransaction(raw, { skipPreflight: false }); break; }
+    try { await (send ? send(raw) : conn.sendRawTransaction(raw, { skipPreflight: false })); break; }
     catch (e) { if (tries >= 4 || !transient(e)) throw e; await sleep(1500 * tries); }
   }
   return { sig, landed: await landed(conn, sig, lastValidBlockHeight) };

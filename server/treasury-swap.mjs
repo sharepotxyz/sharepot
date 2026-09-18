@@ -5,8 +5,12 @@
 // still owed in that token is offered to Jupiter. MEV / price impact: a lot that moves the pool more than MAX_IMPACT_PCT
 // is halved until it does not (leftovers wait for the next run), slippage is capped at SLIPPAGE_BPS, lots under
 // MIN_USD are not worth a swap. Every swap goes to a ledger like the payouts' (sent / landed / void, tx.mjs decides).
+// Sandwiching: the transaction never takes the public relay path — it is sent as a Jito bundle (jito.mjs, bundleOnly)
+// with a tip instead of a priority fee; a bundle that does not land within its blockhash is re-quoted and re-sent with
+// twice the tip, up to JITO_ATTEMPTS times, then left for the next run.
 //   env: CLUSTER (mainnet), CLUSTER_RPC, DATA_DIR (settlements + referrals + ledger), TREASURY_KEYPAIR, DRY_RUN=1,
-//        FAKE_BALANCE_USD=<n> (DRY_RUN only: pretend every token holds this much, to exercise the quoting)
+//        FAKE_BALANCE_USD=<n> (DRY_RUN only: pretend every token holds this much, to exercise the quoting),
+//        JITO_URL, JITO_TIP_MIN / JITO_TIP_MAX (lamports), JITO_ATTEMPTS
 import fs from "node:fs";
 import path from "node:path";
 import { Connection, Keypair, PublicKey, VersionedTransaction } from "@solana/web3.js";
@@ -17,6 +21,7 @@ import { readRegistry } from "./chain-tokens.mjs";
 import { notify } from "./notify.mjs";
 import { sendSigned, signatureStatus } from "./tx.mjs";
 import { quoteProblem, simulationProblem } from "./swap-guard.mjs";
+import * as jito from "./jito.mjs";
 
 const CLUSTER = process.env.CLUSTER ?? "mainnet";
 const RPC = process.env.CLUSTER_RPC ?? "https://api.mainnet-beta.solana.com";
@@ -27,7 +32,10 @@ const USDC = process.env.USDC_MINT ?? "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTD
 const MIN_USD = Number(process.env.SWAP_MIN_USD ?? 20);              // smaller lots stay in the token
 const MAX_IMPACT_PCT = Number(process.env.MAX_IMPACT_PCT ?? 0.3);    // per swap; a bigger lot is halved until it fits
 const SLIPPAGE_BPS = Number(process.env.SLIPPAGE_BPS ?? 50);
-const MAX_SWAP_LAMPORTS = BigInt(process.env.MAX_SWAP_LAMPORTS ?? 10_000_000);   // fees + priority + (first time) the USDC account's rent
+const MAX_SWAP_LAMPORTS = BigInt(process.env.MAX_SWAP_LAMPORTS ?? 10_000_000);   // fee + Jito tip + (first time) the USDC account's rent
+const JITO_URL = process.env.JITO_URL ?? jito.DEFAULT_URL;
+const JITO_TIP = { min: Number(process.env.JITO_TIP_MIN ?? 100_000), max: Number(process.env.JITO_TIP_MAX ?? 2_000_000) };   // 0.0001–0.002 SOL
+const JITO_ATTEMPTS = Number(process.env.JITO_ATTEMPTS ?? 3);
 const MIN_LOT_USD = 5;                                               // stop halving below this
 const LEDGER = path.join(DATA, "treasury-swaps.jsonl");
 if (CLUSTER !== "mainnet" && !DRY) { console.error("treasury-swap: only mainnet has pools (DRY_RUN=1 to exercise the quoting)"); process.exit(2); }
@@ -68,7 +76,8 @@ const rows = readSettlements(DATA), db = referrals.load(path.join(DATA, "referra
 const pts = new Map(leaderboard(rows, { decimals: () => null, close: () => null }).entries.map((e) => [e.wallet, e.points]));
 const owed = new Map();   // mint → raw still to be paid out as rebates
 for (const d of referrals.pending(referrals.earnings(rows, db, (w) => pts.get(w) ?? 0), referrals.readPayouts(path.join(DATA, "referral-payouts.jsonl")))) owed.set(d.mint, (owed.get(d.mint) ?? 0n) + d.raw);
-log(`cluster=${CLUSTER} treasury=${treasury.publicKey.toBase58()} tokens=${tokens.size}${DRY ? " DRY RUN" : ""}${FAKE_USD ? ` fake balance $${FAKE_USD}` : ""}`);
+const baseTip = jito.tipLamports(await jito.fetchTipFloor(), JITO_TIP);
+log(`cluster=${CLUSTER} treasury=${treasury.publicKey.toBase58()} tokens=${tokens.size} jito=${JITO_URL} tip=${baseTip} lamports${DRY ? " DRY RUN" : ""}${FAKE_USD ? ` fake balance $${FAKE_USD}` : ""}`);
 
 // Jupiter builds the transaction; the treasury signs only what a simulation shows to be the swap that was asked for
 // (swap-guard.mjs). Every token account the treasury owns is watched, not just the two the swap should touch.
@@ -101,16 +110,23 @@ for (const [mint, t] of tokens) {
     const ui = Number(r.amount) / 10 ** t.decimals;
     log(`${DRY ? "would sell" : "selling"} ${tag}: ${ui} of ${Number(lot) / 10 ** t.decimals} → $${r.outUsd.toFixed(2)} USDC, impact ${r.impact.toFixed(3)} %${r.amount < lot ? ` (split: ${Number(lot - r.amount) / 10 ** t.decimals} waits for the next run)` : ""}`);
     if (DRY) { await sleep(1500); continue; }   // pace the quotes (free tier) in dry runs too
-    const sw = await jup("/swap", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ quoteResponse: r.q, userPublicKey: treasury.publicKey.toBase58(), wrapAndUnwrapSol: true, dynamicComputeUnitLimit: true, prioritizationFeeLamports: { priorityLevelWithMaxLamports: { maxLamports: 1_000_000, priorityLevel: "medium" } } }) });
-    const tx = VersionedTransaction.deserialize(Buffer.from(sw.swapTransaction, "base64"));
-    const bad = quoteProblem(r.q, { inputMint: mint, outputMint: USDC, amount: r.amount }) ?? await simulatedProblem(tx, ata.toBase58(), r.amount, BigInt(r.q.otherAmountThreshold));
-    if (bad) { failed++; log(`REFUSED to sign ${tag}: ${bad}`); await notify("⛔ 換 USDC:交易內容不符,拒簽", `${tag}\n${bad}`, "treasury-swap-guard", 60); continue; }
-    const row = { mint, token: t.token, ui, usd: r.outUsd, impactPct: r.impact };
-    let sig = null, landed = false;
-    try { ({ sig, landed } = await sendSigned(conn, tx, [treasury], { lastValidBlockHeight: sw.lastValidBlockHeight, beforeSend: (s) => ledger({ status: "sent", ...row, raw: r.amount.toString(), signature: s }) })); }
-    catch (e) { if (sig === null) throw e; log("UNSETTLED (next run asks the chain)", tag, sig, String(e?.message ?? e).slice(0, 120)); failed++; continue; }
-    if (landed) { ledger({ status: "landed", ...row, raw: "0", signature: sig }); log("sold", tag, sig); sold++; usdOut += r.outUsd; }
-    else { ledger({ status: "void", ...row, raw: "0", signature: sig, why: "blockhash expired" }); log("did not land (next run retries)", tag, sig); failed++; }
+    let outcome = "expired";
+    for (let attempt = 1; attempt <= JITO_ATTEMPTS && outcome === "expired"; attempt++) {
+      const tip = Math.min(JITO_TIP.max, baseTip * 2 ** (attempt - 1));
+      if (attempt > 1) { r = await quoteOk(mint, r.amount); if (r.tooThin) { outcome = "thin"; break; } }   // a fresh blockhash needs a fresh transaction; same lot
+      const sw = await jup("/swap", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ quoteResponse: r.q, userPublicKey: treasury.publicKey.toBase58(), wrapAndUnwrapSol: true, dynamicComputeUnitLimit: true, prioritizationFeeLamports: { jitoTipLamports: tip } }) });
+      const tx = VersionedTransaction.deserialize(Buffer.from(sw.swapTransaction, "base64"));
+      const bad = quoteProblem(r.q, { inputMint: mint, outputMint: USDC, amount: r.amount }) ?? jito.tipProblem(tx, tip) ?? await simulatedProblem(tx, ata.toBase58(), r.amount, BigInt(r.q.otherAmountThreshold));
+      if (bad) { outcome = "refused"; log(`REFUSED to sign ${tag}: ${bad}`); await notify("⛔ 換 USDC:交易內容不符,拒簽", `${tag}\n${bad}`, "treasury-swap-guard", 60); break; }
+      const row = { mint, token: t.token, ui, usd: r.outUsd, impactPct: r.impact, tip, attempt };
+      let sig = null, landed = false;
+      try { ({ sig, landed } = await sendSigned(conn, tx, [treasury], { lastValidBlockHeight: sw.lastValidBlockHeight, send: (raw) => jito.sendBundleOnly(raw, { url: JITO_URL }), beforeSend: (s) => ledger({ status: "sent", ...row, raw: r.amount.toString(), signature: s }) })); }
+      catch (e) { if (sig === null) throw e; log("UNSETTLED (next run asks the chain)", tag, sig, String(e?.message ?? e).slice(0, 120)); outcome = "unsettled"; break; }
+      if (landed) { ledger({ status: "landed", ...row, raw: "0", signature: sig }); log(`sold ${tag} (attempt ${attempt}, tip ${tip})`, sig); outcome = "sold"; break; }
+      ledger({ status: "void", ...row, raw: "0", signature: sig, why: "blockhash expired" }); log(`bundle did not land (attempt ${attempt}, tip ${tip})`, tag, sig);
+      await sleep(2000);
+    }
+    if (outcome === "sold") { sold++; usdOut += r.outUsd; } else if (outcome === "thin") held++; else { failed++; if (outcome === "expired") log(`gave up ${tag} after ${JITO_ATTEMPTS} attempts (next run retries)`); }
     await sleep(2000);
   } catch (e) { log("FAILED", tag, String(e?.message ?? e).slice(0, 200)); failed++; }
 }
