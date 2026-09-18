@@ -37,3 +37,12 @@ test("token amount is read at offset 64; a missing account holds nothing", () =>
   const d = Buffer.alloc(165); d.writeBigUInt64LE(123456789n, 64);
   assert.equal(tokenAmount(d), 123456789n); assert.equal(tokenAmount(null), 0n);
 });
+
+const wantSol = { wallet: W, inputAta: OUT, amount: 1000n, minOut: 500_000_000n, maxLamports: 10_000_000n, nativeOut: true };   // sell 1000 USDC units for ≥ 0.5 SOL
+test("buying SOL: the wallet must gain at least the quoted minimum less fees, USDC leaves as asked, nothing else moves", () => {
+  assert.equal(effectsProblem(state({ out: 5000n }), state({ sol: 1_495_000_000n, out: 4000n }), wantSol), null);   // +0.495 SOL after fees+tip
+  assert.match(effectsProblem(state({ out: 5000n }), state({ sol: 1_400_000_000n, out: 4000n }), wantSol), /would gain 400000000 lamports/);
+  assert.match(effectsProblem(state({ out: 5000n }), state({ sol: 900_000_000n, out: 4000n }), wantSol), /would gain -100000000 lamports/);
+  assert.match(effectsProblem(state({ out: 5000n }), state({ sol: 1_495_000_000n, out: 0n }), wantSol), /asked 1000/);
+  assert.match(effectsProblem(state({ out: 5000n }), state({ sol: 1_495_000_000n, out: 4000n, other: 0n }), wantSol), /no business/);
+});
