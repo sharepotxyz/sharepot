@@ -13,8 +13,8 @@ export const CATEGORIES: [Category, string][] = [["stocks", "Stocks"], ["preipo"
 export const CATEGORY_NAME: Record<string, string> = Object.fromEntries(CATEGORIES);
 export const STOCK_NAMES: Record<string, string> = { SPCX: "SpaceX", TSLA: "Tesla", NVDA: "NVIDIA", SPY: "S&P 500 ETF" };
 /** Per listed symbol: which category it belongs to, how it settles ("close" = official close, "day" = on-chain price
- *  over a UTC day), whether it currently has a daily pool, and the issuer's mark-price key for pre-IPO tokens. */
-export const STOCK_META: Record<string, { category: Category; kind: "close" | "day"; active: boolean; icon: string | null; mark: string | null; thresholdsBps: number[] }> = {};
+ *  over a UTC day), and whether it currently has a daily pool. */
+export const STOCK_META: Record<string, { category: Category; kind: "close" | "day"; active: boolean; icon: string | null; thresholdsBps: number[] }> = {};
 export let STOCK_ORDER = Object.keys(STOCK_NAMES);
 const byMint = new Map<string, TokenInfo>();
 const tokensByStock = new Map<string, TokenInfo[]>();
@@ -29,7 +29,7 @@ export async function loadStocks() {
     STOCK_ORDER = j.stocks.map((s: any) => s.symbol);
     for (const s of j.stocks) {
       STOCK_NAMES[s.symbol] = s.name;
-      STOCK_META[s.symbol] = { category: s.category ?? "stocks", kind: s.kind ?? "close", active: s.active !== false, icon: s.icon ?? null, mark: s.mark ?? null, thresholdsBps: s.thresholdsBps ?? [] };
+      STOCK_META[s.symbol] = { category: s.category ?? "stocks", kind: s.kind ?? "close", active: s.active !== false, icon: s.icon ?? null, thresholdsBps: s.thresholdsBps ?? [] };
       const list = s.tokens.filter((t: any) => t.mint).map((t: any) => ({ ...t, symbol: s.symbol, name: s.name }));
       tokensByStock.set(s.symbol, list);
       for (const t of list) byMint.set(t.mint, t);
@@ -123,8 +123,6 @@ export function snapUnit(v: number, n: number) {
 }
 export const isUnitMultiple = (v: number, n: number) => Math.abs(v / 10 ** n - Math.round(v / 10 ** n)) < 1e-6;
 export const fmtUnit =(n: number) => (n >= 0 ? (10 ** n).toLocaleString("en-US") : (10 ** n).toFixed(-n));
-/** The issuer's official mark price of a pre-IPO token (Tessera / PreStocks), or null. */
-export const markOf = (m: MarketView) => prices[tokenSymbol(m)]?.mark ?? null;
 /** Latest known daily on-chain close of this token ({ date, close }), or null. */
 export const prevCloseOf = (m: MarketView) => prices[tokenSymbol(m)]?.prevClose ?? null;
 export const fmtPx = (v: number) => "$" + v.toLocaleString("en-US", { maximumFractionDigits: v < 1 ? 6 : 2 });

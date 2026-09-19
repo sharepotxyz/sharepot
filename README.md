@@ -196,8 +196,8 @@ xStocks are Token-2022 mints with several extensions. The program and the tests 
 
 Two more token classes run on the same program. There is no exchange for them, so **a day's close is read on-chain**:
 
-* **Pre-IPO**: T-OpenAI and T-Kalshi (Tessera) and OpenAI (PreStocks), one pool per token per UTC day. The issuers'
-  mark price (from private-market data) moves rarely and is shown for context; the pool settles on the on-chain price.
+* **Pre-IPO**: T-OpenAI and T-Kalshi (Tessera) and OpenAI (PreStocks), one pool per token per UTC day. The pool
+  settles on the token's on-chain price, the only price anyone can actually trade at.
 * **Memes**: `server/select-chain.mjs` runs at 11:00 UTC and picks the ten Solana tokens with the most 24-hour traded
   volume (Jupiter's top-traded list) for the next day, subject to filters: mint and freeze authority given up, liquidity
   ≥ $500k, first pool ≥ 3 days old, no wrapped/bridged assets, no tokenized stocks, DeFi or "strict"-list tokens.

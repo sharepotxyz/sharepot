@@ -1,5 +1,5 @@
 {
-  "_doc": "Stocks: one market per listed token per New York trading session (see open-markets.mjs). Pre-IPO tokens (category preipo, kind day) settle on their on-chain price: one market per UTC day, three ranges cut at +-thresholdsBps around the previous day's close (prices.mjs chainMove); thresholds = the token's median absolute daily move over 60 days on GeckoTerminal (T-OpenAI 1.02 %, T-Kalshi 0.99 %, PreStocks OPENAI 3.11 %, 2026-09-16). mark = issuer API that publishes the official mark price, shown next to the on-chain price. faucetUi = devnet faucet amount in shares (default 2). A stock can trade on Solana as several tokens from different issuers (xStocks, Backpack Securities, Ondo Global Markets); each token gets its own pool, since the tokens are not interchangeable. All pools of a stock share the stock's thresholds and resolve on the same official close. thresholdsBps are chosen near the quartiles of the stock's daily moves (TSLA/NVDA/SPY: 12 weeks to 2026-09-11 from Alpaca SIP; SPCX: all 63 sessions since listing, Yahoo) with the middle cut at 0, so the four ranges read big drop / small drop / small gain / big gain. On-chain thresholds are in ppm (bps x 100). seed = fee-free prize in shares of that token; profile = which issuer's Token-2022 extension set the devnet mock copies.",
+  "_doc": "Stocks: one market per listed token per New York trading session (see open-markets.mjs). Pre-IPO tokens (category preipo, kind day) settle on their on-chain price: one market per UTC day, three ranges cut at +-thresholdsBps around the previous day's close (prices.mjs chainMove); thresholds = the token's median absolute daily move over 60 days on GeckoTerminal (T-OpenAI 1.02 %, T-Kalshi 0.99 %, PreStocks OPENAI 3.11 %, 2026-09-16). faucetUi = devnet faucet amount in shares (default 2). A stock can trade on Solana as several tokens from different issuers (xStocks, Backpack Securities, Ondo Global Markets); each token gets its own pool, since the tokens are not interchangeable. All pools of a stock share the stock's thresholds and resolve on the same official close. thresholdsBps are chosen near the quartiles of the stock's daily moves (TSLA/NVDA/SPY: 12 weeks to 2026-09-11 from Alpaca SIP; SPCX: all 63 sessions since listing, Yahoo) with the middle cut at 0, so the four ranges read big drop / small drop / small gain / big gain. On-chain thresholds are in ppm (bps x 100). seed = fee-free prize in shares of that token; profile = which issuer's Token-2022 extension set the devnet mock copies.",
   "resolveDelaySecs": 1800,
   "stocks": [
     { "symbol": "SPCX", "name": "SpaceX", "thresholdsBps": [-325, 0, 275], "tokens": [
@@ -19,13 +19,13 @@
       { "token": "SPYx", "issuer": "xStocks", "decimals": 8, "profile": "xstocks", "mainnetMint": "XsoCS1TfEyfFhfvj8EtZ528L3CaKBDBRqRapnBbDF2W", "seed": 0.15 },
       { "token": "SPYon", "issuer": "Ondo", "decimals": 9, "profile": "ondo", "mainnetMint": "k18WJUULWheRkSpSquYGdNNmtuE2Vbw1hpuUi92ondo", "seed": 0.15 }
     ] },
-    { "symbol": "T-OpenAI", "name": "OpenAI", "category": "preipo", "kind": "day", "thresholdsBps": [-100, 100], "mark": "tessera:T-OpenAI", "tokens": [
+    { "symbol": "T-OpenAI", "name": "OpenAI", "category": "preipo", "kind": "day", "thresholdsBps": [-100, 100],"tokens": [
       { "token": "T-OpenAI", "issuer": "Tessera", "decimals": 9, "profile": "tessera", "mainnetMint": "oPAiAikWTaFj9RYoRFD35ccfwhnMcB3ThgBZRHSkjTZ", "seed": 0.003, "faucetUi": 0.05 }
     ] },
-    { "symbol": "T-Kalshi", "name": "Kalshi", "category": "preipo", "kind": "day", "thresholdsBps": [-100, 100], "mark": "tessera:T-Kalshi", "tokens": [
+    { "symbol": "T-Kalshi", "name": "Kalshi", "category": "preipo", "kind": "day", "thresholdsBps": [-100, 100],"tokens": [
       { "token": "T-Kalshi", "issuer": "Tessera", "decimals": 9, "profile": "tessera", "mainnetMint": "TKLSidmLVt3cqGaaodG8tyRzoANfQwoh67AccjmubeZ", "seed": 0.007, "faucetUi": 0.1 }
     ] },
-    { "symbol": "OPENAI", "name": "OpenAI", "category": "preipo", "kind": "day", "thresholdsBps": [-300, 300], "mark": "prestocks:OPENAI", "tokens": [
+    { "symbol": "OPENAI", "name": "OpenAI", "category": "preipo", "kind": "day", "thresholdsBps": [-300, 300],"tokens": [
       { "token": "OPENAI", "issuer": "PreStocks", "decimals": 9, "profile": "prestocks", "mainnetMint": "PreweJYECqtQwBtpxHL171nL2K6umo692gTm7Q3rpgF", "seed": 0.003, "faucetUi": 0.05 }
     ] }
   ]

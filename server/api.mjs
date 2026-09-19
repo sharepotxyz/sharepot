@@ -43,10 +43,10 @@ function refreshListing() {
   if (stamp === listingStamp) return;
   listingStamp = stamp;
   const today = utcDate(Date.now() / 1000), activeDays = [today, addDays(today, 1)];
-  const fromTpl = tpl.stocks.map((s) => ({ symbol: s.symbol, name: s.name, category: s.category ?? "stocks", kind: s.kind ?? "close", thresholdsBps: s.thresholdsBps, mark: s.mark ?? null, icon: null, active: true,
+  const fromTpl = tpl.stocks.map((s) => ({ symbol: s.symbol, name: s.name, category: s.category ?? "stocks", kind: s.kind ?? "close", thresholdsBps: s.thresholdsBps, icon: null, active: true,
     tokens: s.tokens.map((t) => ({ token: t.token, issuer: t.issuer, decimals: t.decimals, mint: CLUSTER === "mainnet" ? t.mainnetMint : state.mints[t.token] ?? null, mainnetMint: t.mainnetMint, faucetUi: t.faucetUi ?? FAUCET_SHARES })) }));
   const reg = readRegistry(DATA);
-  const memes = Object.entries(reg.tokens).map(([mint, t]) => ({ ...asStock(mint, t, CLUSTER), mark: null, active: (t.selectedFor ?? []).some((d) => activeDays.includes(d)), selectedFor: t.selectedFor ?? [], liquidity: t.liquidity ?? null, volume24h: t.volume24h ?? null, holders: t.holders ?? null }))
+  const memes = Object.entries(reg.tokens).map(([mint, t]) => ({ ...asStock(mint, t, CLUSTER), active: (t.selectedFor ?? []).some((d) => activeDays.includes(d)), selectedFor: t.selectedFor ?? [], liquidity: t.liquidity ?? null, volume24h: t.volume24h ?? null, holders: t.holders ?? null }))
     .filter((s) => s.tokens[0].mint).sort((a, b) => Number(b.active) - Number(a.active) || (b.volume24h ?? 0) - (a.volume24h ?? 0));
   stocks = [...fromTpl, ...memes];
   tokens = stocks.flatMap((s) => s.tokens.filter((t) => t.mint).map((t) => ({ ...t, symbol: s.symbol, active: s.active })));
@@ -121,20 +121,10 @@ process.on("unhandledRejection", (e) => console.error("unhandled rejection:", St
 setInterval(() => chainState().catch(() => {}), CHAIN_TTL_MS).unref(); chainState().catch(() => {});
 
 // Jupiter prices of the real (mainnet) tokens, keyed by token symbol; devnet mocks borrow them for dollar estimates.
-// Refreshed in the background every minute, so no page view ever waits on the price source. Pre-IPO tokens also carry
-// the issuer's official mark price (Tessera / PreStocks APIs, every 10 min) next to the on-chain quote.
-let priceCache = { at: 0, prices: {} }, markCache = { at: 0, marks: {} };
-async function refreshMarks() {
-  if (Date.now() - markCache.at < 600_000) return;
-  const marks = {};
-  try { for (const t of await (await fetch("https://rest-api.tessera.pe/v1/public/token-details", { signal: AbortSignal.timeout(15_000) })).json()) if (t.symbol && t.markPrice > 0) marks[`tessera:${t.symbol}`] = t.markPrice; } catch (e) { console.error("tessera marks:", String(e?.message ?? e).slice(0, 80)); }
-  try { for (const t of await (await fetch("https://prestocks.com/api/prestocks", { headers: { "user-agent": "Mozilla/5.0 (SharePot)" }, signal: AbortSignal.timeout(15_000) })).json()) if (t.symbol && t.markPrice > 0) marks[`prestocks:${t.symbol}`] = t.markPrice; } catch (e) { console.error("prestocks marks:", String(e?.message ?? e).slice(0, 80)); }
-  // one issuer's API failing must not drop its last known marks while the other one refreshes
-  if (Object.keys(marks).length) markCache = { at: Date.now(), marks: { ...markCache.marks, ...marks } };
-}
+// Refreshed in the background every minute, so no page view ever waits on the price source.
+let priceCache = { at: 0, prices: {} };
 async function refreshPrices() {
-  await refreshMarks().catch(() => {});
-  const all = stocks.flatMap((s) => s.tokens.map((t) => ({ ...t, mark: s.mark })));
+  const all = stocks.flatMap((s) => s.tokens);
   const mints = [...new Set(all.map((t) => t.mainnetMint))], byMint = {};
   for (let i = 0; i < mints.length; i += 50) Object.assign(byMint, await xstockPrices(mints.slice(i, i + 50)));
   // on-chain price tokens: the latest known daily close (yesterday's, or the day before's until yesterday's samples exist)
@@ -142,7 +132,7 @@ async function refreshPrices() {
   for (const s of stocks) if (s.kind === "day") for (const t of s.tokens) for (const d of [addDays(today, -1), addDays(today, -2)]) {
     const c = chainClose(DATA, t.mainnetMint, d); if (c.ok) { closes[t.token] = { date: d, close: c.close, samples: c.samples }; break; }
   }
-  priceCache = { at: Date.now(), prices: Object.fromEntries(all.map((t) => [t.token, byMint[t.mainnetMint] ? { ...byMint[t.mainnetMint], mark: t.mark ? markCache.marks[t.mark] ?? null : null, prevClose: closes[t.token] ?? null } : null])) };
+  priceCache = { at: Date.now(), prices: Object.fromEntries(all.map((t) => [t.token, byMint[t.mainnetMint] ? { ...byMint[t.mainnetMint], prevClose: closes[t.token] ?? null } : null])) };
 }
 async function prices() {
   if (!priceCache.at) await refreshPrices();
