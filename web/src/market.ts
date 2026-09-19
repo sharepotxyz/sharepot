@@ -123,6 +123,7 @@ function renderTab() {
 }
 
 // ---------- trade panel ----------
+let typed = { id: -1, v: "" };   // the amount in the box, and the pool it was typed for
 function renderTrade() {
   const box = document.getElementById("trade")!;
   const s = getSession(), st = statusOf(m), tok = esc(tokenSymbol(m)), held = shareBalance(m), fee = currentFeeBps(cfg, m), tot = totalPool(m);
@@ -153,7 +154,11 @@ function renderTrade() {
   </div><div id="pos"></div>`;
   box.querySelectorAll<HTMLButtonElement>(".topts button").forEach((b) => (b.onclick = () => { bucket = Number(b.dataset.b); render(); }));
   const amtEl = box.querySelector<HTMLInputElement>("#amt")!, quote = box.querySelector("#quote")!;
+  // The panel is rebuilt on every render (picking a range, a balance arriving, the periodic reload); what was typed
+  // has to survive that, for as long as it is the same pool.
+  if (typed.id === m.id) amtEl.value = typed.v;
   const upd = () => {
+    typed = { id: m.id, v: amtEl.value };
     const a = toRaw(m, Number(amtEl.value));
     if (bucket < 0) { quote.innerHTML = `<span class="note">Pick a range above.</span>`; return; }
     if (!a) { quote.innerHTML = `<div class="r"><span>Pays if right</span><b>${payoutMultiple(m, bucket, fee)?.toFixed(2) ?? "whole pot"}${payoutMultiple(m, bucket, fee) ? "×" : ""}</b></div>`; return; }
@@ -182,6 +187,7 @@ function renderTrade() {
     }
     // The stake is on-chain from here on: nothing below may turn that into an error message.
     const done = `Staked ${fmtAmt(m, a)} ${tok} on “${esc(full(bucket))}”. <a href="${explorerTx(sig)}" target="_blank" rel="noopener">view tx</a>`;
+    typed = { id: -1, v: "" };
     const show = (note = "") => { const m2 = document.getElementById("msg"); if (m2) m2.innerHTML = `<div class="msg ok">${done}${note ? `<br>${esc(note)}` : ""}</div>`; };
     show();
     try { await refreshBalances(); } catch {}
