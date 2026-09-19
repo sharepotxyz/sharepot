@@ -107,6 +107,16 @@ export function usdOf(m: MarketView, raw: number) {
 }
 /** Dollar price of one share of this market's token (Jupiter, mainnet token), or null when unknown. */
 export const priceOf = (m: MarketView) => prices[tokenSymbol(m)]?.usd ?? null;
+/** Smallest stake, in shares: the smallest power of ten (… 100, 10, 1, 0.1, 0.01 …) worth at least `minUsd` at price
+ *  `px`, so nobody has to divide by a share price to find the floor. Returned as the exponent, because 10 ** -2 is not
+ *  exactly 0.01 and the label has to be. */
+export function minUnitExp(px: number, minUsd: number, decimals: number) {
+  let n = Math.ceil(Math.log10(minUsd / px));
+  while (10 ** n * px < minUsd * (1 - 1e-9)) n++;            // log10 can land one short at an exact power of ten
+  while (10 ** (n - 1) * px >= minUsd * (1 - 1e-9)) n--;
+  return Math.max(n, -decimals);
+}
+export const fmtUnit = (n: number) => (n >= 0 ? (10 ** n).toLocaleString("en-US") : (10 ** n).toFixed(-n));
 /** The issuer's official mark price of a pre-IPO token (Tessera / PreStocks), or null. */
 export const markOf = (m: MarketView) => prices[tokenSymbol(m)]?.mark ?? null;
 /** Latest known daily on-chain close of this token ({ date, close }), or null. */

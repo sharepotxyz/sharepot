@@ -3,7 +3,7 @@
 import { bs58 } from "./wallet";
 import { NO_OUTCOME, buildPlaceBetTx, confirmBySig, currentFeeBps, earlyBirdUntil, fetchConfig, fetchMarkets, fetchPosition, impliedPayout, totalPool, type MarketView } from "./chain";
 import { STATUS_LABEL, buildEvents, eventKey, payoutMultiple, statusOf, type EventView } from "./events";
-import { CATEGORY_NAME, bucketLabel, bucketName, fmtAmt, fmtMove, fmtPx, fmtUsd, issuerOf, loadPrices, loadStocks, markOf, closeMoment, prevCloseOf, priceOf, question, sessionLabel, toRaw, tokenSymbol, uiAmount, usdOf } from "./stocks";
+import { CATEGORY_NAME, bucketLabel, bucketName, fmtAmt, fmtMove, fmtPx, fmtUsd, issuerOf, loadPrices, loadStocks, markOf, minUnitExp, fmtUnit, closeMoment, prevCloseOf, priceOf, question, sessionLabel, toRaw, tokenSymbol, uiAmount, usdOf } from "./stocks";
 import { dayEnd, dayStart, fmtDay, fmtHm, fmtHmRange, fmtTsShort } from "./time";
 import { balances, bucketColor, esc, fmtTs, getSession, mountTopbar, onSession, openWalletMenu, refreshBalances, shareBalance, tickerBadge, timeLeft, trackStocks } from "./ui";
 import { API_BASE, IS_TEST, explorerTx } from "./config";
@@ -131,12 +131,19 @@ function renderTrade() {
     box.innerHTML = `<div class="tcard"><div class="thead"><b>${STATUS_LABEL[st]}</b></div><p class="note" style="margin:0">${st === "trading" ? `Bets closed ${fmtTs(m.closeTs)}; the result comes after ${fmtTs(m.resolveAfterTs)} and is final about ${fmtTs(m.resolveAfterTs + cfg.disputeWindowSecs.toNumber())}.` : st === "proposed" ? `The result is in its dispute window until ${fmtTs(m.proposedAt + cfg.disputeWindowSecs.toNumber())} (${timeLeft(m.proposedAt + cfg.disputeWindowSecs.toNumber())} left); payouts follow automatically.` : "This market is settled. Payouts have been sent."}</p>${next}</div><div id="pos"></div>`;
     showPosition(); return;
   }
+  // The floor is shown as a round number of shares, a power of ten worth at least MIN_BET_USD, so nobody has to work it
+  // out from the share price. The program's own floor is in raw units (dust stakes cost more in payout rent than they
+  // can win — see forfeit_position); without a price that is all there is.
+  const px = priceOf(m), minExp = px ? minUnitExp(px, MIN_BET_USD, m.decimals) : null;
+  const minRaw = Math.max(cfg.minBet.toNumber(), minExp != null ? toRaw(m, 10 ** minExp) : 0);
+  const minTxt = minExp != null && minRaw === toRaw(m, 10 ** minExp) ? fmtUnit(minExp) : fmtAmt(m, minRaw, 8);
   box.innerHTML = `<div class="tcard">
     <div class="thead"><b>Stake ${tok}</b><span class="note">${esc(issuerOf(m))} pool</span></div>
     <div class="topts">${m.pools.map((p, i) => `<button class="${bucket === i ? "on" : ""}" style="--c:${bucketColor(m, i)}" data-b="${i}"><span class="to1"><span>${esc(name(i))}</span><b>${tot ? Math.round((p / tot) * 100) + "%" : "—"}</b></span><em>${esc(bucketLabel(m, i))}</em></button>`).join("")}</div>
     <label class="tlabel" for="amt">Amount${s && balances.loaded ? `<span class="note">Balance ${fmtAmt(m, held)} ${tok}</span>` : ""}</label>
-    <div class="tamt"><input id="amt" type="number" min="0" step="any" placeholder="0" inputmode="decimal"><span class="unit">${tok}</span></div>
-    ${s ? `<div class="tquick"><button data-f="0.25">25%</button><button data-f="0.5">50%</button><button data-f="1">Max</button></div>` : ""}
+    <div class="tamt"><input id="amt" type="number" min="0" step="any" placeholder="${minTxt}" inputmode="decimal"><span class="unit">${tok}</span></div>
+    <div class="note" id="minnote">Minimum stake <b>${minTxt} ${tok}</b> ${usdOf(m, minRaw)}</div>
+    ${s ? `<div class="tquick"><button data-min>Min</button><button data-f="0.25">25%</button><button data-f="0.5">50%</button><button data-f="1">Max</button></div>` : ""}
     <div class="tsum" id="quote"></div>
     ${s ? `<button class="primary big" id="go"${bucket < 0 ? " disabled" : ""}>${bucket < 0 ? "Pick a range" : `Stake on ${esc(name(bucket))}`}</button>` : `<button class="primary big" id="connect">Connect wallet</button>`}
     <div id="msg"></div>
@@ -154,15 +161,12 @@ function renderTrade() {
     quote.innerHTML = `<div class="r"><span>Payout if ${esc(name(bucket))}</span><b class="big">${fmtAmt(m, q.total)} ${tok}</b></div><div class="r note"><span>${usdOf(m, q.total)}</span><span>${(q.total / a).toFixed(2)}× · +${fmtAmt(m, q.total - a)} ${tok}</span></div><div class="note">Any other range: you lose the ${fmtAmt(m, a)} ${tok} staked.</div>`;
   };
   amtEl.oninput = upd; upd();
-  box.querySelectorAll<HTMLButtonElement>(".tquick button").forEach((b) => (b.onclick = () => { amtEl.value = String(Math.floor(uiAmount(m, held) * Number(b.dataset.f) * 1e4) / 1e4); upd(); }));
+  box.querySelectorAll<HTMLButtonElement>(".tquick button").forEach((b) => (b.onclick = () => { amtEl.value = b.dataset.min != null ? minTxt.replace(/,/g, "") : String(Math.floor(uiAmount(m, held) * Number(b.dataset.f) * 1e4) / 1e4); upd(); }));
   const c = box.querySelector<HTMLButtonElement>("#connect"); if (c) c.onclick = (e) => { e.stopPropagation(); openWalletMenu(); };
   const go = box.querySelector<HTMLButtonElement>("#go"), msg = box.querySelector("#msg")!;
   if (go) go.onclick = async () => {
     const sess = getSession()!; const a = toRaw(m, Number(amtEl.value));
-    // The program's floor is in raw units of whatever token; the page also asks for at least MIN_BET_USD of it
-    // (dust stakes cost more in payout rent than they can win — see forfeit_position), when a price is known.
-    const px = priceOf(m), minRaw = Math.max(cfg.minBet.toNumber(), px ? toRaw(m, MIN_BET_USD / px) : 0);
-    if (a < minRaw) { msg.innerHTML = `<div class="msg err">Enter an amount (minimum ${fmtAmt(m, minRaw, 8)} ${tok}${px ? `, about $${MIN_BET_USD}` : ""}).</div>`; return; }
+    if (a < minRaw) { msg.innerHTML = `<div class="msg err">The minimum stake is ${minTxt} ${tok}.</div>`; return; }
     if (balances.loaded && a > held) { msg.innerHTML = `<div class="msg err">You hold ${fmtAmt(m, held)} ${tok}.</div>`; return; }
     go.disabled = true; msg.innerHTML = `<div class="msg">Confirm in your wallet…</div>`;
     let sig = "";
