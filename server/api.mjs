@@ -129,7 +129,8 @@ async function refreshMarks() {
   const marks = {};
   try { for (const t of await (await fetch("https://rest-api.tessera.pe/v1/public/token-details", { signal: AbortSignal.timeout(15_000) })).json()) if (t.symbol && t.markPrice > 0) marks[`tessera:${t.symbol}`] = t.markPrice; } catch (e) { console.error("tessera marks:", String(e?.message ?? e).slice(0, 80)); }
   try { for (const t of await (await fetch("https://prestocks.com/api/prestocks", { headers: { "user-agent": "Mozilla/5.0 (SharePot)" }, signal: AbortSignal.timeout(15_000) })).json()) if (t.symbol && t.markPrice > 0) marks[`prestocks:${t.symbol}`] = t.markPrice; } catch (e) { console.error("prestocks marks:", String(e?.message ?? e).slice(0, 80)); }
-  if (Object.keys(marks).length) markCache = { at: Date.now(), marks };
+  // one issuer's API failing must not drop its last known marks while the other one refreshes
+  if (Object.keys(marks).length) markCache = { at: Date.now(), marks: { ...markCache.marks, ...marks } };
 }
 async function refreshPrices() {
   await refreshMarks().catch(() => {});
