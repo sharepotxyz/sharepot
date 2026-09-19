@@ -3,7 +3,7 @@
 import { bs58 } from "./wallet";
 import { NO_OUTCOME, buildPlaceBetTx, confirmBySig, currentFeeBps, earlyBirdUntil, fetchConfig, fetchMarkets, fetchPosition, impliedPayout, totalPool, type MarketView } from "./chain";
 import { STATUS_LABEL, buildEvents, eventKey, payoutMultiple, statusOf, type EventView } from "./events";
-import { CATEGORY_NAME, bucketLabel, bucketName, fmtAmt, fmtMove, fmtPx, fmtUsd, issuerOf, loadPrices, loadStocks, markOf, minUnitExp, fmtUnit, closeMoment, prevCloseOf, priceOf, question, sessionLabel, toRaw, tokenSymbol, uiAmount, usdOf } from "./stocks";
+import { CATEGORY_NAME, bucketLabel, bucketName, fmtAmt, fmtMove, fmtPx, fmtUsd, issuerOf, loadPrices, loadStocks, markOf, minUnitExp, fmtUnit, snapUnit, isUnitMultiple, closeMoment, prevCloseOf, priceOf, question, sessionLabel, toRaw, tokenSymbol, uiAmount, usdOf } from "./stocks";
 import { dayEnd, dayStart, fmtDay, fmtHm, fmtHmRange, fmtTsShort } from "./time";
 import { balances, bucketColor, esc, fmtTs, getSession, mountTopbar, onSession, openWalletMenu, refreshBalances, shareBalance, tickerBadge, timeLeft, trackStocks } from "./ui";
 import { API_BASE, IS_TEST, explorerTx } from "./config";
@@ -137,13 +137,14 @@ function renderTrade() {
   // can win — see forfeit_position); without a price that is all there is.
   const px = priceOf(m), minExp = px ? minUnitExp(px, MIN_BET_USD, m.decimals) : null;
   const minRaw = Math.max(cfg.minBet.toNumber(), minExp != null ? toRaw(m, 10 ** minExp) : 0);
-  const minTxt = minExp != null && minRaw === toRaw(m, 10 ** minExp) ? fmtUnit(minExp) : fmtAmt(m, minRaw, 8);
+  const unitExp = minExp != null && minRaw === toRaw(m, 10 ** minExp) ? minExp : null;   // null: no price, the program's raw floor only
+  const minTxt = unitExp != null ? fmtUnit(unitExp) : fmtAmt(m, minRaw, 8);
   box.innerHTML = `<div class="tcard">
     <div class="thead"><b>Stake ${tok}</b><span class="note">${esc(issuerOf(m))} pool</span></div>
     <div class="topts">${m.pools.map((p, i) => `<button class="${bucket === i ? "on" : ""}" style="--c:${bucketColor(m, i)}" data-b="${i}"><span class="to1"><span>${esc(name(i))}</span><b>${tot ? Math.round((p / tot) * 100) + "%" : "—"}</b></span><em>${esc(bucketLabel(m, i))}</em></button>`).join("")}</div>
     <label class="tlabel" for="amt">Amount${s && balances.loaded ? `<span class="note">Balance ${fmtAmt(m, held)} ${tok}</span>` : ""}</label>
-    <div class="tamt"><input id="amt" type="number" min="0" step="any" placeholder="${minTxt}" inputmode="decimal"><span class="unit">${tok}</span></div>
-    <div class="note" id="minnote">Minimum stake <b>${minTxt} ${tok}</b> ${usdOf(m, minRaw)}</div>
+    <div class="tamt"><input id="amt" type="number" min="0" step="${unitExp != null ? minTxt.replace(/,/g, "") : "any"}" placeholder="${minTxt}" inputmode="decimal"><span class="unit">${tok}</span></div>
+    <div class="note" id="minnote">${unitExp != null ? "Stake in multiples of" : "Minimum stake"} <b>${minTxt} ${tok}</b> ${usdOf(m, minRaw)}</div>
     ${s ? `<div class="tquick"><button data-min>Min</button><button data-f="0.25">25%</button><button data-f="0.5">50%</button><button data-f="1">Max</button></div>` : ""}
     <div class="tsum" id="quote"></div>
     ${s ? `<button class="primary big" id="go"${bucket < 0 ? " disabled" : ""}>${bucket < 0 ? "Pick a range" : `Stake on ${esc(name(bucket))}`}</button>` : `<button class="primary big" id="connect">Connect wallet</button>`}
@@ -162,16 +163,24 @@ function renderTrade() {
     const a = toRaw(m, Number(amtEl.value));
     if (bucket < 0) { quote.innerHTML = `<span class="note">Pick a range above.</span>`; return; }
     if (!a) { quote.innerHTML = `<div class="r"><span>Pays if right</span><b>${payoutMultiple(m, bucket, fee)?.toFixed(2) ?? "whole pot"}${payoutMultiple(m, bucket, fee) ? "×" : ""}</b></div>`; return; }
+    if (a < minRaw) { quote.innerHTML = `<span class="note">The minimum stake is ${minTxt} ${tok}.</span>`; return; }
     const q = impliedPayout(m, bucket, a, fee);
     quote.innerHTML = `<div class="r"><span>Payout if ${esc(name(bucket))}</span><b class="big">${fmtAmt(m, q.total)} ${tok}</b></div><div class="r note"><span>${usdOf(m, q.total)}</span><span>${(q.total / a).toFixed(2)}× · +${fmtAmt(m, q.total - a)} ${tok}</span></div><div class="note">Any other range: you lose the ${fmtAmt(m, a)} ${tok} staked.</div>`;
   };
   amtEl.oninput = upd; upd();
-  box.querySelectorAll<HTMLButtonElement>(".tquick button").forEach((b) => (b.onclick = () => { amtEl.value = b.dataset.min != null ? minTxt.replace(/,/g, "") : String(Math.floor(uiAmount(m, held) * Number(b.dataset.f) * 1e4) / 1e4); upd(); }));
+  // Stakes are whole numbers of the unit: what was typed is rounded down to one on leaving the box (never to zero:
+  // an amount under one unit stays as typed and is refused with the minimum spelled out).
+  amtEl.onchange = () => { const v = Number(amtEl.value); if (unitExp != null && v >= 10 ** unitExp && !isUnitMultiple(v, unitExp)) { amtEl.value = snapUnit(v, unitExp); upd(); } };
+  box.querySelectorAll<HTMLButtonElement>(".tquick button").forEach((b) => (b.onclick = () => {
+    const v = uiAmount(m, held) * Number(b.dataset.f);
+    amtEl.value = b.dataset.min != null ? minTxt.replace(/,/g, "") : unitExp != null ? snapUnit(v, unitExp) : String(Math.floor(v * 1e4) / 1e4); upd();
+  }));
   const c = box.querySelector<HTMLButtonElement>("#connect"); if (c) c.onclick = (e) => { e.stopPropagation(); openWalletMenu(); };
   const go = box.querySelector<HTMLButtonElement>("#go"), msg = box.querySelector("#msg")!;
   if (go) go.onclick = async () => {
     const sess = getSession()!; const a = toRaw(m, Number(amtEl.value));
     if (a < minRaw) { msg.innerHTML = `<div class="msg err">The minimum stake is ${minTxt} ${tok}.</div>`; return; }
+    if (unitExp != null && !isUnitMultiple(Number(amtEl.value), unitExp)) { msg.innerHTML = `<div class="msg err">Stakes go in multiples of ${minTxt} ${tok}: try ${Number(snapUnit(Number(amtEl.value), unitExp)).toLocaleString("en-US", { maximumFractionDigits: 8 })} ${tok}.</div>`; return; }
     if (balances.loaded && a > held) { msg.innerHTML = `<div class="msg err">You hold ${fmtAmt(m, held)} ${tok}.</div>`; return; }
     go.disabled = true; msg.innerHTML = `<div class="msg">Confirm in your wallet…</div>`;
     let sig = "";

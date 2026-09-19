@@ -116,7 +116,13 @@ export function minUnitExp(px: number, minUsd: number, decimals: number) {
   while (10 ** (n - 1) * px >= minUsd * (1 - 1e-9)) n--;
   return Math.max(n, -decimals);
 }
-export const fmtUnit = (n: number) => (n >= 0 ? (10 ** n).toLocaleString("en-US") : (10 ** n).toFixed(-n));
+/** `v` shares rounded down to a whole number of 10 ** n units, as the text for the amount box (exact: no 0.30000000000000004). */
+export function snapUnit(v: number, n: number) {
+  const k = Math.floor(v / 10 ** n + 1e-9);
+  return n < 0 ? (k / 10 ** -n).toFixed(-n) : String(k * 10 ** n);
+}
+export const isUnitMultiple = (v: number, n: number) => Math.abs(v / 10 ** n - Math.round(v / 10 ** n)) < 1e-6;
+export const fmtUnit =(n: number) => (n >= 0 ? (10 ** n).toLocaleString("en-US") : (10 ** n).toFixed(-n));
 /** The issuer's official mark price of a pre-IPO token (Tessera / PreStocks), or null. */
 export const markOf = (m: MarketView) => prices[tokenSymbol(m)]?.mark ?? null;
 /** Latest known daily on-chain close of this token ({ date, close }), or null. */
