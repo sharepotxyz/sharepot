@@ -28,7 +28,7 @@ async function load(fresh = false) {
   const want = qs.get("t") ?? (byId ? tokenSymbol(byId) : null);
   m = (m && ev.markets.find((x) => x.id === m.id)) || ev.markets.find((x) => tokenSymbol(x) === want) || ev.markets.find((x) => statusOf(x) === "open") || ev.markets[0];
   if (tab === "rules" && (m.status === 1 || m.status >= 2) && !fresh) tab = "resolution";
-  trackStocks(ev.markets);
+  trackStocks(ms);
   render();
 }
 function selectMarket(id: number) {
@@ -233,6 +233,6 @@ async function loadEvidence() {
   } catch { el.textContent = "not published yet"; }
 }
 
-onSession(() => { if (ev) render(); });
+onSession(() => { if (ev && m) render(); });   // the top bar mounts (and reconnects the wallet) before the pool is picked
 load().catch((e) => (root.innerHTML = `<div class="msg err">Could not load this market: ${esc(e.message ?? e)}</div>`));
 setInterval(() => { if (ev && !document.activeElement?.matches("input")) load(); }, 30_000);

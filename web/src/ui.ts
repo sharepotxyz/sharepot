@@ -1,8 +1,8 @@
 import { PublicKey } from "@solana/web3.js";
 import { getAssociatedTokenAddressSync } from "@solana/spl-token";
 import { API_BASE, CLUSTER, IS_TEST } from "./config";
-import { STATUS, connection, type MarketView } from "./chain";
-import { CATEGORIES, STOCK_NAMES, STOCK_ORDER, issuerOf, priceOf, symbolOf, tokenSymbol, uiAmount } from "./stocks";
+import { STATUS, connection, fetchMarkets, type MarketView } from "./chain";
+import { CATEGORIES, STOCK_NAMES, STOCK_ORDER, issuerOf, loadPrices, loadStocks, priceOf, symbolOf, tokenSymbol, uiAmount } from "./stocks";
 import { connectWallet, devWallet, listWallets, type Session } from "./wallet";
 import { bindIfPending, captureReferral } from "./referral";
 import { localizeUtc } from "./time";
@@ -122,24 +122,38 @@ let session: Session | null = null;
 type Tracked = { symbol: string; token: string; mint: PublicKey; view: MarketView };
 let tracked: Tracked[] = [];
 export const balances: { sol: number; loaded: boolean; raw: Record<string, number> } = { sol: 0, loaded: false, raw: {} };
-/** Pages tell the wallet which stock tokens to track (one entry per mint seen on screen). */
-export function trackStocks(ms: MarketView[]) {
-  const seen = new Map<string, Tracked>();
+/** Pages hand the wallet the markets they already loaded (one tracked entry per mint). `all` = that was the whole
+ *  market list; a page that only knows part of it (one event) or nothing (leaderboard, invite) leaves the rest to
+ *  ensureTracked, so the wallet menu lists the same holdings on every page. */
+let trackedAll = false, selfTracking = false;
+export function trackStocks(ms: MarketView[], all = true) {
+  if (all) trackedAll = true;
+  const seen = new Map<string, Tracked>(tracked.map((t) => [t.mint.toBase58(), t]));
   for (const m of ms) if (!seen.has(m.mint.toBase58())) seen.set(m.mint.toBase58(), { symbol: symbolOf(m), token: tokenSymbol(m), mint: m.mint, view: m });
   tracked = [...seen.values()].sort((a, b) => STOCK_ORDER.indexOf(a.symbol) - STOCK_ORDER.indexOf(b.symbol) || a.token.localeCompare(b.token));
   refreshBalances();
 }
+function ensureTracked() {
+  setTimeout(async () => {   // give the page a moment to hand over its own list first (saves a request)
+    if (trackedAll || selfTracking || !session) return;
+    selfTracking = true;
+    try { const [ms] = await Promise.all([fetchMarkets(), loadPrices(), loadStocks()]); trackStocks(ms); } catch {} finally { selfTracking = false; }
+  }, 1500);
+}
 /** Raw balance of this market's token in the connected wallet. */
 export const shareBalance = (m: MarketView) => balances.raw[m.mint.toBase58()] ?? 0;
 /** SOL + every tracked token balance of the connected wallet in two RPC calls (all of the wallet's accounts per token
- *  program at once, not one call per token), so public RPC rate limits are not hit. Concurrent calls share one request. */
-let refreshing: Promise<void> | null = null;
+ *  program at once, not one call per token), so public RPC rate limits are not hit. Concurrent calls share one request;
+ *  a call that arrives while one is in flight queues exactly one more run, because the running one may have started
+ *  before the page's tokens were known (or before a faucet claim landed) and would otherwise report zeros as final. */
+let refreshing: Promise<void> | null = null, again = false;
 export function refreshBalances(): Promise<void> {
   if (!session) { balances.loaded = false; renderWallet(); return Promise.resolve(); }
-  if (refreshing) return refreshing;
-  const owner = session.publicKey;
+  if (refreshing) { again = true; return refreshing; }
   refreshing = (async () => {
-    try {
+    do try {
+      again = false;
+      const owner = session?.publicKey; if (!owner) { balances.loaded = false; break; }
       const programs = [...new Set(tracked.map((t) => t.view.tokenProgram.toBase58()))];
       const [sol, ...lists] = await Promise.all([
         connection.getBalance(owner),
@@ -151,7 +165,7 @@ export function refreshBalances(): Promise<void> {
         raw[info.mint] = (raw[info.mint] ?? 0) + Number(info.tokenAmount?.amount ?? 0);
       }
       balances.sol = sol / 1e9; balances.raw = Object.fromEntries(tracked.map((t) => [t.mint.toBase58(), raw[t.mint.toBase58()] ?? 0])); balances.loaded = true;
-    } catch { balances.loaded = false; }
+    } catch { balances.loaded = false; } while (again);
     renderWallet();
   })().finally(() => { refreshing = null; });
   return refreshing;
@@ -159,7 +173,7 @@ export function refreshBalances(): Promise<void> {
 const listeners: ((s: Session | null) => void)[] = [];
 export const onSession = (fn: (s: Session | null) => void) => { listeners.push(fn); fn(session); };
 export const getSession = () => session;
-function setSession(s: Session | null) { session = s; menuOpen = false; try { s ? localStorage.setItem("sharepot.wallet", s.label) : localStorage.removeItem("sharepot.wallet"); } catch {} balances.loaded = false; listeners.forEach((f) => f(s)); renderWallet(); refreshBalances(); }
+function setSession(s: Session | null) { session = s; menuOpen = false; try { s ? localStorage.setItem("sharepot.wallet", s.label) : localStorage.removeItem("sharepot.wallet"); } catch {} balances.loaded = false; listeners.forEach((f) => { try { f(s); } catch (e) { console.error(e); } }); renderWallet(); refreshBalances(); ensureTracked(); }
 
 let menuOpen = false;
 export function openWalletMenu() { menuOpen = true; renderWallet(); }
