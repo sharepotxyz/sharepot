@@ -177,12 +177,18 @@ function renderTrade() {
   }));
   const c = box.querySelector<HTMLButtonElement>("#connect"); if (c) c.onclick = (e) => { e.stopPropagation(); openWalletMenu(); };
   const go = box.querySelector<HTMLButtonElement>("#go"), msg = box.querySelector("#msg")!;
+  const shortOf = (have: number | null) => `You do not hold enough ${tok}${have != null ? `: your wallet has ${fmtAmt(m, have)} ${tok}` : ""}.${IS_TEST ? ` <a href="/faucet.html">Get free test tokens</a>` : ""}`;
   if (go) go.onclick = async () => {
     const sess = getSession()!; const a = toRaw(m, Number(amtEl.value));
     if (a < minRaw) { msg.innerHTML = `<div class="msg err">The minimum stake is ${minTxt} ${tok}.</div>`; return; }
     if (unitExp != null && !isUnitMultiple(Number(amtEl.value), unitExp)) { msg.innerHTML = `<div class="msg err">Stakes go in multiples of ${minTxt} ${tok}: try ${Number(snapUnit(Number(amtEl.value), unitExp)).toLocaleString("en-US", { maximumFractionDigits: 8 })} ${tok}.</div>`; return; }
-    if (balances.loaded && a > held) { msg.innerHTML = `<div class="msg err">You hold ${fmtAmt(m, held)} ${tok}.</div>`; return; }
-    go.disabled = true; msg.innerHTML = `<div class="msg">Confirm in your wallet…</div>`;
+    // The balance is read again here, not taken from when the panel was drawn: a balance that never loaded (public RPC
+    // rate limit) used to skip this check and hand the bettor the token program's raw "insufficient funds" log.
+    go.disabled = true;
+    if (!balances.loaded) { msg.innerHTML = `<div class="msg">Checking your balance…</div>`; try { await refreshBalances(); } catch {} }
+    const have = shareBalance(m);
+    if (balances.loaded && a > have) { msg.innerHTML = `<div class="msg err">${shortOf(have)}</div>`; go.disabled = false; return; }
+    msg.innerHTML = `<div class="msg">Confirm in your wallet…</div>`;
     let sig = "";
     try {
       const tx = await buildPlaceBetTx(sess.publicKey, m, bucket, a);
@@ -192,7 +198,13 @@ function renderTrade() {
     } catch (e: any) {
       // Sent but not seen yet: it may still land, so the button stays off rather than invite a second stake.
       if (sig && e?.unconfirmed) { msg.innerHTML = `<div class="msg err">Sent, but not confirmed yet: it may still go through. Check <a href="/portfolio.html">My bets</a> or the <a href="${explorerTx(sig)}" target="_blank" rel="noopener">transaction</a> before staking again.</div>`; return; }
-      msg.innerHTML = `<div class="msg err">${esc(e?.message ?? e)}</div>`; go.disabled = false; return;
+      const raw = String(e?.message ?? e) + " " + (Array.isArray(e?.logs) ? e.logs.join(" ") : "");
+      let why = esc(String(e?.message ?? e).split(/ Logs:|\n/)[0].slice(0, 200));   // never the simulation log dump
+      if (/insufficient lamports|Attempt to debit|insufficient funds for (fee|rent)/i.test(raw)) why = "Your wallet does not have enough SOL for the network fee.";
+      else if (/insufficient funds/i.test(raw)) { try { await refreshBalances(); } catch {} why = shortOf(balances.loaded ? shareBalance(m) : null); }
+      else if (/reject|denied|cancel/i.test(raw)) why = "Cancelled in your wallet. Nothing was staked.";
+      else if (/429|rate limit/i.test(raw)) why = "The network is busy right now. Nothing was staked: try again in a moment.";
+      msg.innerHTML = `<div class="msg err">${why}</div>`; go.disabled = false; return;
     }
     // The stake is on-chain from here on: nothing below may turn that into an error message.
     const done = `Staked ${fmtAmt(m, a)} ${tok} on “${esc(full(bucket))}”. <a href="${explorerTx(sig)}" target="_blank" rel="noopener">view tx</a>`;
