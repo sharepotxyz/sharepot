@@ -147,6 +147,9 @@ export const shareBalance = (m: MarketView) => balances.raw[m.mint.toBase58()] ?
  *  a call that arrives while one is in flight queues exactly one more run, because the running one may have started
  *  before the page's tokens were known (or before a faucet claim landed) and would otherwise report zeros as final. */
 let refreshing: Promise<void> | null = null, again = false;
+/** Pages that print a balance outside the wallet menu (the stake panel) redraw it when a read finishes. */
+const balanceListeners: (() => void)[] = [];
+export const onBalances = (fn: () => void) => { balanceListeners.push(fn); };
 export function refreshBalances(): Promise<void> {
   if (!session) { balances.loaded = false; renderWallet(); return Promise.resolve(); }
   if (refreshing) { again = true; return refreshing; }
@@ -167,6 +170,7 @@ export function refreshBalances(): Promise<void> {
       balances.sol = sol / 1e9; balances.raw = Object.fromEntries(tracked.map((t) => [t.mint.toBase58(), raw[t.mint.toBase58()] ?? 0])); balances.loaded = true;
     } catch { balances.loaded = false; } while (again);
     renderWallet();
+    balanceListeners.forEach((f) => { try { f(); } catch (e) { console.error(e); } });
   })().finally(() => { refreshing = null; });
   return refreshing;
 }

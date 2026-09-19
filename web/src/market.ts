@@ -5,7 +5,7 @@ import { NO_OUTCOME, buildPlaceBetTx, confirmBySig, currentFeeBps, earlyBirdUnti
 import { STATUS_LABEL, buildEvents, eventKey, payoutMultiple, statusOf, type EventView } from "./events";
 import { CATEGORY_NAME, bucketLabel, bucketName, fmtAmt, fmtMove, fmtPx, fmtUsd, issuerOf, loadPrices, loadStocks, markOf, minUnitExp, fmtUnit, snapUnit, isUnitMultiple, closeMoment, prevCloseOf, priceOf, question, sessionLabel, toRaw, tokenSymbol, uiAmount, usdOf } from "./stocks";
 import { dayEnd, dayStart, fmtDay, fmtHm, fmtHmRange, fmtTsShort } from "./time";
-import { balances, bucketColor, esc, fmtTs, getSession, mountTopbar, onSession, openWalletMenu, refreshBalances, shareBalance, tickerBadge, timeLeft, trackStocks } from "./ui";
+import { balances, bucketColor, esc, fmtTs, getSession, mountTopbar, onBalances, onSession, openWalletMenu, refreshBalances, shareBalance, tickerBadge, timeLeft, trackStocks } from "./ui";
 import { API_BASE, IS_TEST, explorerTx } from "./config";
 import { bindReferralAfterBet } from "./referral";
 
@@ -123,6 +123,7 @@ function renderTab() {
 }
 
 // ---------- trade panel ----------
+const balText = () => (getSession() && balances.loaded ? `Balance ${fmtAmt(m, shareBalance(m))} ${tokenSymbol(m)}` : getSession() ? "Balance …" : "");
 let typed = { id: -1, v: "" };   // the amount in the box, and the pool it was typed for
 function renderTrade() {
   const box = document.getElementById("trade")!;
@@ -142,7 +143,7 @@ function renderTrade() {
   box.innerHTML = `<div class="tcard">
     <div class="thead"><b>Stake ${tok}</b><span class="note">${esc(issuerOf(m))} pool</span></div>
     <div class="topts">${m.pools.map((p, i) => `<button class="${bucket === i ? "on" : ""}" style="--c:${bucketColor(m, i)}" data-b="${i}"><span class="to1"><span>${esc(name(i))}</span><b>${tot ? Math.round((p / tot) * 100) + "%" : "—"}</b></span><em>${esc(bucketLabel(m, i))}</em></button>`).join("")}</div>
-    <label class="tlabel" for="amt">Amount${s && balances.loaded ? `<span class="note">Balance ${fmtAmt(m, held)} ${tok}</span>` : ""}</label>
+    <label class="tlabel" for="amt">Amount<span class="note" id="bal">${esc(balText())}</span></label>
     <div class="tamt"><input id="amt" type="number" min="0" step="${unitExp != null ? minTxt.replace(/,/g, "") : "any"}" placeholder="${minTxt}" inputmode="decimal"><span class="unit">${tok}</span></div>
     <div class="note" id="minnote">${unitExp != null ? "Stake in multiples of" : "Minimum stake"} <b>${minTxt} ${tok}</b> ${usdOf(m, minRaw)}</div>
     ${s ? `<div class="tquick"><button data-min>Min</button><button data-f="0.25">25%</button><button data-f="0.5">50%</button><button data-f="1">Max</button></div>` : ""}
@@ -172,7 +173,7 @@ function renderTrade() {
   // an amount under one unit stays as typed and is refused with the minimum spelled out).
   amtEl.onchange = () => { const v = Number(amtEl.value); if (unitExp != null && v >= 10 ** unitExp && !isUnitMultiple(v, unitExp)) { amtEl.value = snapUnit(v, unitExp); upd(); } };
   box.querySelectorAll<HTMLButtonElement>(".tquick button").forEach((b) => (b.onclick = () => {
-    const v = uiAmount(m, held) * Number(b.dataset.f);
+    const v = uiAmount(m, shareBalance(m)) * Number(b.dataset.f);   // read now: the balance may have arrived after the panel was drawn
     amtEl.value = b.dataset.min != null ? minTxt.replace(/,/g, "") : unitExp != null ? snapUnit(v, unitExp) : String(Math.floor(v * 1e4) / 1e4); upd();
   }));
   const c = box.querySelector<HTMLButtonElement>("#connect"); if (c) c.onclick = (e) => { e.stopPropagation(); openWalletMenu(); };
@@ -265,5 +266,8 @@ async function loadEvidence() {
 }
 
 onSession(() => { if (ev && m) render(); });   // the top bar mounts (and reconnects the wallet) before the pool is picked
+// The balance arrives after the panel is drawn. Only its line is touched: a rebuild here would detach the message box
+// and button of a stake in progress (Stake itself re-reads the balance).
+onBalances(() => { const el = document.getElementById("bal"); if (el && m) el.textContent = balText(); });
 load().catch((e) => (root.innerHTML = `<div class="msg err">Could not load this market: ${esc(e.message ?? e)}</div>`));
 setInterval(() => { if (ev && !document.activeElement?.matches("input")) load(); }, 30_000);
