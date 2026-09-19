@@ -1,7 +1,7 @@
 // Event page: one stock × one session. Left: the question, a token (issuer) switcher, the ranges of the selected
 // token's pool with chance / payout multiple / pool size, then Rules · Resolution · Details tabs. Right: trade panel.
 import { bs58 } from "./wallet";
-import { NO_OUTCOME, buildPlaceBetTx, confirmBySig, currentFeeBps, earlyBirdUntil, fetchConfig, fetchMarkets, fetchPosition, impliedPayout, totalPool, type MarketView } from "./chain";
+import { NO_OUTCOME, buildPlaceBetTx, confirmBySig, currentFeeBps, earlyBirdUntil, fetchConfig, fetchMarkets, fetchPositionAmounts, impliedPayout, totalPool, type MarketView } from "./chain";
 import { STATUS_LABEL, buildEvents, eventKey, payoutMultiple, statusOf, type EventView } from "./events";
 import { CATEGORY_NAME, bucketLabel, bucketName, fmtAmt, fmtMove, fmtPx, fmtUsd, issuerOf, loadPrices, loadStocks, markOf, minUnitExp, fmtUnit, snapUnit, isUnitMultiple, closeMoment, prevCloseOf, priceOf, question, sessionLabel, toRaw, tokenSymbol, uiAmount, usdOf } from "./stocks";
 import { dayEnd, dayStart, fmtDay, fmtHm, fmtHmRange, fmtTsShort } from "./time";
@@ -130,7 +130,7 @@ function renderTrade() {
   const s = getSession(), st = statusOf(m), tok = esc(tokenSymbol(m)), held = shareBalance(m), fee = currentFeeBps(cfg, m), tot = totalPool(m);
   if (st !== "open") {
     const next = `<a href="/?cat=${ev!.category}&stock=${encodeURIComponent(ev!.symbol)}">See the open ${esc(ev!.symbol)} market →</a>`;
-    box.innerHTML = `<div class="tcard"><div class="thead"><b>${STATUS_LABEL[st]}</b></div><p class="note" style="margin:0">${st === "trading" ? `Bets closed ${fmtTs(m.closeTs)}; the result comes after ${fmtTs(m.resolveAfterTs)} and is final about ${fmtTs(m.resolveAfterTs + cfg.disputeWindowSecs.toNumber())}.` : st === "proposed" ? `The result is in its dispute window until ${fmtTs(m.proposedAt + cfg.disputeWindowSecs.toNumber())} (${timeLeft(m.proposedAt + cfg.disputeWindowSecs.toNumber())} left); payouts follow automatically.` : "This market is settled. Payouts have been sent."}</p>${next}</div><div id="pos"></div>`;
+    box.innerHTML = `<div class="tcard"><div class="thead"><b>${STATUS_LABEL[st]}</b></div><p class="note" style="margin:0">${st === "trading" ? `Bets closed ${fmtTs(m.closeTs)}; the result comes after ${fmtTs(m.resolveAfterTs)} and is final about ${fmtTs(m.resolveAfterTs + cfg.disputeWindowSecs.toNumber())}.` : st === "proposed" ? `The result is in its dispute window until ${fmtTs(m.proposedAt + cfg.disputeWindowSecs.toNumber())} (${timeLeft(m.proposedAt + cfg.disputeWindowSecs.toNumber())} left); payouts follow automatically.` : "This market is settled. Payouts have been sent."}</p>${next}</div><div id="pos">${posHtml()}</div>`;
     showPosition(); return;
   }
   // The floor is shown as a round number of shares, a power of ten worth at least MIN_BET_USD, so nobody has to work it
@@ -153,7 +153,7 @@ function renderTrade() {
     <p class="note" style="margin:0">Fee ${fee / 100}% of winnings${Date.now() / 1000 < earlyBirdUntil(cfg, m) ? " (early-bird rate)" : ""}, never on your stake; locked in when you bet. Payouts arrive automatically.</p>
     <p class="note" style="margin:0">If nobody takes another range, every ${tok} staked is returned in full — there is no house on the other side of your bet.</p>
     ${IS_TEST && s && balances.loaded && !held ? `<p class="note" style="margin:0">No ${tok} yet? <a href="/faucet.html">Get free test tokens</a>.</p>` : ""}
-  </div><div id="pos"></div>`;
+  </div><div id="pos">${posHtml()}</div>`;
   box.querySelectorAll<HTMLButtonElement>(".topts button").forEach((b) => (b.onclick = () => { bucket = Number(b.dataset.b); render(); }));
   const amtEl = box.querySelector<HTMLInputElement>("#amt")!, quote = box.querySelector("#quote")!;
   // The panel is rebuilt on every render (picking a range, a balance arriving, the periodic reload); what was typed
@@ -211,19 +211,36 @@ function renderTrade() {
     const done = `Staked ${fmtAmt(m, a)} ${tok} on “${esc(full(bucket))}”. <a href="${explorerTx(sig)}" target="_blank" rel="noopener">view tx</a>`;
     typed = { id: -1, v: "" };
     const show = (note = "") => { const m2 = document.getElementById("msg"); if (m2) m2.innerHTML = `<div class="msg ok">${done}${note ? `<br>${esc(note)}` : ""}</div>`; };
-    show();
-    try { await refreshBalances(); } catch {}
-    try { await load(true); } catch {}
+    // Show the stake at once, from what was just confirmed: the position box and the pools are updated here and the
+    // chain is re-read behind them (both reads together, not one after the other), instead of a blank wait.
+    const k = posKey(), was = k ? posCache.get(k) ?? [] : [];
+    if (k) posCache.set(k, Array.from({ length: m.nBuckets }, (_, i) => (was[i] ?? 0) + (i === bucket ? a : 0)));
+    m.pools[bucket] += a;
+    render(); show();
+    await Promise.all([refreshBalances().catch(() => {}), load(true).catch(() => {})]);
     show();
     try { show((await bindReferralAfterBet(sess)) || ""); } catch {}
   };
   showPosition();
 }
+// The panel is rebuilt on every render, so the position is drawn from what was last read (no blank box while the
+// chain is asked again) and only a real answer replaces it: an RPC error leaves it alone, and while bets are open a
+// smaller total is a lagging node (stakes only ever add up until the market settles), so that is ignored too.
+const posCache = new Map<string, number[]>();
+const posKey = () => { const s = getSession(); return s && m ? `${m.pubkey.toBase58()}:${s.publicKey.toBase58()}` : ""; };
+function posHtml() {
+  const amounts = posCache.get(posKey()); if (!amounts) return "";
+  const parts = amounts.slice(0, m.nBuckets).map((x, i) => [x, i]).filter(([x]) => x > 0).map(([x, i]) => `<div class="r"><span>${esc(name(i))}</span><b>${fmtAmt(m, x)} ${esc(tokenSymbol(m))}</b></div>`);
+  return parts.length ? `<div class="tcard"><div class="thead"><b>Your position</b><a href="/portfolio.html" class="note">All my bets →</a></div><div class="tsum">${parts.join("")}</div></div>` : "";
+}
 async function showPosition() {
-  const s = getSession(), el = document.getElementById("pos"); if (!s || !el) return;
-  const p = await fetchPosition(m.pubkey, s.publicKey); if (!p) { el.innerHTML = ""; return; }
-  const parts = (p.amounts as any[]).slice(0, m.nBuckets).map((x, i) => [x.toNumber(), i]).filter(([x]) => x > 0).map(([x, i]) => `<div class="r"><span>${esc(name(i))}</span><b>${fmtAmt(m, x)} ${esc(tokenSymbol(m))}</b></div>`);
-  el.innerHTML = parts.length ? `<div class="tcard"><div class="thead"><b>Your position</b><a href="/portfolio.html" class="note">All my bets →</a></div><div class="tsum">${parts.join("")}</div></div>` : "";
+  const s = getSession(), k = posKey(); if (!s || !k) return;
+  let got: number[] | null; try { got = await fetchPositionAmounts(m.pubkey, s.publicKey); } catch { return; }
+  if (k !== posKey()) return;   // another pool or wallet was picked while this was in flight
+  const sum = (v?: number[] | null) => (v ?? []).reduce((x, y) => x + y, 0);
+  if (statusOf(m) === "open" && sum(got) < sum(posCache.get(k))) return;
+  if (got) posCache.set(k, got); else posCache.delete(k);
+  const el = document.getElementById("pos"); if (el) el.innerHTML = posHtml();
 }
 
 async function mountDispute() {

@@ -106,8 +106,11 @@ export function payoutIfBucket(m: MarketView, amounts: number[], feeBpsByBucket:
   const gross = (losePool * stake) / winPool, fee = (gross * (feeBpsByBucket[w] ?? 0)) / 10000, seed = (m.seed * stake) / winPool;
   return { payout: stake + gross - fee + seed, kind: "won" as const };
 }
-export async function fetchPosition(m: PublicKey, u: PublicKey) {
-  try { return await (program.account as any).position.fetch(positionPda(m, u)); } catch { return null; }
+/** One wallet's stakes per range in a market. "No such position" (null) is told apart from "the RPC did not answer" (throws): a page that
+ *  already shows a position must not erase it over a rate limit. */
+export async function fetchPositionAmounts(m: PublicKey, u: PublicKey): Promise<number[] | null> {
+  const p = await (program.account as any).position.fetchNullable(positionPda(m, u));
+  return p ? (p.amounts as any[]).map((x) => x.toNumber()) : null;
 }
 
 /** Fee the user would pay right now on winnings, in bps (mirrors on-chain logic). */
