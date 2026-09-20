@@ -92,6 +92,9 @@ function mountFeedback() {
 /** Phones hide the text links in the top bar (styles.css, ≤640px), which left Docs / Faucet / Leaderboard / My bets
  *  unreachable there. A ☰ button lists the same links in a dropdown; it is invisible on wider screens. */
 let navOpen = false;
+/** The ☰ menu and the wallet menu drop from the same corner: opening one closes the other (each button stops its click
+ *  from reaching the document handler that would have done it). */
+let closeNav = () => {};
 function mountNavMenu() {
   const right = document.querySelector<HTMLElement>(".tb-right");
   if (!right || document.getElementById("navmore")) return;
@@ -108,7 +111,8 @@ function mountNavMenu() {
       box.appendChild(m); }
     btn.setAttribute("aria-expanded", String(navOpen));
   };
-  btn.onclick = (e) => { e.stopPropagation(); navOpen = !navOpen; render(); };
+  btn.onclick = (e) => { e.stopPropagation(); navOpen = !navOpen; if (navOpen && menuOpen) { menuOpen = false; renderWallet(); } render(); };
+  closeNav = () => { if (navOpen) { navOpen = false; render(); } };
   document.addEventListener("click", () => { if (navOpen) { navOpen = false; render(); } });
 }
 /** Category tabs under the top bar (Stocks · Pre-IPO · Memes). On the home page they filter in place; elsewhere they
@@ -197,7 +201,7 @@ function mountLang() {
   sel.onchange = () => setLang(sel.value);
   right.insertBefore(sel, document.getElementById("netbadge"));
 }
-export function openWalletMenu() { menuOpen = true; renderWallet(); }
+export function openWalletMenu() { closeNav(); menuOpen = true; renderWallet(); }
 document.addEventListener("click", (e) => { const box = document.getElementById("wallet"); if (menuOpen && box && !box.contains(e.target as Node)) { menuOpen = false; renderWallet(); } });
 
 export function mountWallet() {
@@ -214,7 +218,7 @@ function renderWallet() {
   if (!session) {
     const wallets = listWallets();
     el.innerHTML = `<button class="primary wbtn" id="wbtn">${t("wallet.connect")}</button>${menuOpen ? `<div class="menu" id="wmenu"><div class="mh">${t("wallet.connectTitle")}</div>${wallets.map((w, i) => `<button data-i="${i}">${esc(w.name)}</button>`).join("")}${IS_TEST ? `<button id="wdev" title="${esc(t("wallet.testTitle"))}">${t("wallet.test")}</button>` : ""}${!wallets.length && !IS_TEST ? `<div class="note" style="padding:6px">${t("wallet.install")}</div>` : ""}</div>` : ""}`;
-    el.querySelector<HTMLButtonElement>("#wbtn")!.onclick = (e) => { e.stopPropagation(); menuOpen = !menuOpen; renderWallet(); };
+    el.querySelector<HTMLButtonElement>("#wbtn")!.onclick = (e) => { e.stopPropagation(); closeNav(); menuOpen = !menuOpen; renderWallet(); };
     el.querySelectorAll<HTMLButtonElement>("button[data-i]").forEach((b) => (b.onclick = async () => { try { setSession(await connectWallet(wallets[Number(b.dataset.i)])); } catch (e: any) { alert(e.message ?? e); } }));
     const d = el.querySelector<HTMLButtonElement>("#wdev"); if (d) d.onclick = () => setSession(devWallet());
     return;
@@ -235,7 +239,7 @@ function renderWallet() {
     ${balances.loaded && balances.sol < 0.002 ? `<div class="note warn" style="padding:0 4px">${t("wallet.lowSol")}</div>` : ""}
     <div class="wlist" id="wholdings">${rows}</div><hr>
     <a class="mi" href="/portfolio.html">${t("nav.mybets")}</a></div>` : ""}`;
-  el.querySelector<HTMLButtonElement>("#wbtn")!.onclick = (e) => { e.stopPropagation(); menuOpen = !menuOpen; renderWallet(); };
+  el.querySelector<HTMLButtonElement>("#wbtn")!.onclick = (e) => { e.stopPropagation(); closeNav(); menuOpen = !menuOpen; renderWallet(); };
   const dis = el.querySelector<HTMLButtonElement>("#wdis"); if (dis) dis.onclick = async () => { await session?.disconnect(); setSession(null); };
   const cp = el.querySelector<HTMLButtonElement>("#wcopy");
   if (cp) cp.onclick = async () => { try { await navigator.clipboard.writeText(addr); cp.textContent = t("common.copied"); } catch { cp.textContent = addr; } setTimeout(() => { if (cp.isConnected) cp.textContent = short(addr); }, 1500); };
