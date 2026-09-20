@@ -24,3 +24,6 @@ S=/home/sharepot
 
 # propose results after the close, finalize after the dispute window, pay out and sweep
 */10 * * * * cd $S/apps/sharepot && CLUSTER=devnet CLUSTER_RPC=$(cat $S/secrets/devnet/rpc-url 2>/dev/null || echo https://api.devnet.solana.com) DATA_DIR=$S/data SHAREPOT_SECRETS=$S/secrets/devnet flock -n $S/locks/resolve.lock node server/resolve.mjs >> $S/logs/resolve.log 2>&1
+
+# dead-man check for the independent verification host: it pushes data/tokyo-heartbeat.json every 5 minutes; alert when stale
+*/10 * * * * cd $S/apps/sharepot && CLUSTER=devnet DATA_DIR=$S/data flock -n $S/locks/heartbeat-check.lock node server/heartbeat-check.mjs >> $S/logs/heartbeat-check.log 2>&1
