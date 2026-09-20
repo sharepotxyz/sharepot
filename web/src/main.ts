@@ -33,7 +33,7 @@ function card(ev: EventView) {
 }
 function renderFilters() {
   const issuers = [...new Set(events.flatMap((e) => e.markets.map((m) => issuerOf(m))).filter(Boolean))].sort();
-  const seg = [["open", t("status.open")], ["live", t("filter.live")], ["resolved", t("status.resolved")], ["all", t("filter.all")]];
+  const seg = [["open", t("filter.open")], ["live", t("filter.live")], ["resolved", t("filter.resolved")], ["all", t("filter.all")]]   // own keys: some languages need shorter words here than on the status pills;
   // stocks of the current category that have a market (today's memes first: the list is in the API's order)
   const inCat = STOCK_ORDER.filter((sy) => (state.cat === "all" || (STOCK_META[sy]?.category ?? "stocks") === state.cat) && events.some((e) => e.symbol === sy));
   const stockLabel = (sy: string) => (STOCK_NAMES[sy] && STOCK_NAMES[sy] !== sy ? `${sy} · ${STOCK_NAMES[sy]}` : sy);

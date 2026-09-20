@@ -99,6 +99,8 @@
   "home.inPlay": "{usd} in play",
   "home.empty": "Nothing matches these filters. <a href=\"/\">Show all open markets</a>",
   "home.loadErr": "Could not load markets: {err}",
+  "filter.open": "Betting open",
+  "filter.resolved": "Resolved",
   "filter.live": "Awaiting result",
   "filter.all": "All",
   "filter.stockAria": "Stock or token",

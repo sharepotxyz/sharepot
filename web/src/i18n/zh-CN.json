@@ -99,6 +99,8 @@
   "home.inPlay": "在押 {usd}",
   "home.empty": "没有符合筛选条件的市场。<a href=\"/\">查看全部开放市场</a>",
   "home.loadErr": "无法加载市场：{err}",
+  "filter.open": "下注中",
+  "filter.resolved": "已结算",
   "filter.live": "等待结果",
   "filter.all": "全部",
   "filter.stockAria": "股票或代币",

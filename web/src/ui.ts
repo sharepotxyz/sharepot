@@ -26,7 +26,7 @@ export const bucketColor = (m: MarketView, i: number) => (m.nBuckets === 2 ? (i 
 /** Ticker monogram in a colour derived from the symbol (no third-party logos). */
 export function tickerBadge(symbol: string, big = false, small = false) {
   let h = 0; for (const c of symbol) h = (h * 31 + c.charCodeAt(0)) % 360;
-  return `<span class="tick${big ? " big" : small ? " sm" : ""}${symbol.length > 5 ? " long" : ""}" style="--h:${h}">${esc(symbol)}</span>`;
+  return `<span class="tick${big ? " big" : small ? " sm" : ""}${symbol.length > 4 ? " long" : ""}" style="--h:${h}">${esc(symbol)}</span>`;
 }
 
 // ---------- top bar: brand, search, stock tabs, network badge, wallet ----------
@@ -102,7 +102,10 @@ function mountNavMenu() {
   const btn = box.querySelector<HTMLButtonElement>("#navmore")!;
   const render = () => {
     box.querySelector(".menu")?.remove();
-    if (navOpen) { const m = document.createElement("div"); m.className = "menu navmenu"; m.innerHTML = links.map((a) => `<a class="mi" href="${esc(a.getAttribute("href") ?? "/")}">${esc(a.textContent ?? "")}</a>`).join(""); box.appendChild(m); }
+    if (navOpen) { const m = document.createElement("div"); m.className = "menu navmenu"; m.innerHTML = links.map((a) => `<a class="mi" href="${esc(a.getAttribute("href") ?? "/")}">${esc(a.textContent ?? "")}</a>`).join("")
+        + `<div class="langrow"><select class="langsel" aria-label="${esc(t("lang.label"))}">${langOptions()}</select></div>`;   // phones: the picker lives here, the top bar has no room for it
+      const ls = m.querySelector<HTMLSelectElement>("select")!; ls.onclick = (e) => e.stopPropagation(); ls.onchange = () => setLang(ls.value);
+      box.appendChild(m); }
     btn.setAttribute("aria-expanded", String(navOpen));
   };
   btn.onclick = (e) => { e.stopPropagation(); navOpen = !navOpen; render(); };
@@ -184,12 +187,13 @@ function setSession(s: Session | null) { session = s; menuOpen = false; try { s 
 let menuOpen = false;
 /** The browser test wallet's label is also what localStorage remembers it by, so it stays English; only its display is translated. */
 const TEST_WALLET = "Test wallet (browser)";
-/** Language picker in the top bar (kept on phones, where the text links fold into the ☰ menu). */
+/** Language picker: in the top bar, and on phones (no room there) at the bottom of the ☰ menu. Both only ever pass a LANGS value to setLang. */
+const langOptions = () => LANGS.map(([k, n]) => `<option value="${k}"${k === LANG ? " selected" : ""}>${esc(n)}</option>`).join("");
 function mountLang() {
   const right = document.querySelector<HTMLElement>(".tb-right");
   if (!right || document.getElementById("langsel")) return;
   const sel = document.createElement("select"); sel.id = "langsel"; sel.className = "langsel"; sel.setAttribute("aria-label", t("lang.label")); sel.title = t("lang.label");
-  sel.innerHTML = LANGS.map(([k, n]) => `<option value="${k}"${k === LANG ? " selected" : ""}>${esc(n)}</option>`).join("");
+  sel.innerHTML = langOptions();
   sel.onchange = () => setLang(sel.value);
   right.insertBefore(sel, document.getElementById("netbadge"));
 }

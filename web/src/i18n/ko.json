@@ -99,6 +99,8 @@
   "home.inPlay": "진행 중 {usd}",
   "home.empty": "조건에 맞는 마켓이 없습니다. <a href=\"/\">진행 중인 마켓 전체 보기</a>",
   "home.loadErr": "마켓을 불러오지 못했습니다: {err}",
+  "filter.open": "베팅 진행 중",
+  "filter.resolved": "정산 완료",
   "filter.live": "결과 대기",
   "filter.all": "전체",
   "filter.stockAria": "주식 또는 토큰",

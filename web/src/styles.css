@@ -27,7 +27,12 @@ select{font:inherit;font-size:13.5px;color:var(--fg);background:var(--surface);b
 .navlink{color:var(--fg);font-weight:500;padding:6px 8px}.navlink:hover{text-decoration:none;color:var(--accent)}
 .langsel{font-size:12.5px;padding:5px 6px;border-radius:8px;color:var(--dim);background:transparent;max-width:104px;cursor:pointer}.langsel:hover{color:var(--fg)}
 .wbtn,.navlink,.netbadge{white-space:nowrap}
-@media(max-width:640px){.langsel{max-width:66px;padding:4px}.tb-right{gap:6px}}
+.search{min-width:0}.tick{overflow:hidden}
+.seg{max-width:100%;overflow-x:auto;scrollbar-width:none}.seg button,.fbrow button,.tabs .tab{white-space:nowrap;flex:none}
+.navmenu .langrow{display:none;padding:8px 6px 4px;border-top:1px solid var(--line);margin-top:4px}.navmenu .langrow select{width:100%;max-width:none}
+/* the text links fold into the ☰ menu before they can push the top bar wider than the screen (longer in some languages) */
+@media(max-width:1000px){.tb-right .navlink{display:none}.tb-right .navmorebox{display:block}}
+@media(max-width:640px){.tb-right>.langsel{display:none}.navmenu .langrow{display:block}.tb-right{gap:6px}}
 .netbadge{font-size:11.5px;font-weight:600;color:var(--warn-fg);background:var(--warn-bg);padding:3px 8px;border-radius:999px;white-space:nowrap}
 .catnav{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none;padding-bottom:0}
 .catnav a,.catnav button{border:0;background:none;border-radius:0;padding:10px 12px;color:var(--dim);font-weight:500;white-space:nowrap;border-bottom:2px solid transparent;font-size:14px}
