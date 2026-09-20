@@ -25,10 +25,11 @@ function card(ev: EventView) {
   else lead = `<span class="note">${t("home.noBets")}</span>`;
   const when = ev.status === "open" ? t("home.left", { t: timeLeft(ev.closeTs) }) : ev.status === "trading" ? t("home.resultAt", { ts: fmtTs(ev.resolveAfterTs) }) : "";
   return `<a class="ev" href="/market.html?e=${encodeURIComponent(ev.key)}">
-    <div class="ev-top">${tickerBadge(ev.symbol)}<div><div class="ev-q">${esc(question(m0))}</div><div class="ev-s">${esc(ev.name)} · ${ev.markets.map((m) => esc(tokenSymbol(m))).join(" · ")}</div></div></div>
+    <div class="ev-head">${tickerBadge(ev.symbol)}<span class="pill ${ev.status}">${ev.status === "open" ? t("status.openShort") : STATUS_LABEL[ev.status]}</span></div>
+    <div class="ev-top"><div><div class="ev-q">${esc(question(m0))}</div><div class="ev-s">${esc(ev.name)} · ${ev.markets.map((m) => esc(tokenSymbol(m))).join(" · ")}</div></div></div>
     <div class="dist" title="${esc(t("home.distTitle"))}">${bar}</div>
     <div class="ev-lead">${lead}</div>
-    <div class="ev-foot"><span class="pill ${ev.status}">${ev.status === "open" ? t("status.openShort") : STATUS_LABEL[ev.status]}</span>${ev.potUsd != null ? `<span>${t("home.pot", { usd: fmtUsd(ev.potUsd) })}</span>` : ""}<span>${tn("bettors", ev.bettors)}</span><span class="ev-when">${esc(when)}</span></div>
+    <div class="ev-foot">${ev.potUsd != null ? `<span>${t("home.pot", { usd: fmtUsd(ev.potUsd) })}</span>` : ""}<span>${tn("bettors", ev.bettors)}</span><span class="ev-when">${esc(when)}</span></div>
   </a>`;
 }
 function renderFilters() {

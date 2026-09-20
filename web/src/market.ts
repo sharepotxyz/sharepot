@@ -24,7 +24,7 @@ async function load(fresh = false) {
   const byId = qs.get("id") ? ms.find((x) => x.id === Number(qs.get("id"))) : undefined;
   const key = qs.get("e") ?? (byId ? eventKey(byId) : "");
   ev = buildEvents(ms).find((e) => e.key === key);
-  if (!ev) { root.innerHTML = `<div class="empty-state" style="margin-top:30px">${t("mkt.missing")}</div>`; return; }
+  if (!ev) { mountTopbar({}); root.innerHTML = `<div class="empty-state" style="margin-top:30px">${t("mkt.missing")}</div>`; return; }
   mountTopbar({ active: ev.category });
   const want = qs.get("t") ?? (byId ? tokenSymbol(byId) : null);
   m = (m && ev.markets.find((x) => x.id === m.id)) || ev.markets.find((x) => tokenSymbol(x) === want) || ev.markets.find((x) => statusOf(x) === "open") || ev.markets[0];
@@ -53,8 +53,8 @@ function render() {
   root.innerHTML = `<div class="evpage">
     <div class="evtop">
       <nav class="crumb"><a href="/">${t("mkt.crumb")}</a><span>›</span><a href="/?cat=${encodeURIComponent(ev.category)}">${esc(CATEGORY_NAME[ev.category] ?? ev.category)}</a><span>›</span><a href="/?cat=${encodeURIComponent(ev.category)}&stock=${encodeURIComponent(ev.symbol)}">${esc(ev.name)}</a><span>›</span><span>${esc(fmtDay(closeMoment(m)))}</span></nav>
-      <header class="evhdr">${tickerBadge(ev.symbol, true)}<div><h1>${esc(question(m))}</h1>
-        <div class="evmeta"><span class="pill ${st}">${STATUS_LABEL[st]}</span>${st === "open" ? `<span>${t("mkt.closeIn", { t: timeLeft(m.closeTs) })}</span>` : ""}${ev.potUsd != null ? `<span>${tn("mkt.potAcross", ev.markets.length, { usd: fmtUsd(ev.potUsd) })}</span>` : ""}<span>${tn("bettors", ev.bettors)}</span>${ev.kind === "day" && priceOf(m) ? `<span title="${esc(t("mkt.nowTitle"))}">${t("mkt.now", { px: fmtPx(priceOf(m)!) })}</span>` : ""}${ev.kind === "day" ? (() => { const pc = prevCloseOf(m); return pc && pc.date === new Date(Date.parse(ev.date + "T00:00:00Z") - 864e5).toISOString().slice(0, 10) ? `<span title="${esc(t("mkt.prevTitle", { ts: fmtTs(dayStart(ev.date)) }))}">${t("mkt.prev", { px: fmtPx(pc.close) })}</span>` : `<span class="note">${t("mkt.prevLater", { ts: esc(fmtTs(dayStart(ev.date))) })}</span>`; })() : ""}</div></div></header>
+      <header class="evhdr"><div><div class="evhdr-top">${tickerBadge(ev.symbol, true)}<span class="pill ${st}">${STATUS_LABEL[st]}</span></div><h1>${esc(question(m))}</h1>
+        <div class="evmeta">${st === "open" ? `<span>${t("mkt.closeIn", { t: timeLeft(m.closeTs) })}</span>` : ""}${ev.potUsd != null ? `<span>${tn("mkt.potAcross", ev.markets.length, { usd: fmtUsd(ev.potUsd) })}</span>` : ""}<span>${tn("bettors", ev.bettors)}</span>${ev.kind === "day" && priceOf(m) ? `<span title="${esc(t("mkt.nowTitle"))}">${t("mkt.now", { px: fmtPx(priceOf(m)!) })}</span>` : ""}${ev.kind === "day" ? (() => { const pc = prevCloseOf(m); return pc && pc.date === new Date(Date.parse(ev.date + "T00:00:00Z") - 864e5).toISOString().slice(0, 10) ? `<span title="${esc(t("mkt.prevTitle", { ts: fmtTs(dayStart(ev.date)) }))}">${t("mkt.prev", { px: fmtPx(pc.close) })}</span>` : `<span class="note">${t("mkt.prevLater", { ts: esc(fmtTs(dayStart(ev.date))) })}</span>`; })() : ""}</div></div></header>
       ${timeline()}
       <div class="toks" role="tablist" aria-label="${esc(t("mkt.poolAria"))}">${ev.markets.map((x) => `<button role="tab" aria-selected="${x.id === m.id}" class="tok${x.id === m.id ? " on" : ""}" data-id="${x.id}"><b>${esc(tokenSymbol(x))}</b><span>${esc(issuerOf(x))}</span><em>${t("mkt.inPot", { amt: fmtAmt(x, totalPool(x) + x.seed, 3) })} ${usdOf(x, totalPool(x) + x.seed)}</em></button>`).join("")}</div>
       ${ev.markets.length > 1 ? `<p class="note">${t("mkt.multiPools", { n: ev.markets.length })}</p>` : ""}

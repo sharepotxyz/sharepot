@@ -2,6 +2,7 @@
 // serves. The page shows real content as soon as the HTML arrives, before the wallet/chain scripts (≈150 kB) have
 // loaded; once they run, the client re-renders the same markup and takes over (filters, wallet, betting).
 // Keep the markup in step with web/src/main.ts (card) and web/src/market.ts (render).
+// A ticker is a chip as wide as its symbol (T-OpenAI, USELESS…), sharing a line with the status pill.
 // Wording comes from the request's language (server/i18n.mjs translator → `tr`), the same keys the browser uses.
 const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const parseMetric = (tag) => { const m = String(tag).match(/^([A-Za-z0-9$_\-]{1,20})\.(close|day):(\d{4}-\d{2}-\d{2})$/); return m ? { symbol: m[1], kind: m[2], date: m[3] } : null; };
@@ -21,7 +22,7 @@ function bucketLabel(m, i, tr) {
   if (i === n - 1) return `≥ ${fmtThr(t[n - 2])}`;
   return tr.t("bucket.range", { a: fmtThr(t[i - 1]), b: fmtThr(t[i]) });
 }
-function tickerBadge(symbol, big = false) { let h = 0; for (const c of symbol) h = (h * 31 + c.charCodeAt(0)) % 360; return `<span class="tick${big ? " big" : ""}${symbol.length > 4 ? " long" : ""}" style="--h:${h}">${esc(symbol)}</span>`; }
+function tickerBadge(symbol, big = false) { let h = 0; for (const c of symbol) h = (h * 31 + c.charCodeAt(0)) % 360; return `<span class="tick${big ? " big" : ""}" style="--h:${h}">${esc(symbol)}</span>`; }
 function timeLeft(ts, tr) {
   const s = ts - Date.now() / 1000; if (s <= 0) return tr.t("time.closed");
   const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
@@ -76,10 +77,11 @@ export function homeHtml(data, html, url, tr) {
     const i = ev.dist.indexOf(Math.max(...ev.dist));
     const lead = backed ? tr.t("home.mostBacked", { label: `<b>${esc(label(i))}</b>`, pct: Math.round(ev.dist[i] * 100) }) : `<span class="note">${tr.t("home.noBets")}</span>`;
     return `<a class="ev" href="/market.html?e=${encodeURIComponent(ev.key)}">
-    <div class="ev-top">${tickerBadge(ev.symbol)}<div><div class="ev-q">${esc(question(ev, tr))}</div><div class="ev-s">${esc(c.names[ev.symbol] ?? ev.symbol)} · ${ev.markets.map((m) => esc(c.tok(m).token)).join(" · ")}</div></div></div>
+    <div class="ev-head">${tickerBadge(ev.symbol)}<span class="pill open">${tr.t("status.openShort")}</span></div>
+    <div class="ev-top"><div><div class="ev-q">${esc(question(ev, tr))}</div><div class="ev-s">${esc(c.names[ev.symbol] ?? ev.symbol)} · ${ev.markets.map((m) => esc(c.tok(m).token)).join(" · ")}</div></div></div>
     <div class="dist" title="${esc(tr.t("home.distTitle"))}">${bar}</div>
     <div class="ev-lead">${lead}</div>
-    <div class="ev-foot"><span class="pill open">${tr.t("status.openShort")}</span>${ev.potUsd != null ? `<span>${tr.t("home.pot", { usd: fmtUsd(ev.potUsd) })}</span>` : ""}<span>${tr.tn("bettors", ev.bettors)}</span><span class="ev-when">${esc(tr.t("home.left", { t: timeLeft(ev.closeTs, tr) }))}</span></div>
+    <div class="ev-foot">${ev.potUsd != null ? `<span>${tr.t("home.pot", { usd: fmtUsd(ev.potUsd) })}</span>` : ""}<span>${tr.tn("bettors", ev.bettors)}</span><span class="ev-when">${esc(tr.t("home.left", { t: timeLeft(ev.closeTs, tr) }))}</span></div>
   </a>`;
   }).join("");
   const pools = evs.reduce((a, e) => a + e.markets.length, 0), pot = evs.reduce((a, e) => a + (e.potUsd ?? 0), 0);
@@ -108,7 +110,7 @@ export function eventHtml(data, url, html, tr) {
   }).join("");
   const body = `<div class="evpage"><div class="evtop">
     <nav class="crumb"><a href="/">${tr.t("mkt.crumb")}</a><span>›</span><a href="/?cat=${encodeURIComponent(ev.category)}">${esc(tr.t("cat." + ev.category))}</a><span>›</span><a href="/?cat=${encodeURIComponent(ev.category)}&stock=${encodeURIComponent(ev.symbol)}">${esc(c.names[ev.symbol] ?? ev.symbol)}</a><span>›</span><span>${esc(sessionLabel(ev.date, tr))}</span></nav>
-    <header class="evhdr">${tickerBadge(ev.symbol, true)}<div><h1>${esc(question(ev, tr))}</h1><div class="evmeta"><span class="pill ${st}">${tr.t(STATUS_KEY[st])}</span>${st === "open" ? `<span>${tr.t("mkt.closeIn", { t: timeLeft(m.closeTs, tr) })}</span>` : ""}${ev.potUsd != null ? `<span>${tr.tn("mkt.potAcross", ev.markets.length, { usd: fmtUsd(ev.potUsd) })}</span>` : ""}<span>${tr.tn("bettors", ev.bettors)}</span></div></div></header>
+    <header class="evhdr"><div><div class="evhdr-top">${tickerBadge(ev.symbol, true)}<span class="pill ${st}">${tr.t(STATUS_KEY[st])}</span></div><h1>${esc(question(ev, tr))}</h1><div class="evmeta">${st === "open" ? `<span>${tr.t("mkt.closeIn", { t: timeLeft(m.closeTs, tr) })}</span>` : ""}${ev.potUsd != null ? `<span>${tr.tn("mkt.potAcross", ev.markets.length, { usd: fmtUsd(ev.potUsd) })}</span>` : ""}<span>${tr.tn("bettors", ev.bettors)}</span></div></div></header>
     <div class="toks">${ev.markets.map((x) => `<button class="tok${x.id === m.id ? " on" : ""}" disabled><b>${esc(c.tok(x).token)}</b><span>${esc(c.tok(x).issuer)}</span><em>${tr.t("mkt.inPot", { amt: amt(x, total(x) + x.seed) })}</em></button>`).join("")}</div>
     <div class="otable"><div class="orow ohead"><span>${tr.t("mkt.colRange")}</span><span>${tr.t("mkt.colChance")}</span><span>${tr.t("mkt.colPays")}</span><span class="opool">${tr.t("mkt.colPool")}</span><span></span></div>${rows}</div>
   </div><aside class="trade" id="trade"><div class="tcard"><div class="note">${tr.t("mkt.loadingTrade")}</div></div></aside><div class="evbottom"></div></div>`;

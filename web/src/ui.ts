@@ -23,10 +23,11 @@ export function statusPill(m: MarketView) {
 const COLORS_4 = ["#e5484d", "#f5a524", "#6cc68e", "#12a150"];
 const COLORS = ["#e5484d", "#f08c3a", "#f5a524", "#c3c65a", "#6cc68e", "#12a150", "#3b9ede", "#5b4bdb"];
 export const bucketColor = (m: MarketView, i: number) => (m.nBuckets === 2 ? (i === 1 ? "var(--gain)" : "var(--drop)") : m.nBuckets === 4 ? COLORS_4[i] : COLORS[Math.round((i * (COLORS.length - 1)) / Math.max(1, m.nBuckets - 1))]);
-/** Ticker monogram in a colour derived from the symbol (no third-party logos). */
+/** Ticker chip in a colour derived from the symbol (no third-party logos). As wide as the symbol: tickers run from
+ *  "GP" to "T-OpenAI", and a fixed square broke the long ones onto two lines. */
 export function tickerBadge(symbol: string, big = false, small = false) {
   let h = 0; for (const c of symbol) h = (h * 31 + c.charCodeAt(0)) % 360;
-  return `<span class="tick${big ? " big" : small ? " sm" : ""}${symbol.length > 4 ? " long" : ""}" style="--h:${h}">${esc(symbol)}</span>`;
+  return `<span class="tick${big ? " big" : small ? " sm" : ""}" style="--h:${h}">${esc(symbol)}</span>`;
 }
 
 // ---------- top bar: brand, search, stock tabs, network badge, wallet ----------
