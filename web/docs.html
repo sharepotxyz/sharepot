@@ -1,114 +1,114 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="/favicon.svg"><meta name="theme-color" content="#ffffff"><title>SharePot · How it works</title>
-<meta name="description" content="SharePot: daily parimutuel pools on US stocks, staked and paid in the tokenized stock itself. How markets, settlement, fees and the trust model work, with a demo video.">
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="/favicon.svg"><meta name="theme-color" content="#ffffff"><title data-t="title.docs">SharePot · How it works</title>
+<meta name="description" data-t-attr="content:meta.docs" content="SharePot: daily parimutuel pools on US stocks, staked and paid in the tokenized stock itself. How markets, settlement, fees and the trust model work, with a demo video.">
 <link rel="stylesheet" href="/src/styles.css"></head><body>
 <header class="topbar"><div class="container tb">
   <a class="brand" href="/"><svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16" fill="#5b4bdb"/><g fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round"><path d="M24 23c-4-4 4-7 0-11"/><path d="M40 23c-4-4 4-7 0-11"/></g><rect x="6" y="30" width="52" height="8" rx="4" fill="#fff"/><path d="M12 30h40v8a16 16 0 0 1-16 16h-8a16 16 0 0 1-16-16z" fill="#fff"/><path d="M17 36h13v13.5a11 11 0 0 1-13-11z" fill="#ffd166"/><path d="M47 36H34v13.5a11 11 0 0 0 13-11z" fill="#f2545b"/></svg><span>SharePot</span></a>
-  <label class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input id="q" type="search" placeholder="Search TSLA, OpenAI, memes…" aria-label="Search markets"></label>
-  <nav class="tb-right"><a class="navlink" href="/docs.html">Docs</a><a class="navlink" id="faucetlink" href="/faucet.html" hidden>Faucet</a><a class="navlink" href="/leaderboard.html">Leaderboard</a><a class="navlink" href="/invite.html">Invite</a><a class="navlink" href="/portfolio.html">My bets</a><span id="netbadge"></span><div id="wallet" class="walletbox"></div></nav>
-</div><div class="container"><nav id="catnav" class="catnav" aria-label="Categories"></nav></div></header>
+  <label class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input id="q" type="search" placeholder="Search TSLA, OpenAI, memes…" aria-label="Search markets" data-t-attr="placeholder:top.searchPh;aria-label:top.searchAria"></label>
+  <nav class="tb-right"><a class="navlink" href="/docs.html" data-t="nav.docs">Docs</a><a class="navlink" id="faucetlink" href="/faucet.html" data-t="nav.faucet" hidden>Faucet</a><a class="navlink" href="/leaderboard.html" data-t="nav.leaderboard">Leaderboard</a><a class="navlink" href="/invite.html" data-t="nav.invite">Invite</a><a class="navlink" href="/portfolio.html" data-t="nav.mybets">My bets</a><span id="netbadge"></span><div id="wallet" class="walletbox"></div></nav>
+</div><div class="container"><nav id="catnav" class="catnav" aria-label="Categories" data-t-attr="aria-label:top.catAria"></nav></div></header>
 <main class="container docs">
-  <div class="pagehead"><h1>How SharePot works</h1></div>
-  <p class="lead">SharePot is a parimutuel pool on where a US stock closes today, where <b>the stake and the payout are the tokenized stock itself</b>. Holders of TSLAx, NVDAx, SPYx or SpaceX tokens hedge a bad day, or add upside on a good one, without ever selling. The same pools run on pre-IPO tokens and on the day's most-traded Solana memes, settled on their on-chain price.</p>
+  <div class="pagehead"><h1 data-t="docs.intro.1">How SharePot works</h1></div>
+  <p class="lead" data-t="docs.intro.2">SharePot is a parimutuel pool on where a US stock closes today, where <b>the stake and the payout are the tokenized stock itself</b>. Holders of TSLAx, NVDAx, SPYx or SpaceX tokens hedge a bad day, or add upside on a good one, without ever selling. The same pools run on pre-IPO tokens and on the day's most-traded Solana memes, settled on their on-chain price.</p>
 
   <div class="fcard vid"><video controls preload="metadata" playsinline src="/demo.mp4" poster="/demo-poster.jpg"></video>
-    <p class="note" style="margin:0">Two minutes: connect, get test stocks, stake on Tesla, and see a settled market with its price evidence checked against the on-chain hash. Recorded on devnet.</p></div>
+    <p class="note" style="margin:0" data-t="docs.intro.3">Two minutes: connect, get test stocks, stake on Tesla, and see a settled market with its price evidence checked against the on-chain hash. Recorded on devnet.</p></div>
 
-  <nav class="toc"><a href="#why">Why</a><a href="#market">A market</a><a href="#money">Money</a><a href="#points">Points</a><a href="#settle">Settlement</a><a href="#trust">Trust model</a><a href="#tokens">Tokens</a><a href="#chain">Pre-IPO & memes</a><a href="#try">Try it</a><a href="#faq">FAQ</a></nav>
+  <nav class="toc"><a href="#why" data-t="docs.toc.why">Why</a><a href="#market" data-t="docs.toc.market">A market</a><a href="#money" data-t="docs.toc.money">Money</a><a href="#points" data-t="docs.toc.points">Points</a><a href="#settle" data-t="docs.toc.settle">Settlement</a><a href="#trust" data-t="docs.toc.trust">Trust model</a><a href="#tokens" data-t="docs.toc.tokens">Tokens</a><a href="#chain" data-t="docs.toc.chain">Pre-IPO & memes</a><a href="#try" data-t="docs.toc.try">Try it</a><a href="#faq" data-t="docs.toc.faq">FAQ</a></nav>
 
-  <h2 id="why">Why bet with the stock itself</h2>
-  <p>To protect a position against one bad day, or to lean into a good one, a holder of tokenized stock has to sell and buy back: spreads, slippage, and time out of the stock. SharePot lets the shares do the work instead.</p>
+  <h2 id="why" data-t="docs.why.h">Why bet with the stock itself</h2>
+  <p data-t="docs.why.1">To protect a position against one bad day, or to lean into a good one, a holder of tokenized stock has to sell and buy back: spreads, slippage, and time out of the stock. SharePot lets the shares do the work instead.</p>
   <ul>
-    <li><b>Hedge without selling.</b> Hold 10 TSLAx and worried about today? Stake 1 TSLAx on <i>Big drop</i>. If Tesla falls hard, you receive extra TSLAx on exactly the day your shares lose value.</li>
-    <li><b>Add upside without buying.</b> Stake on <i>Big gain</i> instead and a win adds shares on the day the price jumps.</li>
-    <li>A wrong call costs only what you staked. You never swap out of the stock, so you never leave your position.</li>
+    <li data-t="docs.why.2"><b>Hedge without selling.</b> Hold 10 TSLAx and worried about today? Stake 1 TSLAx on <i>Big drop</i>. If Tesla falls hard, you receive extra TSLAx on exactly the day your shares lose value.</li>
+    <li data-t="docs.why.3"><b>Add upside without buying.</b> Stake on <i>Big gain</i> instead and a win adds shares on the day the price jumps.</li>
+    <li data-t="docs.why.4">A wrong call costs only what you staked. You never swap out of the stock, so you never leave your position.</li>
   </ul>
 
-  <h2 id="market">A market, step by step</h2>
+  <h2 id="market" data-t="docs.market.h">A market, step by step</h2>
   <ol class="fsteps big">
-    <li><b>One pool per stock per US trading session.</b> The market for session S opens at the previous session's opening bell and stops taking bets at S's opening bell (<span data-ny="09:30">09:30 New York</span>). There is always exactly one pool per stock you can bet into, around the clock.</li>
-    <li><b>Four ranges</b> for the close-to-close move: big drop, small drop, small gain, big gain. The cuts sit near each stock's quartiles over the last 12 weeks (TSLA −1.75 % / 0 / +2 %, NVDA −1.5 % / 0 / +2.25 %, SPY −0.5 % / 0 / +0.5 %), so every range starts out roughly equally likely. Odds then move with the pools.</li>
-    <li><b>Betting closes before any of the answer exists.</b> Bets stop at the opening bell of the session being predicted.</li>
-    <li><b>Settles on the official close</b> of S against the official close of the session before, as a total-return move (dividends added back, splits neutral).</li>
-    <li><b>Payouts are pushed to wallets</b> by a permissionless crank after the dispute window. Nobody has to claim.</li>
+    <li data-t="docs.market.1"><b>One pool per stock per US trading session.</b> The market for session S opens at the previous session's opening bell and stops taking bets at S's opening bell (<span data-ny="09:30">09:30 New York</span>). There is always exactly one pool per stock you can bet into, around the clock.</li>
+    <li data-t="docs.market.2"><b>Four ranges</b> for the close-to-close move: big drop, small drop, small gain, big gain. The cuts sit near each stock's quartiles over the last 12 weeks (TSLA −1.75 % / 0 / +2 %, NVDA −1.5 % / 0 / +2.25 %, SPY −0.5 % / 0 / +0.5 %), so every range starts out roughly equally likely. Odds then move with the pools.</li>
+    <li data-t="docs.market.3"><b>Betting closes before any of the answer exists.</b> Bets stop at the opening bell of the session being predicted.</li>
+    <li data-t="docs.market.4"><b>Settles on the official close</b> of S against the official close of the session before, as a total-return move (dividends added back, splits neutral).</li>
+    <li data-t="docs.market.5"><b>Payouts are pushed to wallets</b> by a permissionless crank after the dispute window. Nobody has to claim.</li>
   </ol>
-  <p>The same stock often trades on Solana as several tokens: SpaceX as SPCXx (xStocks), SPCX (Backpack Securities) and SPCXon (Ondo Global Markets); Tesla as TSLAx and TSLAon. The tokens are not interchangeable, so <b>each token gets its own pool</b>. All pools of a stock ask the same question and resolve on the same close; each is staked and paid in its own token.</p>
+  <p data-t="docs.market.6">The same stock often trades on Solana as several tokens: SpaceX as SPCXx (xStocks), SPCX (Backpack Securities) and SPCXon (Ondo Global Markets); Tesla as TSLAx and TSLAon. The tokens are not interchangeable, so <b>each token gets its own pool</b>. All pools of a stock ask the same question and resolve on the same close; each is staked and paid in its own token.</p>
 
-  <h2 id="money">How the money works</h2>
+  <h2 id="money" data-t="docs.money.h">How the money works</h2>
   <ul>
-    <li>Each range has its own pool in the market's stock token. <b>Winners get their stake back plus a pro-rata share of every losing pool</b>, in the same stock.</li>
-    <li><b>Fee: 3 % of what a winner takes from the losing pools</b>, never on the winner's own stake. Bets in the first quarter of the betting window (up to 6 h) pay 2 %. The rate is locked into the position when you bet.</li>
-    <li><b>The fee is paid in the stock itself.</b> A pool staked in NVDAx pays its fee in NVDAx.</li>
-    <li><b>There is no house on the other side of your bet.</b> Winners are paid out of the losing ranges. If nobody takes another range, the losing pools are empty and every stake is returned; if nobody picks the winning range, everyone is refunded and no fee is charged. The worst case is a wasted session, not a loss.</li>
-    <li>On devnet each market opens with a small fee-free <b>house prize</b> so an empty pool looks alive. On mainnet there is none — a parimutuel does not need house money to pay out.</li>
-    <li>A <b>voided</b> market refunds everyone in full.</li>
+    <li data-t="docs.money.1">Each range has its own pool in the market's stock token. <b>Winners get their stake back plus a pro-rata share of every losing pool</b>, in the same stock.</li>
+    <li data-t="docs.money.2"><b>Fee: 3 % of what a winner takes from the losing pools</b>, never on the winner's own stake. Bets in the first quarter of the betting window (up to 6 h) pay 2 %. The rate is locked into the position when you bet.</li>
+    <li data-t="docs.money.3"><b>The fee is paid in the stock itself.</b> A pool staked in NVDAx pays its fee in NVDAx.</li>
+    <li data-t="docs.money.4"><b>There is no house on the other side of your bet.</b> Winners are paid out of the losing ranges. If nobody takes another range, the losing pools are empty and every stake is returned; if nobody picks the winning range, everyone is refunded and no fee is charged. The worst case is a wasted session, not a loss.</li>
+    <li data-t="docs.money.5">On devnet each market opens with a small fee-free <b>house prize</b> so an empty pool looks alive. On mainnet there is none — a parimutuel does not need house money to pay out.</li>
+    <li data-t="docs.money.6">A <b>voided</b> market refunds everyone in full.</li>
   </ul>
 
-  <h2 id="points">Leaderboard points</h2>
-  <p>Every settled market scores the wallets that were in it:</p>
-  <p><b>points = shares staked × the official close the market settled on</b></p>
+  <h2 id="points" data-t="docs.points.h">Leaderboard points</h2>
+  <p data-t="docs.points.1">Every settled market scores the wallets that were in it:</p>
+  <p data-t="docs.points.2"><b>points = shares staked × the official close the market settled on</b></p>
   <ul>
-    <li>That is what your stake was worth, in dollars, at settlement. One share of NVDA staked on a day it closed at $212 is 212 points.</li>
-    <li>Every range you bet counts, won or lost. One share on each of the four ranges at a $212 close is 848 points — and only one of them can pay.</li>
-    <li>The close is the same number the result was derived from, so NVDAx and NVDAon score alike. It is frozen when the market pays out; a score never moves afterwards.</li>
+    <li data-t="docs.points.3">That is what your stake was worth, in dollars, at settlement. One share of NVDA staked on a day it closed at $212 is 212 points.</li>
+    <li data-t="docs.points.4">Every range you bet counts, won or lost. One share on each of the four ranges at a $212 close is 848 points — and only one of them can pay.</li>
+    <li data-t="docs.points.5">The close is the same number the result was derived from, so NVDAx and NVDAon score alike. It is frozen when the market pays out; a score never moves afterwards.</li>
   </ul>
 
-  <h2 id="settle">Settlement you can check</h2>
+  <h2 id="settle" data-t="docs.settle.h">Settlement you can check</h2>
   <ol class="fsteps big">
-    <li><b>The server never holds funds.</b> Stakes sit in a program-owned vault per market; only the program's payout math can move them.</li>
-    <li><b>The resolver submits a number, not a winner.</b> After the close it reads the official closing price, checks that the bar is final and that the previous bar is the calendar's previous session, and <b>cross-checks the close against Nasdaq's official close to the cent</b>. Any failed check holds the market for the next run instead of posting a wrong result; if the two sources still put the day in different ranges after 24 hours, the market refunds every stake.</li>
-    <li><b>Evidence on-chain.</b> The move is proposed together with the sha256 of the raw price response. The winning range is derived on-chain from the market's thresholds.</li>
-    <li><b>Anyone can verify.</b> The raw response is published byte for byte; the market page re-hashes it in your browser and shows whether it matches the hash stored on-chain.</li>
-    <li><b>Six-hour dispute window.</b> A proposal can be disputed with a wallet-signed message; the operator is paged and can re-propose or void. After the window anyone can finalize.</li>
+    <li data-t="docs.settle.1"><b>The server never holds funds.</b> Stakes sit in a program-owned vault per market; only the program's payout math can move them.</li>
+    <li data-t="docs.settle.2"><b>The resolver submits a number, not a winner.</b> After the close it reads the official closing price, checks that the bar is final and that the previous bar is the calendar's previous session, and <b>cross-checks the close against Nasdaq's official close to the cent</b>. Any failed check holds the market for the next run instead of posting a wrong result; if the two sources still put the day in different ranges after 24 hours, the market refunds every stake.</li>
+    <li data-t="docs.settle.3"><b>Evidence on-chain.</b> The move is proposed together with the sha256 of the raw price response. The winning range is derived on-chain from the market's thresholds.</li>
+    <li data-t="docs.settle.4"><b>Anyone can verify.</b> The raw response is published byte for byte; the market page re-hashes it in your browser and shows whether it matches the hash stored on-chain.</li>
+    <li data-t="docs.settle.5"><b>Six-hour dispute window.</b> A proposal can be disputed with a wallet-signed message; the operator is paged and can re-propose or void. After the window anyone can finalize.</li>
   </ol>
 
-  <h2 id="trust">Trust model, stated plainly</h2>
+  <h2 id="trust" data-t="docs.trust.h">Trust model, stated plainly</h2>
   <ul>
-    <li><b>The proposer key can propose any number.</b> The checks above run off-chain, in the same process that holds the key. A compromised resolver could propose a wrong move; what stops it is the six-hour window and a second machine: every ten minutes a different host, which holds the admin key, fetches the prices itself and <b>voids any proposal whose range it cannot reproduce</b> — a full refund, never a different winner.</li>
-    <li><b>The admin is trusted.</b> The admin can finalize inside the window, void any open or proposed market (full refund) and change the proposer, treasury and fee (capped at 10 %; a bet already placed keeps its rate). The admin cannot move vault funds anywhere but to winners or, after every position is settled, fees and dust to the treasury.</li>
-    <li><b>A market whose price never comes refunds itself.</b> If a market is still unproposed 24 hours after its resolve time (a session that never traded, a token whose quotes disappeared), the proposer may void it on-chain and the crank refunds every stake. That is the only power the proposer has beyond proposing a number: it can return money, never pick a winner.</li>
-    <li><b>A payout that cannot be delivered.</b> Payouts are pushed to your wallet. If you closed your token account for that stock after betting, the crank reopens it when the payout is worth $0.50 or more; a smaller one waits for you to reopen it. A position still unpayable (account gone, frozen, or set by its owner to require a memo on every incoming transfer) 30 days after resolution can be forfeited to the treasury so the market can close — the program checks both the delay and the account. For the same reason the smallest stake is worth at least $1: it is shown on every market as a round number of shares (0.01, 0.1, 1, 10 …), the first power of ten that reaches $1 at the current price, and stakes go in whole multiples of it.</li>
-    <li><b>The issuer is trusted by construction.</b> Every xStock carries a permanent delegate and a pause switch; the vaults are ordinary token accounts to the issuer. Nothing on Solana can change that, so the site says it on every page.</li>
-    <li><b>Devnet today, multisig before mainnet.</b> On devnet both keys are single hot keys. Before mainnet the admin, the upgrade authority and the treasury move to a 2-of-3 Squads multisig the server is not a member of; the server keeps only the proposer key, which can never touch funds.</li>
+    <li data-t="docs.trust.1"><b>The proposer key can propose any number.</b> The checks above run off-chain, in the same process that holds the key. A compromised resolver could propose a wrong move; what stops it is the six-hour window and a second machine: every ten minutes a different host, which holds the admin key, fetches the prices itself and <b>voids any proposal whose range it cannot reproduce</b> — a full refund, never a different winner.</li>
+    <li data-t="docs.trust.2"><b>The admin is trusted.</b> The admin can finalize inside the window, void any open or proposed market (full refund) and change the proposer, treasury and fee (capped at 10 %; a bet already placed keeps its rate). The admin cannot move vault funds anywhere but to winners or, after every position is settled, fees and dust to the treasury.</li>
+    <li data-t="docs.trust.3"><b>A market whose price never comes refunds itself.</b> If a market is still unproposed 24 hours after its resolve time (a session that never traded, a token whose quotes disappeared), the proposer may void it on-chain and the crank refunds every stake. That is the only power the proposer has beyond proposing a number: it can return money, never pick a winner.</li>
+    <li data-t="docs.trust.4"><b>A payout that cannot be delivered.</b> Payouts are pushed to your wallet. If you closed your token account for that stock after betting, the crank reopens it when the payout is worth $0.50 or more; a smaller one waits for you to reopen it. A position still unpayable (account gone, frozen, or set by its owner to require a memo on every incoming transfer) 30 days after resolution can be forfeited to the treasury so the market can close — the program checks both the delay and the account. For the same reason the smallest stake is worth at least $1: it is shown on every market as a round number of shares (0.01, 0.1, 1, 10 …), the first power of ten that reaches $1 at the current price, and stakes go in whole multiples of it.</li>
+    <li data-t="docs.trust.5"><b>The issuer is trusted by construction.</b> Every xStock carries a permanent delegate and a pause switch; the vaults are ordinary token accounts to the issuer. Nothing on Solana can change that, so the site says it on every page.</li>
+    <li data-t="docs.trust.6"><b>Devnet today, multisig before mainnet.</b> On devnet both keys are single hot keys. Before mainnet the admin, the upgrade authority and the treasury move to a 2-of-3 Squads multisig the server is not a member of; the server keeps only the proposer key, which can never touch funds.</li>
   </ul>
 
-  <h2 id="tokens">Built for xStocks and friends</h2>
+  <h2 id="tokens" data-t="docs.tokens.h">Built for xStocks and friends</h2>
   <ul>
-    <li><b>Token-2022 throughout.</b> Every movement uses <code>transfer_checked</code>; classic SPL mints work through the same path.</li>
-    <li><b>One mint per market.</b> Bets, payouts and fee sweeps must use the market's mint and matching token accounts.</li>
-    <li><b>Transfer fees are booked honestly.</b> A stake is recorded as what the vault actually receives, so a mint with a transfer fee (Tessera 0.2 %, PreStocks 0.5 %) can run a pool without the pools ever exceeding the vault. Only mints with an active transfer hook are refused.</li>
-    <li><b>Dividends and splits.</b> The issuers apply them as a <code>ScaledUiAmount</code> multiplier to every balance, vaults included; all accounting is in raw units, so every stake keeps its share of the pot. The predicted move is total return, so an ex-dividend day never counts as a drop.</li>
+    <li data-t="docs.tokens.1"><b>Token-2022 throughout.</b> Every movement uses <code>transfer_checked</code>; classic SPL mints work through the same path.</li>
+    <li data-t="docs.tokens.2"><b>One mint per market.</b> Bets, payouts and fee sweeps must use the market's mint and matching token accounts.</li>
+    <li data-t="docs.tokens.3"><b>Transfer fees are booked honestly.</b> A stake is recorded as what the vault actually receives, so a mint with a transfer fee (Tessera 0.2 %, PreStocks 0.5 %) can run a pool without the pools ever exceeding the vault. Only mints with an active transfer hook are refused.</li>
+    <li data-t="docs.tokens.4"><b>Dividends and splits.</b> The issuers apply them as a <code>ScaledUiAmount</code> multiplier to every balance, vaults included; all accounting is in raw units, so every stake keeps its share of the pot. The predicted move is total return, so an ex-dividend day never counts as a drop.</li>
   </ul>
 
-  <h2 id="chain">Pre-IPO tokens and memes: the same pool, an on-chain close</h2>
-  <p>The stock pools settle on an exchange's official close. Two more token classes run on the same program, with one difference: <b>there is no exchange, so the day's close is read on-chain</b>.</p>
+  <h2 id="chain" data-t="docs.chain.h">Pre-IPO tokens and memes: the same pool, an on-chain close</h2>
+  <p data-t="docs.chain.1">The stock pools settle on an exchange's official close. Two more token classes run on the same program, with one difference: <b>there is no exchange, so the day's close is read on-chain</b>.</p>
   <ul>
-    <li><b>Pre-IPO</b>: T-OpenAI and T-Kalshi (<a href="https://app.tessera.pe" target="_blank" rel="noopener">Tessera</a>) and OpenAI (<a href="https://prestocks.com" target="_blank" rel="noopener">PreStocks</a>). One pool per token per day; a day ends at <span data-utc="00:00">00:00 UTC</span>. The pool settles on the token's on-chain price, the only price anyone can actually trade at.</li>
-    <li><b>Memes</b>: every day at <span data-utc="11:00">11:00 UTC</span> the ten Solana tokens with the most 24-hour traded volume are picked for the next day, subject to filters: mint and freeze authority given up, at least $500k of liquidity, a first pool at least three days old, no wrapped or bridged assets, no tokenized stocks or DeFi tokens. Tomorrow's ten can differ from today's; an open pool always settles.</li>
-    <li><b>A day's close</b> is the median of one Jupiter quote per minute during the day's last hour (<span data-utc="23:00-24:00">23:00–24:00 UTC</span>). One print cannot move it; a burst that moves the price for a few minutes barely can. Fewer than 40 usable quotes (a delisted token, a dead feed) voids the day with a full refund.</li>
-    <li><b>Three ranges</b>: down, flat, up, cut at ± the token's median absolute daily move over its last 60 days (T-OpenAI ±1 %, PreStocks OpenAI ±3 %, a typical meme ±5–15 %), so "flat" and the two tails start out about equally likely.</li>
-    <li><b>Betting</b> on a day's pool opens at <span data-utc="11:00">11:00 UTC</span>, 37 hours before its close, and stops at <span data-utc="12:00">12:00 UTC</span>, twelve hours before its close — so there is always a pool to bet into. The previous day's close, the baseline, forms at <span data-utc="00:00">00:00 UTC</span>, twelve hours before the lock; as with stocks, the pool opens before the previous close is known.</li>
-    <li><b>Issuer transfer fees.</b> Tessera and PreStocks tokens charge 0.2 % / 0.5 % on every transfer, into and out of the pool alike. Your stake counts as what arrives; a payout lands net of that fee. That fee is the issuer's, not SharePot's.</li>
-    <li><b>Evidence</b> works as for stocks: the sampled quotes of both closing hours are published byte for byte, their sha256 is on-chain, and the market page re-hashes them in your browser.</li>
+    <li data-t="docs.chain.2"><b>Pre-IPO</b>: T-OpenAI and T-Kalshi (<a href="https://app.tessera.pe" target="_blank" rel="noopener">Tessera</a>) and OpenAI (<a href="https://prestocks.com" target="_blank" rel="noopener">PreStocks</a>). One pool per token per day; a day ends at <span data-utc="00:00">00:00 UTC</span>. The pool settles on the token's on-chain price, the only price anyone can actually trade at.</li>
+    <li data-t="docs.chain.3"><b>Memes</b>: every day at <span data-utc="11:00">11:00 UTC</span> the ten Solana tokens with the most 24-hour traded volume are picked for the next day, subject to filters: mint and freeze authority given up, at least $500k of liquidity, a first pool at least three days old, no wrapped or bridged assets, no tokenized stocks or DeFi tokens. Tomorrow's ten can differ from today's; an open pool always settles.</li>
+    <li data-t="docs.chain.4"><b>A day's close</b> is the median of one Jupiter quote per minute during the day's last hour (<span data-utc="23:00-24:00">23:00–24:00 UTC</span>). One print cannot move it; a burst that moves the price for a few minutes barely can. Fewer than 40 usable quotes (a delisted token, a dead feed) voids the day with a full refund.</li>
+    <li data-t="docs.chain.5"><b>Three ranges</b>: down, flat, up, cut at ± the token's median absolute daily move over its last 60 days (T-OpenAI ±1 %, PreStocks OpenAI ±3 %, a typical meme ±5–15 %), so "flat" and the two tails start out about equally likely.</li>
+    <li data-t="docs.chain.6"><b>Betting</b> on a day's pool opens at <span data-utc="11:00">11:00 UTC</span>, 37 hours before its close, and stops at <span data-utc="12:00">12:00 UTC</span>, twelve hours before its close — so there is always a pool to bet into. The previous day's close, the baseline, forms at <span data-utc="00:00">00:00 UTC</span>, twelve hours before the lock; as with stocks, the pool opens before the previous close is known.</li>
+    <li data-t="docs.chain.7"><b>Issuer transfer fees.</b> Tessera and PreStocks tokens charge 0.2 % / 0.5 % on every transfer, into and out of the pool alike. Your stake counts as what arrives; a payout lands net of that fee. That fee is the issuer's, not SharePot's.</li>
+    <li data-t="docs.chain.8"><b>Evidence</b> works as for stocks: the sampled quotes of both closing hours are published byte for byte, their sha256 is on-chain, and the market page re-hashes them in your browser.</li>
   </ul>
 
-  <h2 id="try">Try it on devnet</h2>
+  <h2 id="try" data-t="docs.try.h">Try it on devnet</h2>
   <ol class="fsteps big">
-    <li>Connect Phantom, Solflare or Backpack set to devnet, or pick <b>Test wallet (browser)</b> from the Connect menu.</li>
-    <li>Open the <a href="/faucet.html">faucet</a>: mock tokens of every pool open today plus a little SOL, once per wallet per day.</li>
-    <li><a href="/">Pick a market</a>, choose a range, stake, sign. After the close, check <a href="/portfolio.html">My bets</a>: payouts arrive on their own.</li>
+    <li data-t="docs.try.1">Connect Phantom, Solflare or Backpack set to devnet, or pick <b>Test wallet (browser)</b> from the Connect menu.</li>
+    <li data-t="docs.try.2">Open the <a href="/faucet.html">faucet</a>: mock tokens of every pool open today plus a little SOL, once per wallet per day.</li>
+    <li data-t="docs.try.3"><a href="/">Pick a market</a>, choose a range, stake, sign. After the close, check <a href="/portfolio.html">My bets</a>: payouts arrive on their own.</li>
   </ol>
-  <p>Source, program and tests: <a href="https://github.com/sharepotxyz/sharepot" target="_blank" rel="noopener">github.com/sharepotxyz/sharepot</a>. Program id <span class="mono">8TzdVXpqa52o3fBvYynSxHTWP4zuWfZmTvSkpdLT9rWW</span>. Built for the Solana Foundation Stocklana hackathon, September 2026.</p>
+  <p data-t="docs.try.4">Source, program and tests: <a href="https://github.com/sharepotxyz/sharepot" target="_blank" rel="noopener">github.com/sharepotxyz/sharepot</a>. Program id <span class="mono">8TzdVXpqa52o3fBvYynSxHTWP4zuWfZmTvSkpdLT9rWW</span>. Built for the Solana Foundation Stocklana hackathon, September 2026.</p>
 
-  <h2 id="faq">FAQ</h2>
+  <h2 id="faq" data-t="docs.faq.h">FAQ</h2>
   <dl class="faq">
-    <dt>Is this an order book?</dt><dd>No. It is a parimutuel pool: payouts depend on the final pool sizes, and the quote you see while betting is what you would get if the pools stayed as they are.</dd>
-    <dt>What if the stock does not trade that day?</dt><dd>An unscheduled closure, a full-session halt, a spin-off or a delisting merger voids the market and refunds every stake in full.</dd>
-    <dt>Why not settle on an on-chain oracle?</dt><dd>These markets are defined on the official closing print, which equity oracles do not carry (they report the last trade before the bell). The official close is public and checkable, so it is published with its hash instead.</dd>
-    <dt>Do I need to claim?</dt><dd>No. A permissionless crank pays every position after the dispute window and closes it; the rent goes back to you.</dd>
-    <dt>Is there real money on devnet?</dt><dd>No. The tokens here are mock copies of the real ones with the same settings and no value.</dd>
+    <dt data-t="docs.faq.1">Is this an order book?</dt><dd data-t="docs.faq.2">No. It is a parimutuel pool: payouts depend on the final pool sizes, and the quote you see while betting is what you would get if the pools stayed as they are.</dd>
+    <dt data-t="docs.faq.3">What if the stock does not trade that day?</dt><dd data-t="docs.faq.4">An unscheduled closure, a full-session halt, a spin-off or a delisting merger voids the market and refunds every stake in full.</dd>
+    <dt data-t="docs.faq.5">Why not settle on an on-chain oracle?</dt><dd data-t="docs.faq.6">These markets are defined on the official closing print, which equity oracles do not carry (they report the last trade before the bell). The official close is public and checkable, so it is published with its hash instead.</dd>
+    <dt data-t="docs.faq.7">Do I need to claim?</dt><dd data-t="docs.faq.8">No. A permissionless crank pays every position after the dispute window and closes it; the rent goes back to you.</dd>
+    <dt data-t="docs.faq.9">Is there real money on devnet?</dt><dd data-t="docs.faq.10">No. The tokens here are mock copies of the real ones with the same settings and no value.</dd>
   </dl>
 </main>
 <footer class="container foot">
-  <p><b>Issuer controls.</b> Stock tokens are issued by xStocks (Backed), Backpack Securities and Ondo Global Markets, who can pause transfers of a token; xStocks and Backpack tokens also let the issuer move tokens in any account, these pools included. Tokenized stocks are not offered to US persons.</p>
+  <p data-t="foot.issuer"><b>Issuer controls.</b> Stock tokens are issued by xStocks (Backed), Backpack Securities and Ondo Global Markets, who can pause transfers of a token; xStocks and Backpack tokens also let the issuer move tokens in any account, these pools included. Tokenized stocks are not offered to US persons.</p>
 </footer>
 <script type="module" src="/src/docs.ts"></script></body></html>

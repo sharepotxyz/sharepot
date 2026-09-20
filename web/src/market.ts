@@ -8,6 +8,7 @@ import { dayEnd, dayStart, fmtDay, fmtHm, fmtHmRange, fmtTsShort } from "./time"
 import { balances, bucketColor, esc, fmtTs, getSession, mountTopbar, onBalances, onSession, openWalletMenu, refreshBalances, shareBalance, tickerBadge, timeLeft, trackStocks } from "./ui";
 import { API_BASE, IS_TEST, explorerTx } from "./config";
 import { bindReferralAfterBet } from "./referral";
+import { t, tn } from "./i18n";
 
 const MIN_BET_USD = 1;
 
@@ -23,7 +24,7 @@ async function load(fresh = false) {
   const byId = qs.get("id") ? ms.find((x) => x.id === Number(qs.get("id"))) : undefined;
   const key = qs.get("e") ?? (byId ? eventKey(byId) : "");
   ev = buildEvents(ms).find((e) => e.key === key);
-  if (!ev) { root.innerHTML = `<div class="empty-state" style="margin-top:30px">This market does not exist. <a href="/">Back to all markets</a></div>`; return; }
+  if (!ev) { root.innerHTML = `<div class="empty-state" style="margin-top:30px">${t("mkt.missing")}</div>`; return; }
   mountTopbar({ active: ev.category });
   const want = qs.get("t") ?? (byId ? tokenSymbol(byId) : null);
   m = (m && ev.markets.find((x) => x.id === m.id)) || ev.markets.find((x) => tokenSymbol(x) === want) || ev.markets.find((x) => statusOf(x) === "open") || ev.markets[0];
@@ -44,26 +45,26 @@ function render() {
     const pct = tot ? `${Math.round((p / tot) * 100)}%` : "—";
     const mult = payoutMultiple(m, i, fee);
     const won = (m.status === 2 || m.status === 4) && m.outcome === i, prop = m.status === 1 && m.proposedOutcome === i;
-    const action = st === "open" ? `<button class="pickbtn" data-b="${i}">${bucket === i ? "Selected" : "Pick"}</button>` : won ? `<span class="pill open">Won</span>` : prop ? `<span class="pill proposed">Proposed</span>` : "";
-    return `<div class="orow${bucket === i && st === "open" ? " sel" : ""}${won ? " win" : ""}" style="--c:${bucketColor(m, i)}"><span class="oname"><i></i><b>${esc(name(i))}</b>${bucketName(m, i) ? `<small>${esc(bucketLabel(m, i))}</small>` : ""}</span><span class="ochance">${pct}</span><span class="opays">${mult ? mult.toFixed(2) + "×" : st === "open" ? "whole pot" : "—"}</span><span class="opool">${fmtAmt(m, p, 3)} ${esc(tok)}</span><span>${action}</span></div>`;
+    const action = st === "open" ? `<button class="pickbtn" data-b="${i}">${bucket === i ? t("mkt.selected") : t("mkt.pick")}</button>` : won ? `<span class="pill open">${t("mkt.won")}</span>` : prop ? `<span class="pill proposed">${t("mkt.proposedPill")}</span>` : "";
+    return `<div class="orow${bucket === i && st === "open" ? " sel" : ""}${won ? " win" : ""}" style="--c:${bucketColor(m, i)}"><span class="oname"><i></i><b>${esc(name(i))}</b>${bucketName(m, i) ? `<small>${esc(bucketLabel(m, i))}</small>` : ""}</span><span class="ochance">${pct}</span><span class="opays">${mult ? mult.toFixed(2) + "×" : st === "open" ? t("mkt.wholePot") : "—"}</span><span class="opool">${fmtAmt(m, p, 3)} ${esc(tok)}</span><span>${action}</span></div>`;
   }).join("");
-  const res = m.status === 2 || m.status === 4 ? (m.outcome === NO_OUTCOME ? `Voided — every stake refunded.` : `Result: <b>${esc(full(m.outcome))}</b> · move ${fmtMove(m.proposedValue)} · ${m.pools[m.outcome] === 0 ? "nobody picked this range, so every stake was refunded in full, no fee." : "payouts sent automatically."}`)
-    : m.status === 3 ? `Voided — every stake refunded.` : m.status === 1 ? `Proposed result: <b>${esc(full(m.proposedOutcome))}</b> · move ${fmtMove(m.proposedValue)} · final ${fmtTs(m.proposedAt + cfg.disputeWindowSecs.toNumber())} (in ${timeLeft(m.proposedAt + cfg.disputeWindowSecs.toNumber())}) unless disputed.${m.pools[m.proposedOutcome] === 0 ? " Nobody picked this range: if it stands, every stake is refunded in full, no fee." : ""}` : "";
+  const res = m.status === 2 || m.status === 4 ? (m.outcome === NO_OUTCOME ? t("mkt.voided") : `${t("mkt.result", { label: `<b>${esc(full(m.outcome))}</b>`, move: fmtMove(m.proposedValue) })} · ${m.pools[m.outcome] === 0 ? t("mkt.resultRefund") : t("mkt.resultPaid")}`)
+    : m.status === 3 ? t("mkt.voided") : m.status === 1 ? `${t("mkt.proposedResult", { label: `<b>${esc(full(m.proposedOutcome))}</b>`, move: fmtMove(m.proposedValue), ts: fmtTs(m.proposedAt + cfg.disputeWindowSecs.toNumber()), left: timeLeft(m.proposedAt + cfg.disputeWindowSecs.toNumber()) })}${m.pools[m.proposedOutcome] === 0 ? " " + t("mkt.proposedRefund") : ""}` : "";
   root.innerHTML = `<div class="evpage">
     <div class="evtop">
-      <nav class="crumb"><a href="/">Markets</a><span>›</span><a href="/?cat=${encodeURIComponent(ev.category)}">${esc(CATEGORY_NAME[ev.category] ?? ev.category)}</a><span>›</span><a href="/?cat=${encodeURIComponent(ev.category)}&stock=${encodeURIComponent(ev.symbol)}">${esc(ev.name)}</a><span>›</span><span>${esc(fmtDay(closeMoment(m)))}</span></nav>
+      <nav class="crumb"><a href="/">${t("mkt.crumb")}</a><span>›</span><a href="/?cat=${encodeURIComponent(ev.category)}">${esc(CATEGORY_NAME[ev.category] ?? ev.category)}</a><span>›</span><a href="/?cat=${encodeURIComponent(ev.category)}&stock=${encodeURIComponent(ev.symbol)}">${esc(ev.name)}</a><span>›</span><span>${esc(fmtDay(closeMoment(m)))}</span></nav>
       <header class="evhdr">${tickerBadge(ev.symbol, true)}<div><h1>${esc(question(m))}</h1>
-        <div class="evmeta"><span class="pill ${st}">${STATUS_LABEL[st]}</span>${st === "open" ? `<span>Bets close in ${timeLeft(m.closeTs)}</span>` : ""}${ev.potUsd != null ? `<span>${fmtUsd(ev.potUsd)} pot across ${ev.markets.length} pool${ev.markets.length === 1 ? "" : "s"}</span>` : ""}<span>${ev.bettors} bettor${ev.bettors === 1 ? "" : "s"}</span>${ev.kind === "day" && priceOf(m) ? `<span title="Live Jupiter quote">now ${fmtPx(priceOf(m)!)}</span>` : ""}${ev.kind === "day" ? (() => { const pc = prevCloseOf(m); return pc && pc.date === new Date(Date.parse(ev.date + "T00:00:00Z") - 864e5).toISOString().slice(0, 10) ? `<span title="Median of the quotes in the hour before ${esc(fmtTs(dayStart(ev.date)))}">prev close ${fmtPx(pc.close)}</span>` : `<span class="note">prev close known after ${esc(fmtTs(dayStart(ev.date)))}</span>`; })() : ""}</div></div></header>
+        <div class="evmeta"><span class="pill ${st}">${STATUS_LABEL[st]}</span>${st === "open" ? `<span>${t("mkt.closeIn", { t: timeLeft(m.closeTs) })}</span>` : ""}${ev.potUsd != null ? `<span>${tn("mkt.potAcross", ev.markets.length, { usd: fmtUsd(ev.potUsd) })}</span>` : ""}<span>${tn("bettors", ev.bettors)}</span>${ev.kind === "day" && priceOf(m) ? `<span title="${esc(t("mkt.nowTitle"))}">${t("mkt.now", { px: fmtPx(priceOf(m)!) })}</span>` : ""}${ev.kind === "day" ? (() => { const pc = prevCloseOf(m); return pc && pc.date === new Date(Date.parse(ev.date + "T00:00:00Z") - 864e5).toISOString().slice(0, 10) ? `<span title="${esc(t("mkt.prevTitle", { ts: fmtTs(dayStart(ev.date)) }))}">${t("mkt.prev", { px: fmtPx(pc.close) })}</span>` : `<span class="note">${t("mkt.prevLater", { ts: esc(fmtTs(dayStart(ev.date))) })}</span>`; })() : ""}</div></div></header>
       ${timeline()}
-      <div class="toks" role="tablist" aria-label="Pool (token)">${ev.markets.map((x) => `<button role="tab" aria-selected="${x.id === m.id}" class="tok${x.id === m.id ? " on" : ""}" data-id="${x.id}"><b>${esc(tokenSymbol(x))}</b><span>${esc(issuerOf(x))}</span><em>${fmtAmt(x, totalPool(x) + x.seed, 3)} in pot ${usdOf(x, totalPool(x) + x.seed)}</em></button>`).join("")}</div>
-      ${ev.markets.length > 1 ? `<p class="note">Each issuer's token has its own pool; all ${ev.markets.length} pools share these ranges and the same result.</p>` : ""}
-      <div class="otable"><div class="orow ohead"><span>Range (move vs previous close)</span><span>Chance</span><span>Pays</span><span class="opool">Pool</span><span></span></div>${rows}</div>
-      ${m.seed ? `<p class="note">+ ${fmtAmt(m, m.seed, 3)} ${esc(tok)} ${usdOf(m, m.seed)} house prize for the winning range, fee-free. “Chance” is the share of the pool on a range; “Pays” is what each ${esc(tok)} staked returns if it wins and the pools stay as they are.</p>` : ""}
+      <div class="toks" role="tablist" aria-label="${esc(t("mkt.poolAria"))}">${ev.markets.map((x) => `<button role="tab" aria-selected="${x.id === m.id}" class="tok${x.id === m.id ? " on" : ""}" data-id="${x.id}"><b>${esc(tokenSymbol(x))}</b><span>${esc(issuerOf(x))}</span><em>${t("mkt.inPot", { amt: fmtAmt(x, totalPool(x) + x.seed, 3) })} ${usdOf(x, totalPool(x) + x.seed)}</em></button>`).join("")}</div>
+      ${ev.markets.length > 1 ? `<p class="note">${t("mkt.multiPools", { n: ev.markets.length })}</p>` : ""}
+      <div class="otable"><div class="orow ohead"><span>${t("mkt.colRange")}</span><span>${t("mkt.colChance")}</span><span>${t("mkt.colPays")}</span><span class="opool">${t("mkt.colPool")}</span><span></span></div>${rows}</div>
+      ${m.seed ? `<p class="note">${t("mkt.seedNote", { amt: `${fmtAmt(m, m.seed, 3)} ${esc(tok)} ${usdOf(m, m.seed)}`, tok: esc(tok) })}</p>` : ""}
       ${res ? `<div class="result">${res}</div>` : ""}
     </div>
     <aside class="trade" id="trade"></aside>
     <div class="evbottom">
-      <div class="tabs" role="tablist">${(["rules", "resolution", "details"] as const).map((t) => `<button role="tab" class="tab${tab === t ? " on" : ""}" data-tab="${t}">${{ rules: "Rules", resolution: "Resolution", details: "Details" }[t]}</button>`).join("")}</div>
+      <div class="tabs" role="tablist">${(["rules", "resolution", "details"] as const).map((k) => `<button role="tab" class="tab${tab === k ? " on" : ""}" data-tab="${k}">${{ rules: t("mkt.tabRules"), resolution: t("mkt.tabResolution"), details: t("mkt.tabDetails") }[k]}</button>`).join("")}</div>
       <div class="tabpanel" id="tabpanel"></div>
     </div>
   </div>`;
@@ -78,15 +79,15 @@ function timeline() {
   const now = Date.now() / 1000, win = cfg.disputeWindowSecs.toNumber(), voided = m.status === 3 || ((m.status === 2 || m.status === 4) && m.outcome === NO_OUTCOME);
   const proposedTs = m.proposedAt || m.resolveAfterTs, finalTs = proposedTs + win, settled = m.status >= 2;
   const steps: { label: string; when: string; ts: number; done: boolean }[] = [
-    { label: "Betting opens", when: fmtTsShort(m.openTs), ts: m.openTs, done: now >= m.openTs },
-    { label: "Betting closes", when: fmtTsShort(m.closeTs), ts: m.closeTs, done: now >= m.closeTs },
-    ev!.kind === "day" ? { label: "Closing price forms", when: `${fmtHmRange(dayEnd(ev!.date) - 3600, dayEnd(ev!.date))}, ${fmtDay(dayEnd(ev!.date))}`, ts: dayEnd(ev!.date), done: now >= dayEnd(ev!.date) }
-      : { label: "New York close", when: fmtTsShort(closeMoment(m)), ts: closeMoment(m), done: now >= closeMoment(m) },
-    { label: m.proposedAt ? "Result proposed" : "Result proposed from", when: fmtTsShort(proposedTs), ts: proposedTs, done: !!m.proposedAt || settled },
-    { label: voided ? "Voided, stakes refunded" : settled ? "Final, payouts sent" : m.proposedAt ? "Final, payouts sent" : "Final, payouts sent (est.)", when: settled && !m.proposedAt ? "" : fmtTsShort(finalTs), ts: finalTs, done: settled },
+    { label: t("tl.opens"), when: fmtTsShort(m.openTs), ts: m.openTs, done: now >= m.openTs },
+    { label: t("tl.closes"), when: fmtTsShort(m.closeTs), ts: m.closeTs, done: now >= m.closeTs },
+    ev!.kind === "day" ? { label: t("tl.priceForms"), when: `${fmtHmRange(dayEnd(ev!.date) - 3600, dayEnd(ev!.date))}, ${fmtDay(dayEnd(ev!.date))}`, ts: dayEnd(ev!.date), done: now >= dayEnd(ev!.date) }
+      : { label: t("tl.nyClose"), when: fmtTsShort(closeMoment(m)), ts: closeMoment(m), done: now >= closeMoment(m) },
+    { label: m.proposedAt ? t("status.proposed") : t("tl.proposedFrom"), when: fmtTsShort(proposedTs), ts: proposedTs, done: !!m.proposedAt || settled },
+    { label: voided ? t("tl.voided") : settled || m.proposedAt ? t("tl.final") : t("tl.finalEst"), when: settled && !m.proposedAt ? "" : fmtTsShort(finalTs), ts: finalTs, done: settled },
   ];
   const next = steps.findIndex((x) => !x.done);
-  return `<ol class="tline">${steps.map((x, i) => `<li class="${x.done ? "done" : i === next ? "next" : ""}"><b>${x.label}</b><span>${esc(x.when)}</span>${i === next && x.ts > now ? `<em>in ${timeLeft(x.ts)}</em>` : ""}</li>`).join("")}</ol>`;
+  return `<ol class="tline">${steps.map((x, i) => `<li class="${x.done ? "done" : i === next ? "next" : ""}"><b>${x.label}</b><span>${esc(x.when)}</span>${i === next && x.ts > now ? `<em>${t("common.in", { t: timeLeft(x.ts) })}</em>` : ""}</li>`).join("")}</ol>`;
 }
 
 // ---------- tabs ----------
@@ -96,41 +97,42 @@ function renderTab() {
   if (tab === "rules" && ev!.kind === "day") {
     const top = Math.abs(m.thresholds[m.nBuckets - 2] ?? 0) / 10000, pct = top ? top.toFixed(top % 1 ? 1 : 0) + "%" : "";
     const iss = issuerOf(m), issuerFee = iss === "Tessera" ? "0.2%" : iss === "PreStocks" ? "0.5%" : null;
+    const payouts = t("rules.payouts", { tok, early: (cfg.feeBps - cfg.earlyBirdDiscountBps) / 100, until: fmtTs(earlyBirdUntil(cfg, m)), fee: cfg.feeBps / 100 });
     el.innerHTML = `<ul>
-      <li><b>Question.</b> Where does ${sym} close at ${esc(fmtTs(dayEnd(ev!.date)))}, measured against its close 24 hours earlier? ${m.nBuckets} ranges; the one containing the move wins.</li>
-      <li><b>Betting</b> opens ${fmtTs(m.openTs)}, while the previous day's pool is still taking bets, and stops ${fmtTs(m.closeTs)} — twelve hours before the close, before most of the answer exists.</li>
-      <li><b>Result.</b> There is no exchange close for this token, so the close is the <b>median of one Jupiter quote per minute during the last hour</b>, ${esc(fmtHmRange(dayEnd(ev!.date) - 3600, dayEnd(ev!.date)))} on ${esc(fmtDay(dayEnd(ev!.date)))}; the move is that close ÷ the close 24 hours earlier − 1. The earlier close is not known when betting opens (it forms at ${esc(fmtTs(dayStart(ev!.date)))}) — as a stock pool opens before the previous session has closed. Proposed after ${fmtTs(m.resolveAfterTs)} with every sampled quote of both days published and their hash on-chain; disputable for ${cfg.disputeWindowSecs.toNumber() / 3600} h. Fewer than 40 usable quotes on either day (a delisted token, a dead feed) voids the market with a full refund.</li>
-      <li><b>Payouts</b> are in ${tok}: winners get their stake back plus a share of the losing ranges, pushed to wallets automatically. Fee ${(cfg.feeBps - cfg.earlyBirdDiscountBps) / 100}% of winnings until ${fmtTs(earlyBirdUntil(cfg, m))}, then ${cfg.feeBps / 100}% — never on your stake.</li>
-      ${issuerFee ? `<li><b>Issuer transfer fee.</b> ${esc(iss)} charges ${issuerFee} on every transfer of ${tok}, including into and out of this pool. Your stake counts as what actually arrives in the pool, and a payout lands net of that fee. That fee goes to ${esc(iss)}, not to SharePot.</li>` : ""}
-      ${ev!.category === "memes" ? `<li><b>Why this token.</b> Memes are picked every day at ${esc(fmtHm(m.openTs))} for the following pool: the ten Solana tokens with the most 24-hour traded volume whose mint and freeze authorities are gone, with at least $500k of liquidity and a first pool at least 3 days old. Tomorrow's list can differ from today's; an open market always settles.</li>` : ""}
-      <li><b>Ranges</b> are cut at ±${pct || "the token's typical daily move"}, the token's median absolute daily move over its last 60 days, so "flat" and the two tails started out about equally likely.</li></ul>`;
+      <li>${t("rules.day.q", { sym, ts: esc(fmtTs(dayEnd(ev!.date))), n: m.nBuckets })}</li>
+      <li>${t("rules.day.betting", { open: fmtTs(m.openTs), close: fmtTs(m.closeTs) })}</li>
+      <li>${t("rules.day.result", { range: esc(fmtHmRange(dayEnd(ev!.date) - 3600, dayEnd(ev!.date))), day: esc(fmtDay(dayEnd(ev!.date))), base: esc(fmtTs(dayStart(ev!.date))), after: fmtTs(m.resolveAfterTs), h: cfg.disputeWindowSecs.toNumber() / 3600 })}</li>
+      <li>${payouts}</li>
+      ${issuerFee ? `<li>${t("rules.issuerFee", { iss: esc(iss), fee: issuerFee, tok })}</li>` : ""}
+      ${ev!.category === "memes" ? `<li>${t("rules.day.why", { time: esc(fmtHm(m.openTs)) })}</li>` : ""}
+      <li>${pct ? t("rules.day.ranges", { pct }) : t("rules.day.rangesNoPct")}</li></ul>`;
   } else if (tab === "rules") {
     el.innerHTML = `<ul>
-      <li><b>Question.</b> Where does ${sym} close at the New York closing bell, ${esc(fmtTs(closeMoment(m)))}, measured against the previous session's close? Four ranges; the one containing the move wins.</li>
-      <li><b>Betting</b> opens ${fmtTs(m.openTs)}${atBell(m.openTs) ? " (previous opening bell)" : ""} and stops ${fmtTs(m.closeTs)}${atBell(m.closeTs) ? " — the New York opening bell — before any of the answer exists" : ""}.</li>
-      <li><b>Result</b> = total-return move: (official close + any dividend going ex that day) ÷ previous official close − 1, closes on the same share basis across splits. Proposed after ${fmtTs(m.resolveAfterTs)} with the raw price data and its hash on-chain; disputable for ${cfg.disputeWindowSecs.toNumber() / 3600} h.</li>
-      <li><b>Payouts</b> are in ${tok}: winners get their stake back plus a share of the losing ranges, pushed to wallets automatically. Fee ${(cfg.feeBps - cfg.earlyBirdDiscountBps) / 100}% of winnings until ${fmtTs(earlyBirdUntil(cfg, m))}, then ${cfg.feeBps / 100}% — never on your stake.</li>
-      <li><b>Dividends and splits on the token</b> are applied by the issuer to every balance alike (a multiplier), pools included, so every stake keeps its share. A spin-off, a delisting merger or a full-session halt voids the market with a full refund.</li>
-      <li><b>Issuer controls.</b> ${esc(issuerOf(m) || "The issuer")} can pause ${tok} transfers; while paused, bets and payouts for this pool wait. xStocks and Backpack tokens also let the issuer move tokens held in any account, these pools included.</li>
-      <li><b>Ranges</b> are set near the quartiles of ${sym}'s recent daily moves, so each started out roughly equally likely.</li></ul>`;
+      <li>${t("rules.close.q", { sym, ts: esc(fmtTs(closeMoment(m))) })}</li>
+      <li>${t("rules.close.betting", { open: fmtTs(m.openTs), openBell: atBell(m.openTs) ? t("rules.close.openBell") : "", close: fmtTs(m.closeTs), closeBell: atBell(m.closeTs) ? t("rules.close.closeBell") : "" })}</li>
+      <li>${t("rules.close.result", { after: fmtTs(m.resolveAfterTs), h: cfg.disputeWindowSecs.toNumber() / 3600 })}</li>
+      <li>${t("rules.payouts", { tok, early: (cfg.feeBps - cfg.earlyBirdDiscountBps) / 100, until: fmtTs(earlyBirdUntil(cfg, m)), fee: cfg.feeBps / 100 })}</li>
+      <li>${t("rules.close.divs")}</li>
+      <li>${t("rules.close.issuer", { iss: esc(issuerOf(m)) || t("rules.theIssuer"), tok })}</li>
+      <li>${t("rules.close.ranges", { sym })}</li></ul>`;
   } else if (tab === "resolution") {
-    el.innerHTML = m.proposedAt ? `<div class="kv"><b>Proposed</b><span>${fmtTs(m.proposedAt)} · move <span class="mono">${fmtMove(m.proposedValue)}</span> → <b>${esc(full(m.proposedOutcome))}</b></span><b>Evidence</b><span id="evidence" class="note">loading…</span>${m.status === 1 ? `<b>Disagree?</b><span><button id="dbtn">Dispute this result</button> <span class="note">until ${fmtTs(m.proposedAt + cfg.disputeWindowSecs.toNumber())}. You sign a message with your wallet.</span><div id="dlist" class="note"></div></span>` : ""}</div>`
-      : `<p class="note">The result is proposed after ${fmtTs(m.resolveAfterTs)}, with the raw closing-price data published here and its sha256 written on-chain. Your browser re-hashes it to check.</p>`;
+    el.innerHTML = m.proposedAt ? `<div class="kv"><b>${t("res.proposed")}</b><span>${fmtTs(m.proposedAt)} · ${t("res.move", { move: `<span class="mono">${fmtMove(m.proposedValue)}</span>` })} → <b>${esc(full(m.proposedOutcome))}</b></span><b>${t("res.evidence")}</b><span id="evidence" class="note">${t("res.loading")}</span>${m.status === 1 ? `<b>${t("res.disagree")}</b><span><button id="dbtn">${t("res.dispute")}</button> <span class="note">${t("res.disputeUntil", { ts: fmtTs(m.proposedAt + cfg.disputeWindowSecs.toNumber()) })}</span><div id="dlist" class="note"></div></span>` : ""}</div>`
+      : `<p class="note">${t("res.pending", { ts: fmtTs(m.resolveAfterTs) })}</p>`;
     loadEvidence(); mountDispute();
   } else {
-    el.innerHTML = `<div class="kv"><b>Pool token</b><span class="hash">${tok} · ${esc(issuerOf(m))} · ${m.mint.toBase58()}${m.multiplier !== 1 ? ` · multiplier ${m.multiplier}` : ""}</span><b>Market account</b><span class="hash">${m.pubkey.toBase58()} (#${m.id})</span><b>Opens / closes</b><span>${fmtTs(m.openTs)} → ${fmtTs(m.closeTs)}</span><b>Resolves after</b><span>${fmtTs(m.resolveAfterTs)}</span></div>`;
+    el.innerHTML = `<div class="kv"><b>${t("det.token")}</b><span class="hash">${tok} · ${esc(issuerOf(m))} · ${m.mint.toBase58()}${m.multiplier !== 1 ? ` · ${t("det.multiplier", { x: m.multiplier })}` : ""}</span><b>${t("det.account")}</b><span class="hash">${m.pubkey.toBase58()} (#${m.id})</span><b>${t("det.openClose")}</b><span>${fmtTs(m.openTs)} → ${fmtTs(m.closeTs)}</span><b>${t("det.resolvesAfter")}</b><span>${fmtTs(m.resolveAfterTs)}</span></div>`;
   }
 }
 
 // ---------- trade panel ----------
-const balText = () => (getSession() && balances.loaded ? `Balance ${fmtAmt(m, shareBalance(m))} ${tokenSymbol(m)}` : getSession() ? "Balance …" : "");
+const balText = () => (getSession() && balances.loaded ? t("trade.balance", { amt: `${fmtAmt(m, shareBalance(m))} ${tokenSymbol(m)}` }) : getSession() ? t("trade.balance", { amt: "…" }) : "");
 let typed = { id: -1, v: "" };   // the amount in the box, and the pool it was typed for
 function renderTrade() {
   const box = document.getElementById("trade")!;
   const s = getSession(), st = statusOf(m), tok = esc(tokenSymbol(m)), held = shareBalance(m), fee = currentFeeBps(cfg, m), tot = totalPool(m);
   if (st !== "open") {
-    const next = `<a href="/?cat=${ev!.category}&stock=${encodeURIComponent(ev!.symbol)}">See the open ${esc(ev!.symbol)} market →</a>`;
-    box.innerHTML = `<div class="tcard"><div class="thead"><b>${STATUS_LABEL[st]}</b></div><p class="note" style="margin:0">${st === "trading" ? `Bets closed ${fmtTs(m.closeTs)}; the result comes after ${fmtTs(m.resolveAfterTs)} and is final about ${fmtTs(m.resolveAfterTs + cfg.disputeWindowSecs.toNumber())}.` : st === "proposed" ? `The result is in its dispute window until ${fmtTs(m.proposedAt + cfg.disputeWindowSecs.toNumber())} (${timeLeft(m.proposedAt + cfg.disputeWindowSecs.toNumber())} left); payouts follow automatically.` : "This market is settled. Payouts have been sent."}</p>${next}</div><div id="pos">${posHtml()}</div>`;
+    const next = `<a href="/?cat=${ev!.category}&stock=${encodeURIComponent(ev!.symbol)}">${t("trade.seeOpen", { sym: esc(ev!.symbol) })}</a>`;
+    box.innerHTML = `<div class="tcard"><div class="thead"><b>${STATUS_LABEL[st]}</b></div><p class="note" style="margin:0">${st === "trading" ? t("trade.closedTrading", { close: fmtTs(m.closeTs), after: fmtTs(m.resolveAfterTs), final: fmtTs(m.resolveAfterTs + cfg.disputeWindowSecs.toNumber()) }) : st === "proposed" ? t("trade.closedProposed", { ts: fmtTs(m.proposedAt + cfg.disputeWindowSecs.toNumber()), left: timeLeft(m.proposedAt + cfg.disputeWindowSecs.toNumber()) }) : t("trade.closedSettled")}</p>${next}</div><div id="pos">${posHtml()}</div>`;
     showPosition(); return;
   }
   // The floor is shown as a round number of shares, a power of ten worth at least MIN_BET_USD, so nobody has to work it
@@ -141,18 +143,18 @@ function renderTrade() {
   const unitExp = minExp != null && minRaw === toRaw(m, 10 ** minExp) ? minExp : null;   // null: no price, the program's raw floor only
   const minTxt = unitExp != null ? fmtUnit(unitExp) : fmtAmt(m, minRaw, 8);
   box.innerHTML = `<div class="tcard">
-    <div class="thead"><b>Stake ${tok}</b><span class="note">${esc(issuerOf(m))} pool</span></div>
+    <div class="thead"><b>${t("trade.stake", { tok })}</b><span class="note">${t("trade.pool", { iss: esc(issuerOf(m)) })}</span></div>
     <div class="topts">${m.pools.map((p, i) => `<button class="${bucket === i ? "on" : ""}" style="--c:${bucketColor(m, i)}" data-b="${i}"><span class="to1"><span>${esc(name(i))}</span><b>${tot ? Math.round((p / tot) * 100) + "%" : "—"}</b></span><em>${esc(bucketLabel(m, i))}</em></button>`).join("")}</div>
-    <label class="tlabel" for="amt">Amount<span class="note" id="bal">${esc(balText())}</span></label>
+    <label class="tlabel" for="amt">${t("trade.amount")}<span class="note" id="bal">${esc(balText())}</span></label>
     <div class="tamt"><input id="amt" type="number" min="0" step="${unitExp != null ? minTxt.replace(/,/g, "") : "any"}" placeholder="${minTxt}" inputmode="decimal"><span class="unit">${tok}</span></div>
-    <div class="note" id="minnote">${unitExp != null ? "Stake in multiples of" : "Minimum stake"} <b>${minTxt} ${tok}</b> ${usdOf(m, minRaw)}</div>
-    ${s ? `<div class="tquick"><button data-min>Min</button><button data-f="0.25">25%</button><button data-f="0.5">50%</button><button data-f="1">Max</button></div>` : ""}
+    <div class="note" id="minnote">${t(unitExp != null ? "trade.multiples" : "trade.minimum", { amt: `<b>${minTxt} ${tok}</b>` })} ${usdOf(m, minRaw)}</div>
+    ${s ? `<div class="tquick"><button data-min>${t("trade.min")}</button><button data-f="0.25">25%</button><button data-f="0.5">50%</button><button data-f="1">${t("trade.max")}</button></div>` : ""}
     <div class="tsum" id="quote"></div>
-    ${s ? `<button class="primary big" id="go"${bucket < 0 ? " disabled" : ""}>${bucket < 0 ? "Pick a range" : `Stake on ${esc(name(bucket))}`}</button>` : `<button class="primary big" id="connect">Connect wallet</button>`}
+    ${s ? `<button class="primary big" id="go"${bucket < 0 ? " disabled" : ""}>${bucket < 0 ? t("trade.pickRange") : t("trade.stakeOn", { label: esc(name(bucket)) })}</button>` : `<button class="primary big" id="connect">${t("common.connectWallet")}</button>`}
     <div id="msg"></div>
-    <p class="note" style="margin:0">Fee ${fee / 100}% of winnings${Date.now() / 1000 < earlyBirdUntil(cfg, m) ? " (early-bird rate)" : ""}, never on your stake; locked in when you bet. Payouts arrive automatically.</p>
-    <p class="note" style="margin:0">If nobody takes another range, every ${tok} staked is returned in full — there is no house on the other side of your bet.</p>
-    ${IS_TEST && s && balances.loaded && !held ? `<p class="note" style="margin:0">No ${tok} yet? <a href="/faucet.html">Get free test tokens</a>.</p>` : ""}
+    <p class="note" style="margin:0">${t(Date.now() / 1000 < earlyBirdUntil(cfg, m) ? "trade.feeEarly" : "trade.fee", { fee: fee / 100 })}</p>
+    <p class="note" style="margin:0">${t("trade.noHouse", { tok })}</p>
+    ${IS_TEST && s && balances.loaded && !held ? `<p class="note" style="margin:0">${t("trade.noTokens", { tok })}</p>` : ""}
   </div><div id="pos">${posHtml()}</div>`;
   box.querySelectorAll<HTMLButtonElement>(".topts button").forEach((b) => (b.onclick = () => { bucket = Number(b.dataset.b); render(); }));
   const amtEl = box.querySelector<HTMLInputElement>("#amt")!, quote = box.querySelector("#quote")!;
@@ -162,11 +164,11 @@ function renderTrade() {
   const upd = () => {
     typed = { id: m.id, v: amtEl.value };
     const a = toRaw(m, Number(amtEl.value));
-    if (bucket < 0) { quote.innerHTML = `<span class="note">Pick a range above.</span>`; return; }
-    if (!a) { quote.innerHTML = `<div class="r"><span>Pays if right</span><b>${payoutMultiple(m, bucket, fee)?.toFixed(2) ?? "whole pot"}${payoutMultiple(m, bucket, fee) ? "×" : ""}</b></div>`; return; }
-    if (a < minRaw) { quote.innerHTML = `<span class="note">The minimum stake is ${minTxt} ${tok}.</span>`; return; }
+    if (bucket < 0) { quote.innerHTML = `<span class="note">${t("trade.pickAbove")}</span>`; return; }
+    if (!a) { quote.innerHTML = `<div class="r"><span>${t("trade.paysIfRight")}</span><b>${payoutMultiple(m, bucket, fee)?.toFixed(2) ?? t("mkt.wholePot")}${payoutMultiple(m, bucket, fee) ? "×" : ""}</b></div>`; return; }
+    if (a < minRaw) { quote.innerHTML = `<span class="note">${t("trade.minIs", { amt: `${minTxt} ${tok}` })}</span>`; return; }
     const q = impliedPayout(m, bucket, a, fee);
-    quote.innerHTML = `<div class="r"><span>Payout if ${esc(name(bucket))}</span><b class="big">${fmtAmt(m, q.total)} ${tok}</b></div><div class="r note"><span>${usdOf(m, q.total)}</span><span>${(q.total / a).toFixed(2)}× · +${fmtAmt(m, q.total - a)} ${tok}</span></div><div class="note">Any other range: you lose the ${fmtAmt(m, a)} ${tok} staked.</div>`;
+    quote.innerHTML = `<div class="r"><span>${t("trade.payoutIf", { label: esc(name(bucket)) })}</span><b class="big">${fmtAmt(m, q.total)} ${tok}</b></div><div class="r note"><span>${usdOf(m, q.total)}</span><span>${(q.total / a).toFixed(2)}× · +${fmtAmt(m, q.total - a)} ${tok}</span></div><div class="note">${t("trade.otherRange", { amt: `${fmtAmt(m, a)} ${tok}` })}</div>`;
   };
   amtEl.oninput = upd; upd();
   // Stakes are whole numbers of the unit: what was typed is rounded down to one on leaving the box (never to zero:
@@ -178,37 +180,37 @@ function renderTrade() {
   }));
   const c = box.querySelector<HTMLButtonElement>("#connect"); if (c) c.onclick = (e) => { e.stopPropagation(); openWalletMenu(); };
   const go = box.querySelector<HTMLButtonElement>("#go"), msg = box.querySelector("#msg")!;
-  const shortOf = (have: number | null) => `You do not hold enough ${tok}${have != null ? `: your wallet has ${fmtAmt(m, have)} ${tok}` : ""}.${IS_TEST ? ` <a href="/faucet.html">Get free test tokens</a>` : ""}`;
+  const shortOf = (have: number | null) => `${have != null ? t("trade.shortHave", { tok, amt: `${fmtAmt(m, have)} ${tok}` }) : t("trade.short", { tok })}${IS_TEST ? ` <a href="/faucet.html">${t("trade.getTest")}</a>` : ""}`;
   if (go) go.onclick = async () => {
     const sess = getSession()!; const a = toRaw(m, Number(amtEl.value));
-    if (a < minRaw) { msg.innerHTML = `<div class="msg err">The minimum stake is ${minTxt} ${tok}.</div>`; return; }
-    if (unitExp != null && !isUnitMultiple(Number(amtEl.value), unitExp)) { msg.innerHTML = `<div class="msg err">Stakes go in multiples of ${minTxt} ${tok}: try ${Number(snapUnit(Number(amtEl.value), unitExp)).toLocaleString("en-US", { maximumFractionDigits: 8 })} ${tok}.</div>`; return; }
+    if (a < minRaw) { msg.innerHTML = `<div class="msg err">${t("trade.minIs", { amt: `${minTxt} ${tok}` })}</div>`; return; }
+    if (unitExp != null && !isUnitMultiple(Number(amtEl.value), unitExp)) { msg.innerHTML = `<div class="msg err">${t("trade.multiplesErr", { unit: `${minTxt} ${tok}`, amt: `${Number(snapUnit(Number(amtEl.value), unitExp)).toLocaleString("en-US", { maximumFractionDigits: 8 })} ${tok}` })}</div>`; return; }
     // The balance is read again here, not taken from when the panel was drawn: a balance that never loaded (public RPC
     // rate limit) used to skip this check and hand the bettor the token program's raw "insufficient funds" log.
     go.disabled = true;
-    if (!balances.loaded) { msg.innerHTML = `<div class="msg">Checking your balance…</div>`; try { await refreshBalances(); } catch {} }
+    if (!balances.loaded) { msg.innerHTML = `<div class="msg">${t("trade.checking")}</div>`; try { await refreshBalances(); } catch {} }
     const have = shareBalance(m);
     if (balances.loaded && a > have) { msg.innerHTML = `<div class="msg err">${shortOf(have)}</div>`; go.disabled = false; return; }
-    msg.innerHTML = `<div class="msg">Confirm in your wallet…</div>`;
+    msg.innerHTML = `<div class="msg">${t("trade.confirm")}</div>`;
     let sig = "";
     try {
       const tx = await buildPlaceBetTx(sess.publicKey, m, bucket, a);
       sig = await sess.signAndSend(tx);
-      msg.innerHTML = `<div class="msg">Sent. Waiting for confirmation…</div>`;
+      msg.innerHTML = `<div class="msg">${t("trade.sent")}</div>`;
       await confirmBySig(sig);
     } catch (e: any) {
       // Sent but not seen yet: it may still land, so the button stays off rather than invite a second stake.
-      if (sig && e?.unconfirmed) { msg.innerHTML = `<div class="msg err">Sent, but not confirmed yet: it may still go through. Check <a href="/portfolio.html">My bets</a> or the <a href="${explorerTx(sig)}" target="_blank" rel="noopener">transaction</a> before staking again.</div>`; return; }
+      if (sig && e?.unconfirmed) { msg.innerHTML = `<div class="msg err">${t("trade.unconfirmed", { tx: explorerTx(sig) })}</div>`; return; }
       const raw = String(e?.message ?? e) + " " + (Array.isArray(e?.logs) ? e.logs.join(" ") : "");
       let why = esc(String(e?.message ?? e).split(/ Logs:|\n/)[0].slice(0, 200));   // never the simulation log dump
-      if (/insufficient lamports|Attempt to debit|insufficient funds for (fee|rent)/i.test(raw)) why = "Your wallet does not have enough SOL for the network fee.";
+      if (/insufficient lamports|Attempt to debit|insufficient funds for (fee|rent)/i.test(raw)) why = t("trade.errSol");
       else if (/insufficient funds/i.test(raw)) { try { await refreshBalances(); } catch {} why = shortOf(balances.loaded ? shareBalance(m) : null); }
-      else if (/reject|denied|cancel/i.test(raw)) why = "Cancelled in your wallet. Nothing was staked.";
-      else if (/429|rate limit/i.test(raw)) why = "The network is busy right now. Nothing was staked: try again in a moment.";
+      else if (/reject|denied|cancel/i.test(raw)) why = t("trade.errCancel");
+      else if (/429|rate limit/i.test(raw)) why = t("trade.errBusy");
       msg.innerHTML = `<div class="msg err">${why}</div>`; go.disabled = false; return;
     }
     // The stake is on-chain from here on: nothing below may turn that into an error message.
-    const done = `Staked ${fmtAmt(m, a)} ${tok} on “${esc(full(bucket))}”. <a href="${explorerTx(sig)}" target="_blank" rel="noopener">view tx</a>`;
+    const done = `${t("trade.staked", { amt: `${fmtAmt(m, a)} ${tok}`, label: esc(full(bucket)) })} <a href="${explorerTx(sig)}" target="_blank" rel="noopener">${t("trade.viewTx")}</a>`;
     typed = { id: -1, v: "" };
     const show = (note = "") => { const m2 = document.getElementById("msg"); if (m2) m2.innerHTML = `<div class="msg ok">${done}${note ? `<br>${esc(note)}` : ""}</div>`; };
     // Show the stake at once, from what was just confirmed: the position box and the pools are updated here and the
@@ -231,7 +233,7 @@ const posKey = () => { const s = getSession(); return s && m ? `${m.pubkey.toBas
 function posHtml() {
   const amounts = posCache.get(posKey()); if (!amounts) return "";
   const parts = amounts.slice(0, m.nBuckets).map((x, i) => [x, i]).filter(([x]) => x > 0).map(([x, i]) => `<div class="r"><span>${esc(name(i))}</span><b>${fmtAmt(m, x)} ${esc(tokenSymbol(m))}</b></div>`);
-  return parts.length ? `<div class="tcard"><div class="thead"><b>Your position</b><a href="/portfolio.html" class="note">All my bets →</a></div><div class="tsum">${parts.join("")}</div></div>` : "";
+  return parts.length ? `<div class="tcard"><div class="thead"><b>${t("trade.position")}</b><a href="/portfolio.html" class="note">${t("trade.allBets")}</a></div><div class="tsum">${parts.join("")}</div></div>` : "";
 }
 async function showPosition() {
   const s = getSession(), k = posKey(); if (!s || !k) return;
@@ -245,18 +247,18 @@ async function showPosition() {
 
 async function mountDispute() {
   const btn = document.getElementById("dbtn") as HTMLButtonElement | null; if (!btn) return;
-  try { const r = await fetch(`${API_BASE}/disputes?market=${m.pubkey.toBase58()}`); const j = await r.json(); const open = (j.disputes ?? []).filter((d: any) => d.status === "open"); if (open.length) document.getElementById("dlist")!.textContent = `${open.length} open dispute${open.length > 1 ? "s" : ""} already filed.`; } catch {}
+  try { const r = await fetch(`${API_BASE}/disputes?market=${m.pubkey.toBase58()}`); const j = await r.json(); const open = (j.disputes ?? []).filter((d: any) => d.status === "open"); if (open.length) document.getElementById("dlist")!.textContent = tn("res.disputesOpen", open.length); } catch {}
   btn.onclick = async () => {
     const s = getSession(); if (!s) { openWalletMenu(); return; }
-    const reason = prompt("Why is the proposed result wrong? (what you observed, where)"); if (!reason || reason.trim().length < 5) return;
-    const claimed = prompt("What should the move be, in %? (leave empty if unsure)") ?? "";
+    const reason = prompt(t("res.promptWhy")); if (!reason || reason.trim().length < 5) return;
+    const claimed = prompt(t("res.promptMove")) ?? "";
     btn.disabled = true;
     try {
       const msg = `sharepot-dispute v1\nmarket=${m.pubkey.toBase58()}\nwallet=${s.publicKey.toBase58()}\nclaimed=${claimed.trim()}\nreason=${reason.trim().slice(0, 2000)}`;
       const sig = await s.signMessage(new TextEncoder().encode(msg));
       const r = await fetch(`${API_BASE}/dispute`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ market: m.pubkey.toBase58(), wallet: s.publicKey.toBase58(), reason: reason.trim().slice(0, 2000), claimedValue: claimed.trim() || null, signature: bs58(sig) }) });
       const j = await r.json(); if (!r.ok) throw new Error(j.error ?? "failed");
-      document.getElementById("dlist")!.textContent = "Dispute filed. The operator has been notified.";
+      document.getElementById("dlist")!.textContent = t("res.disputeFiled");
     } catch (e: any) { alert(e?.message ?? e); btn.disabled = false; }
   };
 }
@@ -265,26 +267,26 @@ async function mountDispute() {
 async function loadEvidence() {
   const el = document.getElementById("evidence"); if (!el || !m.proposedAt) return;
   try {
-    const r = await fetch(`${API_BASE}/evidence/${m.id}`); if (!r.ok) { el.textContent = "not published yet"; return; }
+    const r = await fetch(`${API_BASE}/evidence/${m.id}`); if (!r.ok) { el.textContent = t("res.notPublished"); return; }
     const e = await r.json();
     const raw = await (await fetch(`${API_BASE}/evidence/${m.id}/raw`)).arrayBuffer();
     const sha = [...new Uint8Array(await crypto.subtle.digest("SHA-256", raw))].map((b) => b.toString(16).padStart(2, "0")).join("");
     const match = sha === m.snapshotHash;
-    const div = Number(e.dividend) > 0 ? ` + $${esc(e.dividend)} dividend going ex` : "";
+    const div = Number(e.dividend) > 0 ? " " + t("ev.dividend", { amt: "$" + esc(e.dividend) }) : "";
     const dayTs = (d: any) => (/^\d{4}-\d{2}-\d{2}$/.test(String(d)) ? fmtTs(dayEnd(String(d))) : String(d));
     const fp = (v: any) => { const n = Number(v); return Number.isFinite(n) ? n.toLocaleString("en-US", { maximumFractionDigits: n < 1 ? 8 : 4 }) : esc(v); };
     el.innerHTML = e.samples != null
-      ? `<div><b>${esc(e.symbol)}</b> close ${esc(dayTs(e.prevDate))} <span class="mono">$${fp(e.baseline)}</span> (median of ${esc(e.prevSamples)} quotes) → ${esc(dayTs(e.date))} <span class="mono">$${fp(e.close)}</span> (median of ${esc(e.samples)} quotes in the hour before) = <span class="mono">${fmtMove(e.movePpm)}</span></div>`
-      : `<div><b>${esc(e.symbol)}</b> close ${esc(e.prevDate)} <span class="mono">$${esc(e.prevClose)}</span> → ${esc(e.date)} <span class="mono">$${esc(e.close)}</span>${div} = <span class="mono">${fmtMove(e.movePpm)}</span>${e.split ? ` · split ${esc(e.split)} that day` : ""}</div>`;
+      ? `<div><b>${esc(e.symbol)}</b> ${t("ev.close")} ${esc(dayTs(e.prevDate))} <span class="mono">$${fp(e.baseline)}</span> (${t("ev.median", { n: esc(e.prevSamples) })}) → ${esc(dayTs(e.date))} <span class="mono">$${fp(e.close)}</span> (${t("ev.medianHour", { n: esc(e.samples) })}) = <span class="mono">${fmtMove(e.movePpm)}</span></div>`
+      : `<div><b>${esc(e.symbol)}</b> ${t("ev.close")} ${esc(e.prevDate)} <span class="mono">$${esc(e.prevClose)}</span> → ${esc(e.date)} <span class="mono">$${esc(e.close)}</span>${div} = <span class="mono">${fmtMove(e.movePpm)}</span>${e.split ? ` · ${t("ev.split", { x: esc(e.split) })}` : ""}</div>`;
     el.innerHTML +=
-      `<div><a href="${API_BASE}/evidence/${m.id}/raw" target="_blank" rel="noopener">${e.samples != null ? "sampled quotes" : "raw price response"}</a> · sha256 <span class="hash">${sha.slice(0, 16)}…</span> · <span class="${match ? "" : "warn"}">${match ? "✓ matches the hash stored on-chain" : "✗ does not match the on-chain hash"}</span></div>
-      ${e.signature ? `<div><a href="${explorerTx(e.signature)}" target="_blank" rel="noopener">proposal transaction</a></div>` : ""}`;
-  } catch { el.textContent = "not published yet"; }
+      `<div><a href="${API_BASE}/evidence/${m.id}/raw" target="_blank" rel="noopener">${e.samples != null ? t("ev.sampled") : t("ev.raw")}</a> · sha256 <span class="hash">${sha.slice(0, 16)}…</span> · <span class="${match ? "" : "warn"}">${match ? t("ev.match") : t("ev.mismatch")}</span></div>
+      ${e.signature ? `<div><a href="${explorerTx(e.signature)}" target="_blank" rel="noopener">${t("ev.proposalTx")}</a></div>` : ""}`;
+  } catch { el.textContent = t("res.notPublished"); }
 }
 
 onSession(() => { if (ev && m) render(); });   // the top bar mounts (and reconnects the wallet) before the pool is picked
 // The balance arrives after the panel is drawn. Only its line is touched: a rebuild here would detach the message box
 // and button of a stake in progress (Stake itself re-reads the balance).
 onBalances(() => { const el = document.getElementById("bal"); if (el && m) el.textContent = balText(); });
-load().catch((e) => (root.innerHTML = `<div class="msg err">Could not load this market: ${esc(e.message ?? e)}</div>`));
+load().catch((e) => (root.innerHTML = `<div class="msg err">${t("mkt.loadErr", { err: esc(e.message ?? e) })}</div>`));
 setInterval(() => { if (ev && !document.activeElement?.matches("input")) load(); }, 30_000);

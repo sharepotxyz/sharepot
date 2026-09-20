@@ -21,6 +21,7 @@ import { xstockPrices, utcDate, addDays, chainClose } from "./prices.mjs";
 import { readRegistry, asStock, REGISTRY_FILE } from "./chain-tokens.mjs";
 import { leaderboard, readSettlements } from "./points.mjs";
 import { homeHtml, eventHtml } from "./ssr.mjs";
+import { resolveLang, translateHtml, translator, langScript } from "./i18n.mjs";
 import { notify } from "./notify.mjs";
 import * as referrals from "./referrals.mjs";
 
@@ -250,19 +251,26 @@ function serveStatic(res, url, req) {
   const pathname = url.pathname;
   // A malformed percent-escape ("/%") throws here; answered as 404 instead of leaving the connection hanging.
   let rel; try { rel = pathname === "/" ? "/index.html" : decodeURIComponent(pathname); } catch { rel = null; }
+  // the page scripts' dictionary for a language (server/i18n.mjs); the ?v= in its URL changes with its content
+  const lm = rel?.match(/^\/i18n\/([A-Za-z-]{2,10})\.js$/), ljs = lm ? langScript(lm[1]) : null;
+  if (ljs) { res.writeHead(200, { "content-type": TYPES[".js"] + "; charset=utf-8", "cache-control": "public, max-age=31536000, immutable" }); return res.end(ljs); }
   const file = rel ? path.resolve(STATIC, "." + rel) : "";
   if (!rel || rel.includes("\0") || !file.startsWith(STATIC + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) { res.writeHead(404, { "content-type": "text/plain" }); return res.end("not found"); }
   const ext = path.extname(file);
   if (ext === ".html") {
     // Wallet pages must never be framed (clickjacking); the rest of the policy is left to the front web server.
-    res.writeHead(200, { "content-type": TYPES[".html"], "cache-control": "no-cache", "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY" });
-    const key = rel + url.search, hit = renderCache.get(key);
+    // One language per request: a ?lang= link also sets the cookie, so the pages after it stay in that language.
+    const { lang, fromQuery } = resolveLang(req, url);
+    res.writeHead(200, { "content-type": TYPES[".html"], "cache-control": "no-cache", "vary": "accept-language, cookie", "content-language": lang, "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY",
+      ...(fromQuery ? { "set-cookie": `sp_lang=${lang}; Path=/; Max-Age=31536000; SameSite=Lax` } : {}) });
+    const key = lang + "|" + rel + url.search, hit = renderCache.get(key);
     if (hit && Date.now() - hit.at < RENDER_TTL_MS) return res.end(hit.html);
     let html = pageHtml(file).replace("</head>", () => bootScript() + "</head>"); // function replacer: "$" in token names is data, not a pattern
     // first-paint content rendered here (ssr.mjs); a rendering error only costs the pre-render, never the page
     const data = { markets: chainCache.markets, config: chainCache.config, stocks, prices: priceCache.at ? priceCache.prices : null };
-    try { if (rel === "/index.html") html = homeHtml(data, html, url); else if (rel === "/market.html") html = eventHtml(data, url, html); }
+    try { const tr = translator(lang); if (rel === "/index.html") html = homeHtml(data, html, url, tr); else if (rel === "/market.html") html = eventHtml(data, url, html, tr); }
     catch (e) { console.error("ssr failed:", String(e?.message ?? e).slice(0, 160)); }
+    try { html = translateHtml(html, lang); } catch (e) { console.error("i18n failed:", String(e?.message ?? e).slice(0, 160)); }
     if (renderCache.size >= RENDER_CACHE_MAX) renderCache.clear();   // unbounded query strings must not grow memory
     renderCache.set(key, { at: Date.now(), html });
     return res.end(html);

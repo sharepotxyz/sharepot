@@ -2,6 +2,7 @@
 // first bet the connected wallet places then binds the wallet to it — signed by the wallet, so only its owner can.
 import { API_BASE } from "./config";
 import { esc } from "./ui";
+import { t } from "./i18n";
 import type { Session } from "./wallet";
 
 const KEY = "sharepot.ref";
@@ -19,7 +20,7 @@ export function captureReferral() {
     if (!pendingReferral()) return;   // bound (and cleared) while we were looking it up
     const host = document.querySelector("header.topbar"); if (!host || document.getElementById("refbar")) return;
     const bar = document.createElement("div"); bar.id = "refbar"; bar.className = "refbar";
-    bar.innerHTML = `<div class="container">Invited by <b class="mono">${esc(j.referrer)}</b> · ${(j.refereeBps / 100).toFixed(0)}% of the fees on your winnings come back to you. The link binds with your first bet. <a href="/invite.html">How it works</a></div>`;
+    bar.innerHTML = `<div class="container">${t("ref.bar", { who: `<b class="mono">${esc(j.referrer)}</b>`, pct: (j.refereeBps / 100).toFixed(0) })}</div>`;
     host.after(bar);
   }).catch(() => {});
 }
@@ -54,7 +55,7 @@ export async function bindReferralAfterBet(s: Session): Promise<string | null> {
     }
     const r = await fetch(`${API_BASE}/referral/bind`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     const j = await r.json();
-    if (r.ok) { clear(); document.getElementById("refbar")?.remove(); document.dispatchEvent(new Event("sharepot:referral-bound")); return j.already ? null : `Referral link applied: ${(10).toFixed(0)}% of the fees on your winnings come back to you.`; }
+    if (r.ok) { clear(); document.getElementById("refbar")?.remove(); document.dispatchEvent(new Event("sharepot:referral-bound")); return j.already ? null : t("ref.applied", { pct: (10).toFixed(0) }); }
     if (j.permanent) { clear(); document.getElementById("refbar")?.remove(); }   // wrong wallet for this link; stop asking
     return null;
   } catch { return null; }   // user declined the signature or network hiccup: the code stays for the next bet

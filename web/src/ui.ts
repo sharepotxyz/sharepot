@@ -6,6 +6,7 @@ import { CATEGORIES, STOCK_NAMES, STOCK_ORDER, issuerOf, loadPrices, loadStocks,
 import { connectWallet, devWallet, listWallets, type Session } from "./wallet";
 import { bindIfPending, captureReferral } from "./referral";
 import { localizeUtc } from "./time";
+import { LANG, LANGS, setLang, t } from "./i18n";
 
 /** HTML-escape anything that did not originate in our own source. */
 export const esc = (v: unknown) => String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
@@ -14,7 +15,7 @@ export { fmtTs, timeLeft } from "./time";
 export const short = (pk: PublicKey | string) => { const s = pk.toString(); return s.slice(0, 4) + "…" + s.slice(-4); };
 export function statusPill(m: MarketView) {
   const now = Date.now() / 1000;
-  const label = m.status === 0 ? (now < m.openTs ? "Upcoming" : now < m.closeTs ? "Betting open" : "Awaiting close") : m.status === 1 ? "Result proposed" : STATUS[m.status];
+  const label = m.status === 0 ? (now < m.openTs ? t("status.upcoming") : now < m.closeTs ? t("status.open") : t("status.trading")) : m.status === 1 ? t("status.proposed") : t("status.chain." + STATUS[m.status]);
   const cls = m.status === 0 ? (now < m.closeTs ? "open" : "trading") : m.status === 1 ? "proposed" : STATUS[m.status].toLowerCase();
   return `<span class="pill ${cls}">${label}</span>`;
 }
@@ -38,9 +39,10 @@ export function mountTopbar(opts: TopbarOpts = {}) {
   const faucetOn = IS_TEST && !!API_BASE, net = CLUSTER === "devnet" ? "Devnet" : CLUSTER;
   const nb = document.getElementById("netbadge");
   if (nb && IS_TEST) nb.innerHTML = faucetOn
-    ? `<a class="netbadge" href="/faucet.html" title="Test network: mock stock tokens, no real value. Free test stocks on the faucet page.">${esc(net)}</a>`
-    : `<span class="netbadge" title="Test network: mock stock tokens, no real value">${esc(net)}</span>`;
+    ? `<a class="netbadge" href="/faucet.html" title="${esc(t("net.titleFaucet"))}">${esc(net)}</a>`
+    : `<span class="netbadge" title="${esc(t("net.title"))}">${esc(net)}</span>`;
   const fl = document.getElementById("faucetlink"); if (fl) fl.hidden = !faucetOn;
+  mountLang();
   mountNavMenu();
   captureReferral();
   onSession((s) => { if (s) bindIfPending(s); });
@@ -58,16 +60,16 @@ export function mountTopbar(opts: TopbarOpts = {}) {
  *  with the page it was written on, plus the wallet address when one happens to be connected. */
 function mountFeedback() {
   if (!API_BASE || document.getElementById("fbbtn")) return;
-  const btn = document.createElement("button"); btn.id = "fbbtn"; btn.className = "fbbtn"; btn.textContent = "Feedback";
+  const btn = document.createElement("button"); btn.id = "fbbtn"; btn.className = "fbbtn"; btn.textContent = t("fb.button");
   document.body.appendChild(btn);
   btn.onclick = () => {
     if (document.getElementById("fbbox")) return;
     const box = document.createElement("div"); box.id = "fbbox"; box.className = "fbbox";
-    box.innerHTML = `<div class="fbhead"><b>Tell us what you think</b><button class="ghost" id="fbx" aria-label="Close">\u2715</button></div>
-      <textarea id="fbmsg" rows="5" maxlength="4000" placeholder="A bug, something confusing, a market you want\u2026"></textarea>
-      <input id="fbcontact" maxlength="200" placeholder="Email, X or Telegram (optional, if you want a reply)">
+    box.innerHTML = `<div class="fbhead"><b>${t("fb.head")}</b><button class="ghost" id="fbx" aria-label="${esc(t("common.close"))}">\u2715</button></div>
+      <textarea id="fbmsg" rows="5" maxlength="4000" placeholder="${esc(t("fb.msgPh"))}"></textarea>
+      <input id="fbcontact" maxlength="200" placeholder="${esc(t("fb.contactPh"))}">
       <input id="fbweb" name="website" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px">
-      <div class="fbrow"><span class="note" id="fbnote">Or email <a href="mailto:hello@sharepot.xyz">hello@sharepot.xyz</a></span><button class="primary" id="fbsend">Send</button></div>`;
+      <div class="fbrow"><span class="note" id="fbnote">${t("fb.orEmail", { email: `<a href="mailto:hello@sharepot.xyz">hello@sharepot.xyz</a>` })}</span><button class="primary" id="fbsend">${t("fb.send")}</button></div>`;
     document.body.appendChild(box);
     const $ = <T extends HTMLElement>(id: string) => box.querySelector<T>("#" + id)!;
     const msg = $<HTMLTextAreaElement>("fbmsg"), send = $<HTMLButtonElement>("fbsend"), note = $("fbnote");
@@ -75,15 +77,15 @@ function mountFeedback() {
     msg.focus();
     $("fbx").onclick = () => box.remove();
     send.onclick = async () => {
-      if (msg.value.trim().length < 5) { note.textContent = "Please write a few words first."; return; }
-      send.disabled = true; send.textContent = "Sending\u2026";
+      if (msg.value.trim().length < 5) { note.textContent = t("fb.tooShort"); return; }
+      send.disabled = true; send.textContent = t("fb.sending");
       try {
         const r = await fetch(API_BASE + "/feedback", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: msg.value, contact: $<HTMLInputElement>("fbcontact").value, website: $<HTMLInputElement>("fbweb").value, page: location.pathname + location.search, wallet: session ? String(session.publicKey) : null }) });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(j.error ?? "HTTP " + r.status);
-        box.innerHTML = `<div class="fbhead"><b>Thanks, got it \u2713</b></div><div class="note">Every note is read by a person.</div>`;
+        box.innerHTML = `<div class="fbhead"><b>${t("fb.thanks")}</b></div><div class="note">${t("fb.thanksNote")}</div>`;
         setTimeout(() => box.remove(), 2500);
-      } catch (e: any) { note.textContent = "Could not send: " + String(e?.message ?? e); send.disabled = false; send.textContent = "Send"; }
+      } catch (e: any) { note.textContent = t("fb.fail", { err: String(e?.message ?? e) }); send.disabled = false; send.textContent = t("fb.send"); }
     };
   };
 }
@@ -95,7 +97,7 @@ function mountNavMenu() {
   if (!right || document.getElementById("navmore")) return;
   const links = [...right.querySelectorAll<HTMLAnchorElement>("a.navlink")].filter((a) => !a.hidden);
   const box = document.createElement("div"); box.className = "navmorebox";
-  box.innerHTML = `<button class="navmore" id="navmore" aria-label="Menu" aria-expanded="false">\u2630</button>`;
+  box.innerHTML = `<button class="navmore" id="navmore" aria-label="${esc(t("nav.menu"))}" aria-expanded="false">\u2630</button>`;
   right.insertBefore(box, document.getElementById("netbadge"));
   const btn = box.querySelector<HTMLButtonElement>("#navmore")!;
   const render = () => {
@@ -110,7 +112,7 @@ function mountNavMenu() {
  *  link home with the category set. The stock picker within a category lives in the home page's filter row. */
 export function renderCatnav(active: string) {
   const el = document.getElementById("catnav"); if (!el) return;
-  const items: [string, string][] = [["all", "All markets"], ...CATEGORIES];
+  const items: [string, string][] = [["all", t("nav.all")], ...CATEGORIES];
   el.innerHTML = items.map(([k, label]) => topOpts.onStock
     ? `<button data-s="${esc(k)}" class="${active === k ? "on" : ""}">${esc(label)}</button>`
     : `<a href="/${k === "all" ? "" : "?cat=" + encodeURIComponent(k)}" class="${active === k ? "on" : ""}">${esc(label)}</a>`).join("");
@@ -180,6 +182,17 @@ export const getSession = () => session;
 function setSession(s: Session | null) { session = s; menuOpen = false; try { s ? localStorage.setItem("sharepot.wallet", s.label) : localStorage.removeItem("sharepot.wallet"); } catch {} balances.loaded = false; listeners.forEach((f) => { try { f(s); } catch (e) { console.error(e); } }); renderWallet(); refreshBalances(); ensureTracked(); }
 
 let menuOpen = false;
+/** The browser test wallet's label is also what localStorage remembers it by, so it stays English; only its display is translated. */
+const TEST_WALLET = "Test wallet (browser)";
+/** Language picker in the top bar (kept on phones, where the text links fold into the ☰ menu). */
+function mountLang() {
+  const right = document.querySelector<HTMLElement>(".tb-right");
+  if (!right || document.getElementById("langsel")) return;
+  const sel = document.createElement("select"); sel.id = "langsel"; sel.className = "langsel"; sel.setAttribute("aria-label", t("lang.label")); sel.title = t("lang.label");
+  sel.innerHTML = LANGS.map(([k, n]) => `<option value="${k}"${k === LANG ? " selected" : ""}>${esc(n)}</option>`).join("");
+  sel.onchange = () => setLang(sel.value);
+  right.insertBefore(sel, document.getElementById("netbadge"));
+}
 export function openWalletMenu() { menuOpen = true; renderWallet(); }
 document.addEventListener("click", (e) => { const box = document.getElementById("wallet"); if (menuOpen && box && !box.contains(e.target as Node)) { menuOpen = false; renderWallet(); } });
 
@@ -188,7 +201,7 @@ export function mountWallet() {
   // auto-reconnect the last wallet
   try {
     const last = localStorage.getItem("sharepot.wallet");
-    if (last === "Test wallet (browser)") setSession(devWallet());
+    if (last === TEST_WALLET) setSession(devWallet());
     else if (last) setTimeout(async () => { const w = listWallets().find((x) => x.name === last); if (w) try { setSession(await connectWallet(w)); } catch {} }, 300);
   } catch {}
 }
@@ -196,7 +209,7 @@ function renderWallet() {
   const el = document.getElementById("wallet"); if (!el) return;
   if (!session) {
     const wallets = listWallets();
-    el.innerHTML = `<button class="primary wbtn" id="wbtn">Connect</button>${menuOpen ? `<div class="menu" id="wmenu"><div class="mh">Connect a wallet</div>${wallets.map((w, i) => `<button data-i="${i}">${esc(w.name)}</button>`).join("")}${IS_TEST ? `<button id="wdev" title="A throwaway keypair stored in this browser. Test network only.">Test wallet (browser)</button>` : ""}${!wallets.length && !IS_TEST ? `<div class="note" style="padding:6px">Install Phantom, Solflare or Backpack.</div>` : ""}</div>` : ""}`;
+    el.innerHTML = `<button class="primary wbtn" id="wbtn">${t("wallet.connect")}</button>${menuOpen ? `<div class="menu" id="wmenu"><div class="mh">${t("wallet.connectTitle")}</div>${wallets.map((w, i) => `<button data-i="${i}">${esc(w.name)}</button>`).join("")}${IS_TEST ? `<button id="wdev" title="${esc(t("wallet.testTitle"))}">${t("wallet.test")}</button>` : ""}${!wallets.length && !IS_TEST ? `<div class="note" style="padding:6px">${t("wallet.install")}</div>` : ""}</div>` : ""}`;
     el.querySelector<HTMLButtonElement>("#wbtn")!.onclick = (e) => { e.stopPropagation(); menuOpen = !menuOpen; renderWallet(); };
     el.querySelectorAll<HTMLButtonElement>("button[data-i]").forEach((b) => (b.onclick = async () => { try { setSession(await connectWallet(wallets[Number(b.dataset.i)])); } catch (e: any) { alert(e.message ?? e); } }));
     const d = el.querySelector<HTMLButtonElement>("#wdev"); if (d) d.onclick = () => setSession(devWallet());
@@ -209,17 +222,17 @@ function renderWallet() {
     .sort((a, b) => (b.usd ?? -1) - (a.usd ?? -1) || STOCK_ORDER.indexOf(a.t.symbol) - STOCK_ORDER.indexOf(b.t.symbol));
   const priced = held.filter((h) => h.usd != null), total = priced.reduce((a, h) => a + h.usd!, 0);
   const usd = (v: number) => "$" + v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const rows = !balances.loaded ? `<div class="note" style="padding:4px">Loading balances…</div>` : held.length
-    ? held.map((h) => `<div class="hold">${tickerBadge(h.t.symbol, false, true)}<span class="hname"><b>${esc(h.t.token)}</b><small>${esc(STOCK_NAMES[h.t.symbol] ?? h.t.symbol)} · ${esc(issuerOf(h.t.view))}</small></span><span class="hamt"><b>${h.amt.toLocaleString("en-US", { maximumFractionDigits: 4 })}</b><small>${h.usd != null ? usd(h.usd) : "no price"}</small></span></div>`).join("")
-    : `<div class="note" style="padding:4px">No stock tokens in this wallet yet.</div>`;
+  const rows = !balances.loaded ? `<div class="note" style="padding:4px">${t("wallet.loading")}</div>` : held.length
+    ? held.map((h) => `<div class="hold">${tickerBadge(h.t.symbol, false, true)}<span class="hname"><b>${esc(h.t.token)}</b><small>${esc(STOCK_NAMES[h.t.symbol] ?? h.t.symbol)} · ${esc(issuerOf(h.t.view))}</small></span><span class="hamt"><b>${h.amt.toLocaleString("en-US", { maximumFractionDigits: 4 })}</b><small>${h.usd != null ? usd(h.usd) : t("wallet.noPrice")}</small></span></div>`).join("")
+    : `<div class="note" style="padding:4px">${t("wallet.none")}</div>`;
   el.innerHTML = `<button class="wbtn" id="wbtn"><span class="dot"></span><span class="mono">${short(session.publicKey)}</span>${balances.loaded ? `<span class="note">${balances.sol.toFixed(3)} SOL</span>` : ""}</button>${menuOpen ? `<div class="menu wmenu" id="wmenu">
-    <div class="whead"><div><div class="mh">${esc(session.label)}</div><button class="addr" id="wcopy" title="Copy address">${short(addr)}</button></div><button class="ghost" id="wdis">Disconnect</button></div>
-    <div class="wtotal"><span class="note">Stock tokens</span><span class="sol">${balances.loaded ? balances.sol.toFixed(3) + " SOL" : ""}</span><b>${!balances.loaded ? "…" : priced.length ? usd(total) : held.length ? "—" : "$0.00"}</b></div>
-    ${balances.loaded && balances.sol < 0.002 ? `<div class="note warn" style="padding:0 4px">Not enough SOL for network fees.</div>` : ""}
+    <div class="whead"><div><div class="mh">${esc(session.label === TEST_WALLET ? t("wallet.test") : session.label)}</div><button class="addr" id="wcopy" title="${esc(t("wallet.copyTitle"))}">${short(addr)}</button></div><button class="ghost" id="wdis">${t("wallet.disconnect")}</button></div>
+    <div class="wtotal"><span class="note">${t("wallet.stockTokens")}</span><span class="sol">${balances.loaded ? balances.sol.toFixed(3) + " SOL" : ""}</span><b>${!balances.loaded ? "…" : priced.length ? usd(total) : held.length ? "—" : "$0.00"}</b></div>
+    ${balances.loaded && balances.sol < 0.002 ? `<div class="note warn" style="padding:0 4px">${t("wallet.lowSol")}</div>` : ""}
     <div class="wlist" id="wholdings">${rows}</div><hr>
-    <a class="mi" href="/portfolio.html">My bets</a></div>` : ""}`;
+    <a class="mi" href="/portfolio.html">${t("nav.mybets")}</a></div>` : ""}`;
   el.querySelector<HTMLButtonElement>("#wbtn")!.onclick = (e) => { e.stopPropagation(); menuOpen = !menuOpen; renderWallet(); };
   const dis = el.querySelector<HTMLButtonElement>("#wdis"); if (dis) dis.onclick = async () => { await session?.disconnect(); setSession(null); };
   const cp = el.querySelector<HTMLButtonElement>("#wcopy");
-  if (cp) cp.onclick = async () => { try { await navigator.clipboard.writeText(addr); cp.textContent = "Copied ✓"; } catch { cp.textContent = addr; } setTimeout(() => { if (cp.isConnected) cp.textContent = short(addr); }, 1500); };
+  if (cp) cp.onclick = async () => { try { await navigator.clipboard.writeText(addr); cp.textContent = t("common.copied"); } catch { cp.textContent = addr; } setTimeout(() => { if (cp.isConnected) cp.textContent = short(addr); }, 1500); };
 }

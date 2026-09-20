@@ -1,28 +1,28 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="/favicon.svg"><meta name="theme-color" content="#ffffff">
-<title>SharePot · bet with your stock tokens</title>
-<meta name="description" content="Daily prediction pools on US stocks, staked and paid in tokenized stocks (xStocks, Backpack, Ondo) on Solana.">
+<title data-t="title.index">SharePot · bet with your stock tokens</title>
+<meta name="description" data-t-attr="content:meta.index" content="Daily prediction pools on US stocks, staked and paid in tokenized stocks (xStocks, Backpack, Ondo) on Solana.">
 <link rel="stylesheet" href="/src/styles.css"></head><body>
 <header class="topbar"><div class="container tb">
   <a class="brand" href="/"><svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16" fill="#5b4bdb"/><g fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round"><path d="M24 23c-4-4 4-7 0-11"/><path d="M40 23c-4-4 4-7 0-11"/></g><rect x="6" y="30" width="52" height="8" rx="4" fill="#fff"/><path d="M12 30h40v8a16 16 0 0 1-16 16h-8a16 16 0 0 1-16-16z" fill="#fff"/><path d="M17 36h13v13.5a11 11 0 0 1-13-11z" fill="#ffd166"/><path d="M47 36H34v13.5a11 11 0 0 0 13-11z" fill="#f2545b"/></svg><span>SharePot</span></a>
-  <label class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input id="q" type="search" placeholder="Search TSLA, OpenAI, memes…" aria-label="Search markets"></label>
-  <nav class="tb-right"><a class="navlink" href="/docs.html">Docs</a><a class="navlink" id="faucetlink" href="/faucet.html" hidden>Faucet</a><a class="navlink" href="/leaderboard.html">Leaderboard</a><a class="navlink" href="/invite.html">Invite</a><a class="navlink" href="/portfolio.html">My bets</a><span id="netbadge"></span><div id="wallet" class="walletbox"></div></nav>
-</div><div class="container"><nav id="catnav" class="catnav" aria-label="Categories"></nav></div></header>
+  <label class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><input id="q" type="search" placeholder="Search TSLA, OpenAI, memes…" aria-label="Search markets" data-t-attr="placeholder:top.searchPh;aria-label:top.searchAria"></label>
+  <nav class="tb-right"><a class="navlink" href="/docs.html" data-t="nav.docs">Docs</a><a class="navlink" id="faucetlink" href="/faucet.html" data-t="nav.faucet" hidden>Faucet</a><a class="navlink" href="/leaderboard.html" data-t="nav.leaderboard">Leaderboard</a><a class="navlink" href="/invite.html" data-t="nav.invite">Invite</a><a class="navlink" href="/portfolio.html" data-t="nav.mybets">My bets</a><span id="netbadge"></span><div id="wallet" class="walletbox"></div></nav>
+</div><div class="container"><nav id="catnav" class="catnav" aria-label="Categories" data-t-attr="aria-label:top.catAria"></nav></div></header>
 <main class="container">
   <section class="hero">
-    <div><h1>Bet with your stock tokens. <span>Win more shares.</span></h1>
-      <p>Daily pools on where US stocks close. Stake the tokenized stock you already hold — xStocks, Backpack or Ondo — and winners are paid in that same token. Nothing gets sold. The same pools run on pre-IPO tokens (Tessera, PreStocks) and, every day, on the ten most-traded Solana memes.</p></div>
+    <div><h1 data-t="hero.h1">Bet with your stock tokens. <span>Win more shares.</span></h1>
+      <p data-t="hero.p">Daily pools on where US stocks close. Stake the tokenized stock you already hold — xStocks, Backpack or Ondo — and winners are paid in that same token. Nothing gets sold. The same pools run on pre-IPO tokens (Tessera, PreStocks) and, every day, on the ten most-traded Solana memes.</p></div>
     <ol class="steps">
-      <li><span class="n">1</span><span><b>Pick a range</b>Big drop, small drop, small gain or big gain — for today's close vs yesterday's.</span></li>
-      <li><span class="n">2</span><span><b>Stake shares</b>Bets stop at the opening bell. A drop bet hedges shares you keep; a gain bet adds upside.</span></li>
-      <li><span class="n">3</span><span><b>Get paid in shares</b>After the official close, winners split the losing pools. Automatic, verifiable on-chain.</span></li>
+      <li><span class="n">1</span><span data-t="hero.s1"><b>Pick a range</b>Big drop, small drop, small gain or big gain — for today's close vs yesterday's.</span></li>
+      <li><span class="n">2</span><span data-t="hero.s2"><b>Stake shares</b>Bets stop at the opening bell. A drop bet hedges shares you keep; a gain bet adds upside.</span></li>
+      <li><span class="n">3</span><span data-t="hero.s3"><b>Get paid in shares</b>After the official close, winners split the losing pools. Automatic, verifiable on-chain.</span></li>
     </ol>
   </section>
   <div id="filters" class="filters"></div>
   <div id="summary" class="note"></div>
-  <div id="events" class="evgrid"><div class="note">Loading markets…</div></div>
+  <div id="events" class="evgrid"><div class="note" data-t="home.loading">Loading markets…</div></div>
 </main>
 <footer class="container foot">
-  <p>SharePot is a parimutuel pool, not an order book: payouts depend on the final pool sizes. Fee 3% of winnings (2% early), never on your stake. Results are disputable for <span id="dwin">six hours</span>, then paid out automatically.</p>
-  <p><b>Issuer controls.</b> Stock tokens are issued by xStocks (Backed), Backpack Securities and Ondo Global Markets, who can pause transfers of a token; xStocks and Backpack tokens also let the issuer move tokens in any account, these pools included. Tokenized stocks are not offered to US persons.</p>
+  <p data-t="foot.pool">SharePot is a parimutuel pool, not an order book: payouts depend on the final pool sizes. Fee 3% of winnings (2% early), never on your stake. Results are disputable for <span id="dwin">six hours</span>, then paid out automatically.</p>
+  <p data-t="foot.issuer"><b>Issuer controls.</b> Stock tokens are issued by xStocks (Backed), Backpack Securities and Ondo Global Markets, who can pause transfers of a token; xStocks and Backpack tokens also let the issuer move tokens in any account, these pools included. Tokenized stocks are not offered to US persons.</p>
 </footer>
 <script type="module" src="/src/main.ts"></script></body></html>

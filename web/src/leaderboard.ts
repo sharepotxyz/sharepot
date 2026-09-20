@@ -3,12 +3,13 @@
 // i.e. what the stake was worth in dollars at settlement. Every range you bet counts, won or lost.
 import { esc, mountTopbar, onSession } from "./ui";
 import { API_BASE, explorerAddress } from "./config";
+import { t } from "./i18n";
 
 mountTopbar({});
 const boardEl = document.getElementById("board")!, totalsEl = document.getElementById("totals")!;
 const winEl = document.getElementById("windows")!, howEl = document.getElementById("how")!;
 
-const WINDOWS: [string, string][] = [["all", "All time"], ["30d", "30 days"], ["7d", "7 days"]];
+const WINDOWS: [string, string][] = [["all", t("lb.all")], ["30d", t("lb.30d")], ["7d", t("lb.7d")]];
 let win = new URLSearchParams(location.search).get("window") ?? "all";
 if (!WINDOWS.some(([k]) => k === win)) win = "all";
 let me: string | null = null;
@@ -33,32 +34,32 @@ function renderWindows() {
 }
 
 async function load() {
-  boardEl.innerHTML = `<div class="note">Loading…</div>`;
+  boardEl.innerHTML = `<div class="note">${t("common.loading")}</div>`;
   let j: any;
   try {
     const r = await fetch(`${API_BASE}/leaderboard?window=${encodeURIComponent(win)}&limit=100`);
     if (!r.ok) throw new Error("leaderboard " + r.status);
     j = await r.json();
   } catch {
-    boardEl.innerHTML = `<div class="note">The leaderboard is unavailable right now.</div>`;
+    boardEl.innerHTML = `<div class="note">${t("lb.err")}</div>`;
     return;
   }
-  const t = j.totals ?? {};
-  howEl.innerHTML = `Points for a settled market = <b>shares staked × the official close it settled on</b> — what your stake was worth, in dollars, at settlement. Every range you bet counts, won or lost. One share on each of four ranges at a $212 close is 848 points.`;
+  const tot = j.totals ?? {};
+  howEl.innerHTML = t("lb.how");
   totalsEl.innerHTML = [
-    ["Players", String(t.players ?? 0)],
-    ["Settled markets", String(t.markets ?? 0)],
-    ["Points awarded", fmtPoints(t.points ?? 0)],
+    [t("lb.players"), String(tot.players ?? 0)],
+    [t("lb.settled"), String(tot.markets ?? 0)],
+    [t("lb.awarded"), fmtPoints(tot.points ?? 0)],
   ].map(([k, v]) => `<div><b>${esc(v)}</b><span>${esc(k)}</span></div>`).join("");
 
   const rows: any[] = j.entries ?? [];
   if (!rows.length) {
-    boardEl.innerHTML = `<div class="note">No settled markets in this window yet. Points appear once a market pays out.</div>`;
+    boardEl.innerHTML = `<div class="note">${t("lb.empty")}</div>`;
   } else {
-    boardEl.innerHTML = `<div class="scroll"><table class="tbl"><thead><tr><th>#</th><th>Wallet</th><th class="r">Points</th><th class="r">Markets</th><th class="r">Won</th></tr></thead><tbody>${rows.map((e) => `
+    boardEl.innerHTML = `<div class="scroll"><table class="tbl"><thead><tr><th>#</th><th>${t("lb.colWallet")}</th><th class="r">${t("lb.colPoints")}</th><th class="r">${t("lb.colMarkets")}</th><th class="r">${t("lb.colWon")}</th></tr></thead><tbody>${rows.map((e) => `
       <tr${e.wallet === me ? ` style="background:var(--ok-bg)"` : ""}>
         <td class="mono">${Number(e.rank)}</td>
-        <td><a class="mono" href="${explorerAddress(e.wallet)}" target="_blank" rel="noopener">${esc(short(e.wallet))}</a>${e.wallet === me ? ` <b>you</b>` : ""}${e.test ? ` <span class="note">SharePot test</span>` : ""}</td>
+        <td><a class="mono" href="${explorerAddress(e.wallet)}" target="_blank" rel="noopener">${esc(short(e.wallet))}</a>${e.wallet === me ? ` <b>${t("lb.you")}</b>` : ""}${e.test ? ` <span class="note">${t("lb.test")}</span>` : ""}</td>
         <td class="r mono"><b>${esc(fmtPoints(e.points))}</b></td>
         <td class="r mono">${Number(e.markets)}</td>
         <td class="r mono">${Number(e.won)} / ${Number(e.markets)}</td>

@@ -228,6 +228,15 @@ scripts/            devnet bootstrap (mock xStocks, faucet, config), replay mark
 idl/                program IDL + TypeScript types
 ```
 
+## Languages
+
+The site speaks English, 繁體中文, 简体中文, 日本語, 한국어 and Español. The server picks one per request — a `?lang=`
+link, then the picker's cookie, then the browser's `Accept-Language` — and sends the page already in that language
+(static text, the pre-rendered market cards, dates in the viewer's locale), so nothing flashes in English first. The
+page's scripts get the same dictionary from a cacheable `/i18n/<lang>.js`. Dictionaries are plain JSON in
+`web/src/i18n/`; `server/i18n.test.mjs` fails if a language misses a key, a `{slot}` or a tag, or if a page's English
+drifts from `en.json`. Adding a language is two JSON files and one row in `LANGS`.
+
 ## Program
 
 Instruction | Who | What

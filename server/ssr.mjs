@@ -2,32 +2,32 @@
 // serves. The page shows real content as soon as the HTML arrives, before the wallet/chain scripts (≈150 kB) have
 // loaded; once they run, the client re-renders the same markup and takes over (filters, wallet, betting).
 // Keep the markup in step with web/src/main.ts (card) and web/src/market.ts (render).
+// Wording comes from the request's language (server/i18n.mjs translator → `tr`), the same keys the browser uses.
 const esc = (v) => String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const parseMetric = (tag) => { const m = String(tag).match(/^([A-Za-z0-9$_\-]{1,20})\.(close|day):(\d{4}-\d{2}-\d{2})$/); return m ? { symbol: m[1], kind: m[2], date: m[3] } : null; };
-const CATEGORY_NAME = { stocks: "Stocks", preipo: "Pre-IPO", memes: "Memes" };
-const sessionLabel = (date) => new Date(date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+const sessionLabel = (date, tr) => new Date(date + "T12:00:00Z").toLocaleDateString(tr.dayLocale, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
 const fmtThr = (ppm) => (ppm > 0 ? "+" : ppm < 0 ? "−" : "") + (Math.abs(ppm) / 10000).toFixed(2).replace(/\.?0+$/, "") + "%";
 const fmtMove = (ppm) => { const bps = Math.floor(ppm / 100); return (bps > 0 ? "+" : bps < 0 ? "−" : "") + (Math.abs(bps) / 100).toFixed(2) + "%"; };
 const fmtUsd = (v) => "$" + (v >= 1e6 ? (v / 1e6).toFixed(1) + "m" : v >= 1e4 ? (v / 1e3).toFixed(1) + "k" : v.toLocaleString("en-US", { maximumFractionDigits: v < 100 ? 2 : 0 }));
 const COLORS_4 = ["#e5484d", "#f5a524", "#6cc68e", "#12a150"];
 const COLORS = ["#e5484d", "#f08c3a", "#f5a524", "#c3c65a", "#6cc68e", "#12a150", "#3b9ede", "#5b4bdb"];
 const bucketColor = (m, i) => (m.nBuckets === 2 ? (i === 1 ? "var(--gain)" : "var(--drop)") : m.nBuckets === 4 ? COLORS_4[i] : COLORS[Math.round((i * (COLORS.length - 1)) / Math.max(1, m.nBuckets - 1))]);
-const bucketName = (m, i, category) => (m.nBuckets === 4 && m.thresholds[1] === 0 ? ["Big drop", "Small drop", "Small gain", "Big gain"][i]
-  : m.nBuckets === 3 && m.thresholds[0] < 0 && m.thresholds[1] > 0 ? (category === "memes" ? ["Dump", "Flat", "Pump"] : ["Down", "Flat", "Up"])[i] : "");
-function bucketLabel(m, i) {
+const bucketName = (m, i, category, tr) => (m.nBuckets === 4 && m.thresholds[1] === 0 ? tr.t(["b4.bigDrop", "b4.smallDrop", "b4.smallGain", "b4.bigGain"][i])
+  : m.nBuckets === 3 && m.thresholds[0] < 0 && m.thresholds[1] > 0 ? tr.t((category === "memes" ? ["b3.dump", "b3.flat", "b3.pump"] : ["b3.down", "b3.flat", "b3.up"])[i]) : "");
+function bucketLabel(m, i, tr) {
   const t = m.thresholds, n = m.nBuckets;
-  if (n === 2 && t[0] === 0) return i === 1 ? "Up or flat" : "Down";
+  if (n === 2 && t[0] === 0) return i === 1 ? tr.t("bucket.upOrFlat") : tr.t("bucket.down");
   if (i === 0) return `< ${fmtThr(t[0])}`;
   if (i === n - 1) return `≥ ${fmtThr(t[n - 2])}`;
-  return `${fmtThr(t[i - 1])} to ${fmtThr(t[i])}`;
+  return tr.t("bucket.range", { a: fmtThr(t[i - 1]), b: fmtThr(t[i]) });
 }
 function tickerBadge(symbol, big = false) { let h = 0; for (const c of symbol) h = (h * 31 + c.charCodeAt(0)) % 360; return `<span class="tick${big ? " big" : ""}${symbol.length > 5 ? " long" : ""}" style="--h:${h}">${esc(symbol)}</span>`; }
-function timeLeft(ts) {
-  const s = ts - Date.now() / 1000; if (s <= 0) return "closed";
+function timeLeft(ts, tr) {
+  const s = ts - Date.now() / 1000; if (s <= 0) return tr.t("time.closed");
   const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60);
-  return d > 0 ? `${d}d ${h}h` : h > 0 ? `${h}h ${m}m` : `${m}m`;
+  return d > 0 ? tr.t("time.dh", { d, h }) : h > 0 ? tr.t("time.hm", { h, m }) : tr.t("time.m", { m });
 }
-const STATUS_LABEL = { open: "Betting open", trading: "Awaiting close", proposed: "Result proposed", resolved: "Resolved" };
+const STATUS_KEY = { open: "status.open", trading: "status.trading", proposed: "status.proposed", resolved: "status.resolved" };
 const statusOf = (m) => (m.status === 0 ? (Date.now() / 1000 < m.closeTs ? "open" : "trading") : m.status === 1 ? "proposed" : "resolved");
 const RANK = { open: 0, trading: 1, proposed: 2, resolved: 3 };
 const total = (m) => m.pools.reduce((a, b) => a + b, 0);
@@ -58,11 +58,12 @@ function buildEvents(c) {
       dist: ut > 0 ? usd.map((v) => v / ut) : fc ? frac.map((v) => v / fc) : new Array(n).fill(0) };
   });
 }
-const question = (ev) => `Where does ${ev.symbol} close on ${sessionLabel(ev.date)}${ev.kind === "day" ? " (UTC)" : ""}?`;
+// the server does not know the viewer's clock: it names the day, and the browser then states the exact moment
+const question = (ev, tr) => tr.t(ev.kind === "day" ? "q.onUtc" : "q.on", { sym: ev.symbol, day: sessionLabel(ev.date, tr) });
 
 /** Home: the default view (betting open, closing soon; all stocks or the ?stock= tab) as event cards + the summary line.
  *  Other filters in the URL are left to the browser. A stock tab hides the hero, as main.ts does. */
-export function homeHtml(data, html, url) {
+export function homeHtml(data, html, url, tr) {
   const stock = url?.searchParams.get("stock") || "all", cat = url?.searchParams.get("cat") || "all";
   if (stock !== "all" || cat !== "all") html = html.replace(`<section class="hero">`, `<section class="hero" hidden>`);
   if (["issuer", "status", "sort", "q"].some((k) => url?.searchParams.get(k))) return html;
@@ -70,25 +71,25 @@ export function homeHtml(data, html, url) {
   const evs = buildEvents(c).filter((e) => e.status === "open" && (stock === "all" || e.symbol === stock) && (cat === "all" || e.category === cat)).sort((a, b) => a.closeTs - b.closeTs || a.symbol.localeCompare(b.symbol));
   if (!evs.length) return html;
   const cards = evs.map((ev) => {
-    const m0 = ev.markets[0], backed = ev.dist.some((x) => x > 0), label = (i) => bucketName(m0, i, ev.category) || bucketLabel(m0, i);
+    const m0 = ev.markets[0], backed = ev.dist.some((x) => x > 0), label = (i) => bucketName(m0, i, ev.category, tr) || bucketLabel(m0, i, tr);
     const bar = backed ? ev.dist.map((f, i) => `<i style="width:${(f * 100).toFixed(1)}%;background:${bucketColor(m0, i)}"></i>`).join("") : `<i class="empty"></i>`;
     const i = ev.dist.indexOf(Math.max(...ev.dist));
-    const lead = backed ? `Most backed: <b>${esc(label(i))}</b> ${Math.round(ev.dist[i] * 100)}%` : `<span class="note">No bets yet — the house prize goes to whoever picks right</span>`;
+    const lead = backed ? tr.t("home.mostBacked", { label: `<b>${esc(label(i))}</b>`, pct: Math.round(ev.dist[i] * 100) }) : `<span class="note">${tr.t("home.noBets")}</span>`;
     return `<a class="ev" href="/market.html?e=${encodeURIComponent(ev.key)}">
-    <div class="ev-top">${tickerBadge(ev.symbol)}<div><div class="ev-q">${esc(question(ev))}</div><div class="ev-s">${esc(c.names[ev.symbol] ?? ev.symbol)} · ${ev.markets.map((m) => esc(c.tok(m).token)).join(" · ")}</div></div></div>
-    <div class="dist" title="How the money is spread across the ranges">${bar}</div>
+    <div class="ev-top">${tickerBadge(ev.symbol)}<div><div class="ev-q">${esc(question(ev, tr))}</div><div class="ev-s">${esc(c.names[ev.symbol] ?? ev.symbol)} · ${ev.markets.map((m) => esc(c.tok(m).token)).join(" · ")}</div></div></div>
+    <div class="dist" title="${esc(tr.t("home.distTitle"))}">${bar}</div>
     <div class="ev-lead">${lead}</div>
-    <div class="ev-foot"><span class="pill open">Open</span>${ev.potUsd != null ? `<span>${fmtUsd(ev.potUsd)} pot</span>` : ""}<span>${ev.bettors} bettor${ev.bettors === 1 ? "" : "s"}</span><span class="ev-when">${esc(timeLeft(ev.closeTs))} left</span></div>
+    <div class="ev-foot"><span class="pill open">${tr.t("status.openShort")}</span>${ev.potUsd != null ? `<span>${tr.t("home.pot", { usd: fmtUsd(ev.potUsd) })}</span>` : ""}<span>${tr.tn("bettors", ev.bettors)}</span><span class="ev-when">${esc(tr.t("home.left", { t: timeLeft(ev.closeTs, tr) }))}</span></div>
   </a>`;
   }).join("");
   const pools = evs.reduce((a, e) => a + e.markets.length, 0), pot = evs.reduce((a, e) => a + (e.potUsd ?? 0), 0);
   return html
-    .replace(`<div id="events" class="evgrid"><div class="note">Loading markets…</div></div>`, () => `<div id="events" class="evgrid">${cards}</div>`)
-    .replace(`<div id="summary" class="note"></div>`, () => `<div id="summary" class="note">${evs.length} market${evs.length === 1 ? "" : "s"} · ${pools} pools${pot ? ` · ${fmtUsd(pot)} in play` : ""}</div>`);
+    .replace(`<div id="events" class="evgrid"><div class="note" data-t="home.loading">Loading markets…</div></div>`, () => `<div id="events" class="evgrid">${cards}</div>`)
+    .replace(`<div id="summary" class="note"></div>`, () => `<div id="summary" class="note">${tr.tn("markets", evs.length)} · ${tr.tn("pools", pools)}${pot ? ` · ${tr.t("home.inPlay", { usd: fmtUsd(pot) })}` : ""}</div>`);
 }
 
 /** Event page: breadcrumb, header, token switcher and the ranges table of the selected pool (trade panel loads with JS). */
-export function eventHtml(data, url, html) {
+export function eventHtml(data, url, html, tr) {
   const c = context(data); if (!c.markets.length) return html;
   const byId = url.searchParams.get("id") ? c.markets.find((m) => m.id === Number(url.searchParams.get("id"))) : null;
   const p0 = byId ? parseMetric(byId.metric) : null;
@@ -103,13 +104,13 @@ export function eventHtml(data, url, html) {
   const amt = (x, raw, d = 3) => c.ui(x, raw).toLocaleString("en-US", { maximumFractionDigits: d });
   const rows = m.pools.map((p, i) => {
     const win = m.pools[i], lose = t - win, mult = win ? 1 + (lose * (1 - fee / 10000) + m.seed) / win : null;
-    return `<div class="orow" style="--c:${bucketColor(m, i)}"><span class="oname"><i></i><b>${esc(bucketName(m, i, ev.category) || bucketLabel(m, i))}</b>${bucketName(m, i, ev.category) ? `<small>${esc(bucketLabel(m, i))}</small>` : ""}</span><span class="ochance">${t ? Math.round((p / t) * 100) + "%" : "—"}</span><span class="opays">${mult ? mult.toFixed(2) + "×" : st === "open" ? "whole pot" : "—"}</span><span class="opool">${amt(m, p)} ${esc(tok)}</span><span>${st === "open" ? `<button class="pickbtn" disabled>Pick</button>` : ""}</span></div>`;
+    return `<div class="orow" style="--c:${bucketColor(m, i)}"><span class="oname"><i></i><b>${esc(bucketName(m, i, ev.category, tr) || bucketLabel(m, i, tr))}</b>${bucketName(m, i, ev.category, tr) ? `<small>${esc(bucketLabel(m, i, tr))}</small>` : ""}</span><span class="ochance">${t ? Math.round((p / t) * 100) + "%" : "—"}</span><span class="opays">${mult ? mult.toFixed(2) + "×" : st === "open" ? tr.t("mkt.wholePot") : "—"}</span><span class="opool">${amt(m, p)} ${esc(tok)}</span><span>${st === "open" ? `<button class="pickbtn" disabled>${tr.t("mkt.pick")}</button>` : ""}</span></div>`;
   }).join("");
   const body = `<div class="evpage"><div class="evtop">
-    <nav class="crumb"><a href="/">Markets</a><span>›</span><a href="/?cat=${encodeURIComponent(ev.category)}">${esc(CATEGORY_NAME[ev.category] ?? ev.category)}</a><span>›</span><a href="/?cat=${encodeURIComponent(ev.category)}&stock=${encodeURIComponent(ev.symbol)}">${esc(c.names[ev.symbol] ?? ev.symbol)}</a><span>›</span><span>${esc(sessionLabel(ev.date))}</span></nav>
-    <header class="evhdr">${tickerBadge(ev.symbol, true)}<div><h1>${esc(question(ev))}</h1><div class="evmeta"><span class="pill ${st}">${STATUS_LABEL[st]}</span>${st === "open" ? `<span>Bets close in ${timeLeft(m.closeTs)}</span>` : ""}${ev.potUsd != null ? `<span>${fmtUsd(ev.potUsd)} pot across ${ev.markets.length} pool${ev.markets.length === 1 ? "" : "s"}</span>` : ""}<span>${ev.bettors} bettor${ev.bettors === 1 ? "" : "s"}</span></div></div></header>
-    <div class="toks">${ev.markets.map((x) => `<button class="tok${x.id === m.id ? " on" : ""}" disabled><b>${esc(c.tok(x).token)}</b><span>${esc(c.tok(x).issuer)}</span><em>${amt(x, total(x) + x.seed)} in pot</em></button>`).join("")}</div>
-    <div class="otable"><div class="orow ohead"><span>Range (move vs previous close)</span><span>Chance</span><span>Pays</span><span class="opool">Pool</span><span></span></div>${rows}</div>
-  </div><aside class="trade" id="trade"><div class="tcard"><div class="note">Loading the trade panel…</div></div></aside><div class="evbottom"></div></div>`;
-  return html.replace(`<main class="container" id="event"><div class="note" style="padding:30px 0">Loading…</div></main>`, () => `<main class="container" id="event">${body}</main>`);
+    <nav class="crumb"><a href="/">${tr.t("mkt.crumb")}</a><span>›</span><a href="/?cat=${encodeURIComponent(ev.category)}">${esc(tr.t("cat." + ev.category))}</a><span>›</span><a href="/?cat=${encodeURIComponent(ev.category)}&stock=${encodeURIComponent(ev.symbol)}">${esc(c.names[ev.symbol] ?? ev.symbol)}</a><span>›</span><span>${esc(sessionLabel(ev.date, tr))}</span></nav>
+    <header class="evhdr">${tickerBadge(ev.symbol, true)}<div><h1>${esc(question(ev, tr))}</h1><div class="evmeta"><span class="pill ${st}">${tr.t(STATUS_KEY[st])}</span>${st === "open" ? `<span>${tr.t("mkt.closeIn", { t: timeLeft(m.closeTs, tr) })}</span>` : ""}${ev.potUsd != null ? `<span>${tr.tn("mkt.potAcross", ev.markets.length, { usd: fmtUsd(ev.potUsd) })}</span>` : ""}<span>${tr.tn("bettors", ev.bettors)}</span></div></div></header>
+    <div class="toks">${ev.markets.map((x) => `<button class="tok${x.id === m.id ? " on" : ""}" disabled><b>${esc(c.tok(x).token)}</b><span>${esc(c.tok(x).issuer)}</span><em>${tr.t("mkt.inPot", { amt: amt(x, total(x) + x.seed) })}</em></button>`).join("")}</div>
+    <div class="otable"><div class="orow ohead"><span>${tr.t("mkt.colRange")}</span><span>${tr.t("mkt.colChance")}</span><span>${tr.t("mkt.colPays")}</span><span class="opool">${tr.t("mkt.colPool")}</span><span></span></div>${rows}</div>
+  </div><aside class="trade" id="trade"><div class="tcard"><div class="note">${tr.t("mkt.loadingTrade")}</div></div></aside><div class="evbottom"></div></div>`;
+  return html.replace(`<main class="container" id="event"><div class="note" style="padding:30px 0" data-t="common.loading">Loading…</div></main>`, () => `<main class="container" id="event">${body}</main>`);
 }

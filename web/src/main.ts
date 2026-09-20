@@ -3,6 +3,7 @@
 import { fetchMarkets } from "./chain";
 import { STATUS_LABEL, buildEvents, type EventView } from "./events";
 import { STOCK_META, STOCK_NAMES, STOCK_ORDER, bucketLabel, bucketName, fmtMove, fmtUsd, issuerOf, loadPrices, loadStocks, question, tokenSymbol } from "./stocks";
+import { t, tn } from "./i18n";
 import { bucketColor, esc, fmtTs, mountTopbar, renderCatnav, tickerBadge, timeLeft, trackStocks } from "./ui";
 
 const qs = new URLSearchParams(location.search);
@@ -18,29 +19,29 @@ function card(ev: EventView) {
   const m0 = ev.markets[0], backed = ev.dist.some((x) => x > 0);
   const bar = backed ? ev.dist.map((f, i) => `<i style="width:${(f * 100).toFixed(1)}%;background:${bucketColor(m0, i)}"></i>`).join("") : `<i class="empty"></i>`;
   let lead: string;
-  if (ev.outcome != null) lead = `Result: <b>${esc(label(ev, ev.outcome))}</b>${ev.moveValue != null ? ` · ${fmtMove(ev.moveValue)}` : ""}`;
-  else if (ev.proposed != null) lead = `Proposed: <b>${esc(label(ev, ev.proposed))}</b>${ev.moveValue != null ? ` · ${fmtMove(ev.moveValue)}` : ""}`;
-  else if (backed) { const i = ev.dist.indexOf(Math.max(...ev.dist)); lead = `Most backed: <b>${esc(label(ev, i))}</b> ${Math.round(ev.dist[i] * 100)}%`; }
-  else lead = `<span class="note">No bets yet — the house prize goes to whoever picks right</span>`;
-  const when = ev.status === "open" ? `${timeLeft(ev.closeTs)} left` : ev.status === "trading" ? `result ~${fmtTs(ev.resolveAfterTs)}` : "";
+  if (ev.outcome != null) lead = `${t("home.result", { label: `<b>${esc(label(ev, ev.outcome))}</b>` })}${ev.moveValue != null ? ` · ${fmtMove(ev.moveValue)}` : ""}`;
+  else if (ev.proposed != null) lead = `${t("home.proposed", { label: `<b>${esc(label(ev, ev.proposed))}</b>` })}${ev.moveValue != null ? ` · ${fmtMove(ev.moveValue)}` : ""}`;
+  else if (backed) { const i = ev.dist.indexOf(Math.max(...ev.dist)); lead = t("home.mostBacked", { label: `<b>${esc(label(ev, i))}</b>`, pct: Math.round(ev.dist[i] * 100) }); }
+  else lead = `<span class="note">${t("home.noBets")}</span>`;
+  const when = ev.status === "open" ? t("home.left", { t: timeLeft(ev.closeTs) }) : ev.status === "trading" ? t("home.resultAt", { ts: fmtTs(ev.resolveAfterTs) }) : "";
   return `<a class="ev" href="/market.html?e=${encodeURIComponent(ev.key)}">
     <div class="ev-top">${tickerBadge(ev.symbol)}<div><div class="ev-q">${esc(question(m0))}</div><div class="ev-s">${esc(ev.name)} · ${ev.markets.map((m) => esc(tokenSymbol(m))).join(" · ")}</div></div></div>
-    <div class="dist" title="How the money is spread across the ranges">${bar}</div>
+    <div class="dist" title="${esc(t("home.distTitle"))}">${bar}</div>
     <div class="ev-lead">${lead}</div>
-    <div class="ev-foot"><span class="pill ${ev.status}">${ev.status === "open" ? "Open" : STATUS_LABEL[ev.status]}</span>${ev.potUsd != null ? `<span>${fmtUsd(ev.potUsd)} pot</span>` : ""}<span>${ev.bettors} bettor${ev.bettors === 1 ? "" : "s"}</span><span class="ev-when">${esc(when)}</span></div>
+    <div class="ev-foot"><span class="pill ${ev.status}">${ev.status === "open" ? t("status.openShort") : STATUS_LABEL[ev.status]}</span>${ev.potUsd != null ? `<span>${t("home.pot", { usd: fmtUsd(ev.potUsd) })}</span>` : ""}<span>${tn("bettors", ev.bettors)}</span><span class="ev-when">${esc(when)}</span></div>
   </a>`;
 }
 function renderFilters() {
   const issuers = [...new Set(events.flatMap((e) => e.markets.map((m) => issuerOf(m))).filter(Boolean))].sort();
-  const seg = [["open", "Betting open"], ["live", "Awaiting result"], ["resolved", "Resolved"], ["all", "All"]];
+  const seg = [["open", t("status.open")], ["live", t("filter.live")], ["resolved", t("status.resolved")], ["all", t("filter.all")]];
   // stocks of the current category that have a market (today's memes first: the list is in the API's order)
   const inCat = STOCK_ORDER.filter((sy) => (state.cat === "all" || (STOCK_META[sy]?.category ?? "stocks") === state.cat) && events.some((e) => e.symbol === sy));
   const stockLabel = (sy: string) => (STOCK_NAMES[sy] && STOCK_NAMES[sy] !== sy ? `${sy} · ${STOCK_NAMES[sy]}` : sy);
   filters.innerHTML = `<div class="seg">${seg.map(([k, l]) => `<button data-status="${k}" class="${state.status === k ? "on" : ""}">${l}</button>`).join("")}</div>
-    <select id="fstock" aria-label="Stock or token"><option value="all">${state.cat === "all" ? "All stocks & tokens" : state.cat === "memes" ? "All memes" : state.cat === "preipo" ? "All pre-IPO" : "All stocks"}</option>${inCat.map((sy) => `<option value="${esc(sy)}" ${state.stock === sy ? "selected" : ""}>${esc(stockLabel(sy))}</option>`).join("")}</select>
-    <select id="fissuer" aria-label="Issuer"><option value="all">All issuers</option>${issuers.map((i) => `<option ${state.issuer === i ? "selected" : ""}>${esc(i)}</option>`).join("")}</select>
+    <select id="fstock" aria-label="${esc(t("filter.stockAria"))}"><option value="all">${state.cat === "all" ? t("filter.allStocksTokens") : state.cat === "memes" ? t("filter.allMemes") : state.cat === "preipo" ? t("filter.allPreipo") : t("filter.allStocks")}</option>${inCat.map((sy) => `<option value="${esc(sy)}" ${state.stock === sy ? "selected" : ""}>${esc(stockLabel(sy))}</option>`).join("")}</select>
+    <select id="fissuer" aria-label="${esc(t("filter.issuerAria"))}"><option value="all">${t("filter.allIssuers")}</option>${issuers.map((i) => `<option ${state.issuer === i ? "selected" : ""}>${esc(i)}</option>`).join("")}</select>
     <span class="sp"></span>
-    <select id="fsort" aria-label="Sort"><option value="closing" ${state.sort === "closing" ? "selected" : ""}>Closing soon</option><option value="pot" ${state.sort === "pot" ? "selected" : ""}>Biggest pot</option><option value="bettors" ${state.sort === "bettors" ? "selected" : ""}>Most bettors</option></select>`;
+    <select id="fsort" aria-label="${esc(t("filter.sortAria"))}"><option value="closing" ${state.sort === "closing" ? "selected" : ""}>${t("sort.closing")}</option><option value="pot" ${state.sort === "pot" ? "selected" : ""}>${t("sort.pot")}</option><option value="bettors" ${state.sort === "bettors" ? "selected" : ""}>${t("sort.bettors")}</option></select>`;
   filters.querySelectorAll<HTMLButtonElement>("button[data-status]").forEach((b) => (b.onclick = () => { state.status = b.dataset.status!; update(); }));
   (filters.querySelector("#fstock") as HTMLSelectElement).onchange = (e) => { state.stock = (e.target as HTMLSelectElement).value; update(); };
   (filters.querySelector("#fissuer") as HTMLSelectElement).onchange = (e) => { state.issuer = (e.target as HTMLSelectElement).value; update(); };
@@ -57,8 +58,8 @@ function update() {
   const by = { closing: (a: EventView, b: EventView) => (state.status === "resolved" ? b.closeTs - a.closeTs : a.closeTs - b.closeTs), pot: (a: EventView, b: EventView) => (b.potUsd ?? 0) - (a.potUsd ?? 0), bettors: (a: EventView, b: EventView) => b.bettors - a.bettors }[state.sort as "closing" | "pot" | "bettors"] ?? (() => 0);
   list = list.sort((a, b) => by(a, b) || a.symbol.localeCompare(b.symbol));
   const pools = list.reduce((a, e) => a + e.markets.length, 0), pot = list.reduce((a, e) => a + (e.potUsd ?? 0), 0);
-  summary.textContent = list.length ? `${list.length} market${list.length === 1 ? "" : "s"} · ${pools} pools${pot ? ` · ${fmtUsd(pot)} in play` : ""}` : "";
-  grid.innerHTML = list.length ? list.map(card).join("") : `<div class="empty-state">Nothing matches these filters. <a href="/">Show all open markets</a></div>`;
+  summary.textContent = list.length ? `${tn("markets", list.length)} · ${tn("pools", pools)}${pot ? ` · ${t("home.inPlay", { usd: fmtUsd(pot) })}` : ""}` : "";
+  grid.innerHTML = list.length ? list.map(card).join("") : `<div class="empty-state">${t("home.empty")}</div>`;
   renderFilters(); renderCatnav(state.cat);
   // the pitch is for the front page; a category tab or a stock filter goes straight to those markets
   const hero = document.querySelector<HTMLElement>(".hero"); if (hero) hero.hidden = state.cat !== "all" || state.stock !== "all";
@@ -71,11 +72,11 @@ async function load() {
     events = buildEvents(ms);
     trackStocks(ms);
     update();
-  } catch (e: any) { grid.innerHTML = `<div class="msg err">Could not load markets: ${esc(e.message ?? e)}</div>`; }
+  } catch (e: any) { grid.innerHTML = `<div class="msg err">${t("home.loadErr", { err: esc(e.message ?? e) })}</div>`; }
 }
 // footer: the dispute window is on-chain config (shipped in the page's boot data), not a constant
 { const secs = Number((window as any).__BOOT__?.config?.disputeWindowSecs), el = document.getElementById("dwin");
-  if (el && secs > 0) el.textContent = secs % 3600 === 0 ? `${secs / 3600} hour${secs === 3600 ? "" : "s"}` : `${Math.round(secs / 60)} minutes`; }
+  if (el && secs > 0) el.textContent = secs % 3600 === 0 ? tn("hours", secs / 3600) : tn("minutes", Math.round(secs / 60)); }
 load();
 setInterval(load, 30_000); // pools move as people bet; the API caches for 15 s
 void STOCK_NAMES;

@@ -2,6 +2,7 @@
 // stock has its own pool (an on-chain market); they share the thresholds and the result. The home page shows events;
 // the event page lets you pick the token and see its pool.
 import { NO_OUTCOME, totalPool, type MarketView } from "./chain";
+import { t } from "./i18n";
 import { STOCK_NAMES, categoryOf, parseMetric, priceOf, tokenSymbol, tokensOf, uiAmount, type Category } from "./stocks";
 
 export type EventStatus = "open" | "trading" | "proposed" | "resolved";
@@ -20,7 +21,7 @@ export function statusOf(m: MarketView): EventStatus {
   return m.status === 1 ? "proposed" : "resolved";
 }
 const RANK: Record<EventStatus, number> = { open: 0, trading: 1, proposed: 2, resolved: 3 };
-export const STATUS_LABEL: Record<EventStatus, string> = { open: "Betting open", trading: "Awaiting close", proposed: "Result proposed", resolved: "Resolved" };
+export const STATUS_LABEL: Record<EventStatus, string> = { open: t("status.open"), trading: t("status.trading"), proposed: t("status.proposed"), resolved: t("status.resolved") };
 
 export function buildEvents(ms: MarketView[]): EventView[] {
   const by = new Map<string, MarketView[]>();

@@ -6,10 +6,11 @@
 import type { MarketView } from "./chain";
 import { API_BASE } from "./config";
 import { dayEnd, fmtDay, fmtHm } from "./time";
+import { DAY_LOCALE, t } from "./i18n";
 
 type TokenInfo = { token: string; issuer: string; decimals: number; symbol: string; name: string; faucetUi?: number; mainnetMint?: string };
 export type Category = "stocks" | "preipo" | "memes";
-export const CATEGORIES: [Category, string][] = [["stocks", "Stocks"], ["preipo", "Pre-IPO"], ["memes", "Memes"]];
+export const CATEGORIES: [Category, string][] = [["stocks", t("cat.stocks")], ["preipo", t("cat.preipo")], ["memes", t("cat.memes")]];
 export const CATEGORY_NAME: Record<string, string> = Object.fromEntries(CATEGORIES);
 export const STOCK_NAMES: Record<string, string> = { SPCX: "SpaceX", TSLA: "Tesla", NVDA: "NVIDIA", SPY: "S&P 500 ETF" };
 /** Per listed symbol: which category it belongs to, how it settles ("close" = official close, "day" = on-chain price
@@ -47,9 +48,9 @@ export const symbolOf = (m: MarketView) => parseMetric(m.metric)?.symbol ?? "?";
 export const kindOf = (m: MarketView) => parseMetric(m.metric)?.kind ?? "close";
 export const categoryOf = (symbol: string): Category => STOCK_META[symbol]?.category ?? "stocks";
 export const stockName = (m: MarketView) => STOCK_NAMES[symbolOf(m)] ?? symbolOf(m);
-export const tokenSymbol = (m: MarketView) => tokenInfo(m)?.token ?? "shares";
+export const tokenSymbol = (m: MarketView) => tokenInfo(m)?.token ?? t("tok.shares");
 export const issuerOf = (m: MarketView) => tokenInfo(m)?.issuer ?? "";
-export const sessionLabel = (date: string) => new Date(date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+export const sessionLabel = (date: string) => new Date(date + "T12:00:00Z").toLocaleDateString(DAY_LOCALE, { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
 /** The moment the price that settles a market is fixed: the end of the UTC day, or the New York closing bell (the
  *  result is asked for server/stock-templates.json resolveDelaySecs = 30 min after it, early closes included). */
 export const closeMoment = (m: MarketView, p = parseMetric(m.metric)) => (p?.kind === "day" ? dayEnd(p.date) : m.resolveAfterTs - 1800);
@@ -57,7 +58,7 @@ export function question(m: MarketView) {
   const p = parseMetric(m.metric); if (!p) return m.metric;
   // an on-chain day closes at a moment (the end of the UTC day): name it on the viewer's clock, not as "a UTC date"
   const c = closeMoment(m, p);
-  return `Where does ${p.symbol} close at ${fmtHm(c)} on ${fmtDay(c)}?`;
+  return t("q.at", { sym: p.symbol, time: fmtHm(c), day: fmtDay(c) });
 }
 
 /** A move in ppm as a signed percentage, floored to whole basis points. Thresholds are whole basis points, so the
@@ -69,17 +70,17 @@ export function fmtMove(ppm: number) {
 const fmtThr = (ppm: number) => (ppm > 0 ? "+" : ppm < 0 ? "−" : "") + (Math.abs(ppm) / 10000).toFixed(2).replace(/\.?0+$/, "") + "%";
 /** Short label of bucket i, e.g. "< −1.75%", "−1.75% to 0%", "0% to +2%", "≥ +2%". */
 export function bucketLabel(m: MarketView, i: number) {
-  const t = m.thresholds, n = m.nBuckets;
-  if (n === 2 && t[0] === 0) return i === 1 ? "Up or flat" : "Down";
-  if (i === 0) return `< ${fmtThr(t[0])}`;
-  if (i === n - 1) return `≥ ${fmtThr(t[n - 2])}`;
-  return `${fmtThr(t[i - 1])} to ${fmtThr(t[i])}`;
+  const thr = m.thresholds, n = m.nBuckets;
+  if (n === 2 && thr[0] === 0) return i === 1 ? t("bucket.upOrFlat") : t("bucket.down");
+  if (i === 0) return `< ${fmtThr(thr[0])}`;
+  if (i === n - 1) return `≥ ${fmtThr(thr[n - 2])}`;
+  return t("bucket.range", { a: fmtThr(thr[i - 1]), b: fmtThr(thr[i]) });
 }
 /** Plain-words name for the common layouts: four ranges with the middle cut at 0 (stocks), or three ranges cut
  *  symmetrically around 0 (on-chain price markets: down / flat / up; memes say dump / flat / pump). */
 export function bucketName(m: MarketView, i: number) {
-  if (m.nBuckets === 4 && m.thresholds[1] === 0) return ["Big drop", "Small drop", "Small gain", "Big gain"][i];
-  if (m.nBuckets === 3 && m.thresholds[0] < 0 && m.thresholds[1] > 0) return (categoryOf(symbolOf(m)) === "memes" ? ["Dump", "Flat", "Pump"] : ["Down", "Flat", "Up"])[i];
+  if (m.nBuckets === 4 && m.thresholds[1] === 0) return t(["b4.bigDrop", "b4.smallDrop", "b4.smallGain", "b4.bigGain"][i]);
+  if (m.nBuckets === 3 && m.thresholds[0] < 0 && m.thresholds[1] > 0) return t((categoryOf(symbolOf(m)) === "memes" ? ["b3.dump", "b3.flat", "b3.pump"] : ["b3.down", "b3.flat", "b3.up"])[i]);
   return "";
 }
 
