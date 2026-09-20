@@ -5,11 +5,13 @@
 SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
 S=/home/sharepot
+# RPC: the jobs that sign read a private endpoint from $S/secrets/devnet/rpc-url when that file exists (the public devnet
+# endpoint rate-limits a settlement run into failed payouts that only land a run later); without it they use the public one.
 # every job runs under flock: a slow run (rate-limited RPC) must never overlap the next tick — two resolvers at once
 # would record one payout twice, two openers would open one market twice. `mkdir -p $S/locks` once.
 
 # keep one market per listed token open for betting
-*/30 * * * * cd $S/apps/sharepot && CLUSTER=devnet STATE=$S/secrets/devnet/state.json DATA_DIR=$S/data ANCHOR_PROVIDER_URL=https://api.devnet.solana.com ANCHOR_WALLET=$S/secrets/devnet/proposer.json flock -n $S/locks/open-markets.lock node server/open-markets.mjs >> $S/logs/open-markets.log 2>&1
+*/30 * * * * cd $S/apps/sharepot && CLUSTER=devnet STATE=$S/secrets/devnet/state.json DATA_DIR=$S/data ANCHOR_PROVIDER_URL=$(cat $S/secrets/devnet/rpc-url 2>/dev/null || echo https://api.devnet.solana.com) ANCHOR_WALLET=$S/secrets/devnet/proposer.json flock -n $S/locks/open-markets.lock node server/open-markets.mjs >> $S/logs/open-markets.log 2>&1
 
 # on-chain price markets (pre-IPO tokens, memes): sample Jupiter quotes every minute (a day's close is the median of its
 # last hour); at 11:00 UTC pick tomorrow's ten most-traded memes, so their pools open at 11:30 before today's 12:00 lock.
@@ -21,4 +23,4 @@ S=/home/sharepot
 # where the treasury key lives, pulls settlements + bindings from here, pays from the treasury and pushes the ledger back.
 
 # propose results after the close, finalize after the dispute window, pay out and sweep
-*/10 * * * * cd $S/apps/sharepot && CLUSTER=devnet CLUSTER_RPC=https://api.devnet.solana.com DATA_DIR=$S/data SHAREPOT_SECRETS=$S/secrets/devnet flock -n $S/locks/resolve.lock node server/resolve.mjs >> $S/logs/resolve.log 2>&1
+*/10 * * * * cd $S/apps/sharepot && CLUSTER=devnet CLUSTER_RPC=$(cat $S/secrets/devnet/rpc-url 2>/dev/null || echo https://api.devnet.solana.com) DATA_DIR=$S/data SHAREPOT_SECRETS=$S/secrets/devnet flock -n $S/locks/resolve.lock node server/resolve.mjs >> $S/logs/resolve.log 2>&1

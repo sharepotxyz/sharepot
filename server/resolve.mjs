@@ -92,6 +92,11 @@ function payoutFor(m, p) {
   return { payout: stake + gross - fee + seed, fee, kind: "won" };
 }
 const SETTLEMENTS = path.join(DATA, "settlements.jsonl");
+// A payout that fails once is usually a rate-limited RPC and goes through on the next run ten minutes later; only a
+// position that has failed SETTLE_ALERT_RUNS runs in a row is worth a message. Counted per position, cleared when paid.
+const SETTLE_FAILS = path.join(DATA, "settle-failures.json"), SETTLE_ALERT_RUNS = 3;
+let settleFails = {}; try { settleFails = JSON.parse(fs.readFileSync(SETTLE_FAILS, "utf8")); } catch (e) { if (e.code !== "ENOENT") settleFails = {}; }
+const saveSettleFails = () => { try { fs.writeFileSync(SETTLE_FAILS + ".tmp", JSON.stringify(settleFails)); fs.renameSync(SETTLE_FAILS + ".tmp", SETTLE_FAILS); } catch {} };
 
 // ---------- what a settled market was worth ----------
 // Leaderboard points are shares staked × the official close the market settled on (server/points.mjs), so the close
@@ -287,9 +292,12 @@ async function settle(markets, cfg) {
           fs.appendFileSync(SETTLEMENTS, JSON.stringify({ at: new Date().toISOString(), market: publicKey.toBase58(), id: m.id.toNumber(), metric: tag(m.metric), mint: mint.toBase58(), owner: p.owner.toBase58(), amounts: p.amounts.slice(0, fresh.nBuckets).map((x) => x.toString()), status: fresh.status, outcome: fresh.outcome, observed: fresh.proposedValue.toString(), kind, payout: payout.toString(), fee: fee.toString(), signature: sig,
             token, decimals: meta.decimals, multiplier: meta.multiplier, close, pools: fresh.pools.slice(0, fresh.nBuckets).map((x) => x.toString()), seed: fresh.seedAmount.toString(), ...(note ? { note } : {}) }) + "\n");
           log(`  settled ${p.owner.toBase58()} ${kind} payout=${payout} ${sig}${note ? ` (${note})` : ""}`);
+          if (settleFails[ppk.toBase58()]) { delete settleFails[ppk.toBase58()]; saveSettleFails(); }
         } catch (e) {
-          log(`  FAILED ${p.owner.toBase58()}: ${e.message?.split("\n")[0]}`);
-          notify("⚠️ 有倉位付不出去", `#${m.id} ${tag(m.metric)} owner ${p.owner.toBase58().slice(0, 8)}…\n${String(e.message ?? e).split("\n")[0].slice(0, 200)}\n(每輪重試;30 天後仍付不出會沒收進金庫、該盤才能 sweep)`, `settle:${ppk.toBase58()}`, 360);
+          const f = settleFails[ppk.toBase58()] ?? { first: new Date().toISOString(), runs: 0 };
+          f.runs++; f.last = String(e.message ?? e).split("\n")[0].slice(0, 200); settleFails[ppk.toBase58()] = f; saveSettleFails();
+          log(`  FAILED ${p.owner.toBase58()} (run ${f.runs} in a row): ${e.message?.split("\n")[0]}`);
+          if (f.runs >= SETTLE_ALERT_RUNS) notify("⚠️ 有倉位付不出去", `#${m.id} ${tag(m.metric)} owner ${p.owner.toBase58().slice(0, 8)}…\n連續 ${f.runs} 輪失敗(自 ${f.first.slice(0, 16)}Z)\n${f.last}\n(每輪重試;30 天後仍付不出會沒收進金庫、該盤才能 sweep)`, `settle:${ppk.toBase58()}`, 360);
         }
       }
       if (deferred) log(`market #${m.id}: ${deferred} position(s) deferred (owner's account closed or frozen); the market sweeps once they are paid or forfeited`);
