@@ -1,7 +1,9 @@
 // node --test server/prices.test.mjs   (the second half asks Yahoo and Nasdaq for one real session)
 import test from "node:test";
 import assert from "node:assert/strict";
-import { nyseYearByRule, sessions, closeMove } from "./prices.mjs";
+import fs from "node:fs";
+import os from "node:os";
+import { nyseYearByRule, sessions, closeMove, chainMove, utcMidnight } from "./prices.mjs";
 
 // NYSE's own published lists (nyse.com/markets/hours-calendars and its archives), special closures left out
 const PUBLISHED = {
@@ -32,4 +34,28 @@ test("closes differ inside one range: settles on the primary and says so", async
 test("closes in different ranges: held as a disagreement, never proposed", async () => {
   bendNasdaq(-5); const ev = await closeMove("TSLA", DAY, NOW, THR); globalThis.fetch = realFetch;
   assert.equal(ev.ok, false); assert.equal(ev.disagree, true); assert.match(ev.reason, /different ranges/);
+});
+
+// On-chain tokens: Jupiter alone settles; DexScreener is a reference that only stops a settlement when it shows
+// Jupiter's own feed broke. Numbers in the first test are market #95 (OPENAI, 2026-09-20), which the old rule held.
+const MINT = "Mint1111", CDAY = "2026-09-20", CPREV = "2026-09-19", CNOW = utcMidnight(CDAY) + 24 * 3600 + 600;
+function ticks(jupPrev, dexPrev, jupNow, dexNow) {
+  const dir = fs.mkdtempSync(os.tmpdir() + "/sp-ticks-"); fs.mkdirSync(dir + "/ticks");
+  for (const [d, p, p2] of [[CPREV, jupPrev, dexPrev], [CDAY, jupNow, dexNow]]) {
+    const t0 = utcMidnight(d) + 23 * 3600;
+    fs.writeFileSync(`${dir}/ticks/${d}.jsonl`, Array.from({ length: 60 }, (_, i) => JSON.stringify({ t: t0 + i * 60, p: { [MINT]: p }, p2: p2 == null ? {} : { [MINT]: p2 } })).join("\n") + "\n");
+  }
+  return dir;
+}
+test("another venue's price lands in another range: Jupiter still settles, the difference is only recorded", () => {
+  const ev = chainMove(ticks(1139.48, 1683.92, 1118.66, 1626.065), MINT, "OPENAI", CDAY, CNOW, [-30000, 30000]);
+  assert.equal(ev.ok, true); assert.equal(ev.value, -18272); assert.equal(ev.detail.crossCheck.agreed, false);
+});
+test("Jupiter matched the other venue yesterday and is far from it today: held as a broken feed", () => {
+  const ev = chainMove(ticks(1.00, 1.01, 1.50, 1.02), MINT, "X", CDAY, CNOW, [-30000, 30000]);
+  assert.equal(ev.ok, false); assert.equal(ev.alert, true); assert.match(ev.reason, /feed looks broken/);
+});
+test("no second quote at all: Jupiter settles alone", () => {
+  const ev = chainMove(ticks(1.00, null, 1.10, null), MINT, "X", CDAY, CNOW, [-30000, 30000]);
+  assert.equal(ev.ok, true); assert.equal(ev.detail.crossCheck.agreed, null);
 });

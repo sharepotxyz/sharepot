@@ -99,7 +99,7 @@ async function independentValue(spec, now, thr) {
   // own samples first (same rule as the resolver, this host's data)
   const own = chainMove(DATA, mint, spec.symbol, spec.date, now, thr);
   if (own.ok) return { value: own.value, detail: `$${own.detail.baseline} → $${own.detail.close} (own samples ${own.detail.prevSamples}/${own.detail.samples}${own.detail.crossCheck?.agreed ? ", dexscreener agrees" : ""})` };
-  if (own.alert && /disagree/.test(own.reason)) return { error: own.reason };            // own two sources split: no verdict
+  if (own.alert && /feed looks broken/.test(own.reason)) return { error: own.reason };    // own Jupiter samples look broken: no verdict
   if (chainClose(DATA, mint, addDays(spec.date, -1)).ok) return { error: own.reason };   // baseline known, today short: wait
   // no baseline of our own (first day): GeckoTerminal candles, sparse for thin tokens
   const prev = await closingMedian(mint, addDays(spec.date, -1)), cur = await closingMedian(mint, spec.date);
