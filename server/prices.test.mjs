@@ -36,8 +36,7 @@ test("closes in different ranges: held as a disagreement, never proposed", async
   assert.equal(ev.ok, false); assert.equal(ev.disagree, true); assert.match(ev.reason, /different ranges/);
 });
 
-// On-chain tokens: Jupiter alone settles; DexScreener is a reference that only stops a settlement when it shows
-// Jupiter's own feed broke. Numbers in the first test are market #95 (OPENAI, 2026-09-20), which the old rule held.
+// On-chain tokens: Jupiter alone settles; DexScreener is recorded and never decides. Numbers in the first test are market #95 (OPENAI, 2026-09-20), which the old rule held.
 const MINT = "Mint1111", CDAY = "2026-09-20", CPREV = "2026-09-19", CNOW = utcMidnight(CDAY) + 24 * 3600 + 600;
 function ticks(jupPrev, dexPrev, jupNow, dexNow) {
   const dir = fs.mkdtempSync(os.tmpdir() + "/sp-ticks-"); fs.mkdirSync(dir + "/ticks");
@@ -51,9 +50,9 @@ test("another venue's price lands in another range: Jupiter still settles, the d
   const ev = chainMove(ticks(1139.48, 1683.92, 1118.66, 1626.065), MINT, "OPENAI", CDAY, CNOW, [-30000, 30000]);
   assert.equal(ev.ok, true); assert.equal(ev.value, -18272); assert.equal(ev.detail.crossCheck.agreed, false);
 });
-test("Jupiter matched the other venue yesterday and is far from it today: held as a broken feed", () => {
-  const ev = chainMove(ticks(1.00, 1.01, 1.50, 1.02), MINT, "X", CDAY, CNOW, [-30000, 30000]);
-  assert.equal(ev.ok, false); assert.equal(ev.alert, true); assert.match(ev.reason, /feed looks broken/);
+test("the other venue jumps far away on the day: still Jupiter's answer, nothing held", () => {
+  const ev = chainMove(ticks(1.00, 1.01, 1.02, 1.50), MINT, "X", CDAY, CNOW, [-30000, 30000]);
+  assert.equal(ev.ok, true); assert.equal(ev.value, 20000); assert.equal(ev.detail.crossCheck.agreed, false);
 });
 test("no second quote at all: Jupiter settles alone", () => {
   const ev = chainMove(ticks(1.00, null, 1.10, null), MINT, "X", CDAY, CNOW, [-30000, 30000]);

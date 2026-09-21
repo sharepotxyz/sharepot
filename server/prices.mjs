@@ -284,14 +284,11 @@ export const bucketOf = (thresholds, value) => thresholds.filter((t) => value >=
  * quotes (prices.mjs closingSamples), so the evidence is self-contained: the sample lines of both closing hours.
  * Same shape as closeMove(): ok/value/detail/evidence.
  *
- * One settlement source: Jupiter, for both closes — the same feed the site shows as "now" and "prev close", so the
- * number people bet against is the number that settles. The lines also carry DexScreener's quote of the token's deepest
- * pair, but two venues legitimately trade at different prices (a thin token's pools can sit tens of percent apart, and
- * their daily moves a few percent apart), so a move that lands in another range there is recorded in the evidence and
- * never holds the market. DexScreener only stops a settlement when it shows Jupiter's feed itself broke: the two price
- * levels matched on the previous day (within FEED_MATCH) and are far apart on this one (beyond FEED_BREAK).
+ * One settlement source: Jupiter, for both closes — the feed the site shows as "now" and "prev close" and the only one
+ * the published rule names. The lines also carry DexScreener's quote of the token's deepest pair; two venues trade at
+ * different prices, and a gap between them cannot say which one is off, so that quote is recorded in the evidence for
+ * anyone comparing and never decides or holds anything.
  */
-export const FEED_MATCH = 0.05, FEED_BREAK = 0.20;
 export function chainMove(dataDir, mint, symbol, date, now = Math.floor(Date.now() / 1000), thresholds = null) {
   if (now < utcMidnight(date) + 24 * 3600) return { ok: false, reason: `${date} has not ended yet (UTC)` };
   const prevDate = addDays(date, -1);
@@ -305,8 +302,6 @@ export function chainMove(dataDir, mint, symbol, date, now = Math.floor(Date.now
   if (b2.ok && c2.ok) {
     const ppm2 = movePpm(b2.close, c2.close);
     const agreed = thresholds ? bucketOf(thresholds, ppm) === bucketOf(thresholds, ppm2) : null;
-    const gapPrev = Math.abs(b2.close / b.close - 1), gapNow = Math.abs(c2.close / c.close - 1);
-    if (gapPrev <= FEED_MATCH && gapNow >= FEED_BREAK) return { ok: false, alert: true, reason: `jupiter feed looks broken: its price matched dexscreener on ${prevDate} ($${b.close} vs $${b2.close}) and is ${(gapNow * 100).toFixed(1)}% away on ${date} ($${c.close} vs $${c2.close})` };
     crossCheck = { source: "dexscreener", role: "reference only, does not settle", baseline: b2.close, close: c2.close, movePpm: ppm2, prevSamples: b2.samples, samples: c2.samples, agreed };
   } else crossCheck = { source: "dexscreener", agreed: null, note: `second source short of samples (${prevDate}: ${b2.samples ?? 0}, ${date}: ${c2.samples ?? 0} of ${MIN_CLOSE_SAMPLES}); primary used alone` };
   return {

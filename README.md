@@ -208,10 +208,9 @@ Two more token classes run on the same program. There is no exchange for them, s
   `server/sample-prices.mjs` into `data/ticks/<date>.jsonl`. Metric tag `<SYMBOL>.day:<date>`; the move is that day's
   close against the previous day's, both read from the samples at resolution and published together as evidence.
   Fewer than 40 usable quotes on either day voids the market (full refund). Jupiter is the one settlement source —
-  the same feed the site shows as "now" and "prev close". Every sample also records a second quote (DexScreener) as
-  a reference: two venues trade at different prices, so a different move there never holds a market; it only stops a
-  settlement when it shows Jupiter's feed itself broke (prices matched the day before, 20%+ apart on the day), and
-  that market refunds itself after 24 h.
+  the same feed the site shows as "now" and "prev close". Every sample also records a second quote (DexScreener),
+  published with the evidence for comparison only: two venues trade at different prices, so it never decides or
+  holds a market.
 * **Three ranges** (down / flat / up) cut at ± the token's median absolute daily move over 60 days (GeckoTerminal).
   A day's pool opens at 11:00 UTC the day before and locks at 12:00 UTC on the day, so there is always one to bet into
   (tomorrow's opens before today's locks); resolution after 00:05 the next day, same dispute window and crank as the
