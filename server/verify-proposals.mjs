@@ -18,7 +18,7 @@ import idlJson from "../idl/sharepot.json" with { type: "json" };
 import { closeMove, chainMove, chainClose, parseMetric, movePpm, bucketOf, utcMidnight, addDays } from "./prices.mjs";
 import { notify } from "./notify.mjs";
 import { sendSigned } from "./tx.mjs";
-import { unverifiedAction } from "./verify-policy.mjs";
+import { unverifiedAction, comparisonAction, BOUNDARY_PPM as DEFAULT_BOUNDARY_PPM } from "./verify-policy.mjs";
 
 const CLUSTER = process.env.CLUSTER ?? "devnet";
 const RPC = process.env.CLUSTER_RPC ?? "https://api.devnet.solana.com";
@@ -28,8 +28,9 @@ const DRY = process.env.DRY_RUN === "1";
 // Nothing settles on a value this host could not re-derive (verify-policy.mjs). Devnet behaves and alerts exactly as
 // mainnet does, so what fires there is what will fire with real money. VOID_UNVERIFIED=0 switches it off.
 const VOID_UNVERIFIED = (process.env.VOID_UNVERIFIED ?? "1") === "1";
-// Two honest DEX feeds can differ a little; a day-market value closer than this to a range boundary is reported, not acted on.
-const AMBIGUOUS_PPM = Number(process.env.AMBIGUOUS_PPM ?? 5000);
+// Two honest DEX feeds can differ a little, so a disagreement this close to a range boundary is expected rather than
+// suspicious — it changes the wording of the alert, never whether the market settles (verify-policy.mjs).
+const BOUNDARY_PPM = Number(process.env.BOUNDARY_PPM ?? DEFAULT_BOUNDARY_PPM);
 const MIN_CANDLES = 30;
 const keyFile = process.env.ADMIN_KEYPAIR; if (!keyFile) { console.error("ADMIN_KEYPAIR required"); process.exit(2); }
 const admin = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(keyFile, "utf8"))));
@@ -172,19 +173,19 @@ for (const { publicKey, account: m } of proposed) {
     state[key] = { proposedAt: m.proposedAt.toNumber(), verdict: "ok", proposed: pv, independent: r.value, at: new Date().toISOString() }; saveState();
     continue;
   }
-  if (spec.kind === "day" && dist <= AMBIGUOUS_PPM) {
-    log(`#${id} ${metric}: AMBIGUOUS — proposed ${pv} ppm (range ${pb}), independent ${r.value} ppm (range ${mb}) ${r.detail}; ${dist} ppm from a boundary`);
-    notify("⚠️ 核對落在邊界", `#${id} ${metric}\n提案 ${pv} ppm → 第 ${pb} 格;獨立查價 ${r.value} ppm → 第 ${mb} 格\n${r.detail}\n離邊界 ${dist} ppm(${(dist / 10000).toFixed(2)}%),兩個 DEX 價源本來就會差一點,照提案結算、沒作廢。僅供知悉,不需處理。`, `verify-amb:${key}`, 720);
-    state[key] = { proposedAt: m.proposedAt.toNumber(), verdict: "ambiguous", proposed: pv, independent: r.value, at: new Date().toISOString() }; saveState();
-    continue;
-  }
-  log(`#${id} ${metric}: MISMATCH — proposed ${pv} ppm (range ${pb}), independent ${r.value} ppm (range ${mb}) ${r.detail}`);
+  // Different ranges: refund, whether or not the value sits on a boundary — one host alone never settles a market.
+  const onBoundary = comparisonAction({ proposedBucket: pb, independentBucket: mb, distToBoundaryPpm: dist, boundaryPpm: BOUNDARY_PPM }) === "void-boundary";
+  log(`#${id} ${metric}: MISMATCH${onBoundary ? ` (${dist} ppm from a boundary)` : ""} — proposed ${pv} ppm (range ${pb}), independent ${r.value} ppm (range ${mb}) ${r.detail}`);
   if (DRY) { log(`  would void #${id}`); continue; }
   try {
     const sig = await voidMarket(publicKey); voided++;
     log(`  VOIDED #${id} ${sig}`);
-    notify("⛔ 提案與獨立查價不符,已作廢退款", `#${id} ${metric}\n提案 ${pv} ppm → 第 ${pb} 格;獨立查價 ${r.value} ppm → 第 ${mb} 格\n${r.detail}\n已用 admin 金鑰 void,下一輪全額退款。若 app 主機沒被動過,請查價源;若提案者被入侵,先換 proposer 金鑰(scripts/update-config.mjs proposer=…)`, `verify-void:${key}`, 60);
-    state[key] = { proposedAt: m.proposedAt.toNumber(), verdict: "voided", proposed: pv, independent: r.value, signature: sig, at: new Date().toISOString() }; saveState();
+    notify(onBoundary ? "⛔ 兩邊分在不同格(值貼著邊界),已自動作廢退款" : "⛔ 提案與獨立查價不符,已作廢退款",
+      `#${id} ${metric}\n提案 ${pv} ppm → 第 ${pb} 格;獨立查價 ${r.value} ppm → 第 ${mb} 格\n${r.detail}\n` + (onBoundary
+        ? `離邊界 ${dist} ppm(${(dist / 10000).toFixed(2)}%),兩個價源本來就會差一點。兩台不同意就退款,沒有任何一台能單獨決定勝負,已自動處理,不需處理。`
+        : `已用 admin 金鑰 void,下一輪全額退款。若 app 主機沒被動過,請查價源;若提案者被入侵,先換 proposer 金鑰(scripts/update-config.mjs proposer=…)`),
+      `verify-void:${key}`, 60);
+    state[key] = { proposedAt: m.proposedAt.toNumber(), verdict: onBoundary ? "voided-boundary" : "voided", proposed: pv, independent: r.value, signature: sig, at: new Date().toISOString() }; saveState();
   } catch (e) {
     log(`  void failed: ${String(e?.message ?? e).slice(0, 160)}`);
     notify("⛔ 提案不符且自動作廢失敗", `#${id} ${metric}\n提案 ${pv} ppm(第 ${pb} 格)vs 獨立 ${r.value} ppm(第 ${mb} 格)\n${String(e?.message ?? e).slice(0, 200)}\n下一輪(10 分內)會自動再試;窗到 ${new Date(windowEnd * 1000).toISOString()}。連續失敗才需要看 admin 金鑰餘額與 RPC。`, `verify-fail:${key}`, 60);

@@ -1,6 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { unverifiedAction, VOID_MARGIN_SECS } from "./verify-policy.mjs";
+import { unverifiedAction, VOID_MARGIN_SECS, comparisonAction, BOUNDARY_PPM } from "./verify-policy.mjs";
+
+const cmp = (pb, mb, dist) => comparisonAction({ proposedBucket: pb, independentBucket: mb, distToBoundaryPpm: dist });
+test("same range: settles", () => assert.equal(cmp(2, 2, 1), "agree"));
+test("different ranges, far from any boundary: refund", () => assert.equal(cmp(3, 1, BOUNDARY_PPM * 4), "void-mismatch"));
+// the fix: a proposal that crosses a boundary the independent value sits on used to settle on the proposer's word
+test("different ranges on a boundary: refund, never settle", () => {
+  assert.equal(cmp(2, 1, 0), "void-boundary");
+  assert.equal(cmp(2, 1, BOUNDARY_PPM), "void-boundary");
+  assert.equal(cmp(2, 1, BOUNDARY_PPM + 1), "void-mismatch");
+});
+test("agreement wins even on a boundary", () => assert.equal(cmp(1, 1, 0), "agree"));
 
 const P = 1_000_000, W = 21600, end = P + W;
 test("fresh proposal: wait quietly", () => assert.equal(unverifiedAction({ now: P + 600, proposedAt: P, windowEnd: end, voidUnverified: true }), "wait"));
