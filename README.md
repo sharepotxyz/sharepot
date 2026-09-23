@@ -229,6 +229,7 @@ server/             market opener (NYSE calendar), resolver + settlement crank, 
 web/                market pages, Wallet Standard betting (Phantom, Solflare, Backpack), "My bets"
 scripts/            devnet bootstrap (mock xStocks, faucet, config), replay markets for demos, admin tools
 idl/                program IDL + TypeScript types
+examples/           automate.mjs: list open pools, bet, read results from a script
 ```
 
 ## Languages
@@ -257,6 +258,36 @@ Instruction | Who | What
 `sweep_market` | anyone | after all positions are settled: fees + dust to the treasury's account for that stock, close the vault and the market account; their rent goes back to the proposer that paid it
 
 Program id: `8TzdVXpqa52o3fBvYynSxHTWP4zuWfZmTvSkpdLT9rWW`
+
+## Automation: the API and the program
+
+A bot needs three things: which pools are open, a way to bet, and the results. The first and the third are the
+public read API (no key, open CORS); the second is the program, signed by the bot's own wallet. There is no
+server-side bet endpoint, so nobody can bet with your tokens but you.
+
+Endpoint | What
+--- | ---
+`GET /api/markets`, `GET /api/markets/<id>` | every market / one market. `status`: 0 open, 1 proposed, 2 resolved, 3 voided, 4 settled and swept. A bet is accepted while status is 0 and now is between `openTs` and `closeTs` (unix seconds)
+`GET /api/config` | fee, early-bird discount, dispute window, minimum bet (base units)
+`GET /api/stocks`, `GET /api/prices` | the tokens with mints and decimals; the live prices the site shows
+`GET /api/evidence/<id>`, `…/raw` | the settlement evidence; `/raw` is the exact bytes whose sha256 is on-chain
+`GET /api/positions/<wallet>` | every payout the crank pushed to a wallet, with its signature
+`GET /api/leaderboard?window=7d\|30d\|all` | the points board
+`POST /api/faucet {"address"}` | devnet only: mock shares of every open pool plus a little SOL, once a day per wallet
+
+Units: `thresholds` and the observed move `proposedValue` are in ppm (1 % = 10 000); range 0 is below the first
+threshold, the last range at or above the last one, `outcome` is the winning range. `pools` and bet amounts are in base
+units (shares × 10^`decimals`). Betting is the program's `place_bet(range, amount)` instruction (IDL in `idl/`);
+payouts are pushed to the wallet after the dispute window, nothing to claim. Market data is cached for 15 s; the
+faucet, disputes and feedback are limited per address and per day.
+
+[`examples/automate.mjs`](examples/automate.mjs) does all of it in 80 lines (Node 22, `cd server && npm ci` once):
+
+```sh
+node examples/automate.mjs markets                 # open pools: id, ranges, closes in, pool sizes
+node examples/automate.mjs bet 153 1 0.5           # 0.5 shares on range 1 of market #153, signed by KEYPAIR
+node examples/automate.mjs results <wallet>        # settled markets, and what that wallet was paid
+```
 
 ## Running it locally
 

@@ -8,7 +8,7 @@ MAP={',':'，',';':'；',':':'：','?':'？','!':'！'}
 def conv(s):
     toks=[]
     def stash(m): toks.append(m.group(0)); return chr(0xe000+len(toks)-1)
-    p=re.sub(r'<[^>]+>|\{\w+\}',stash,s)
+    p=re.sub(r'<[^>]+>|\{\w+\}|&\w+;',stash,s)  # tags, {slots} and &entities; keep their ASCII
     ch=list(p); n=len(ch)
     skip=lambda c: c==' ' or ''<=c<=''
     def nb(i,step):
