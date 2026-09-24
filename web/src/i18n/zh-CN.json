@@ -352,5 +352,5 @@
   "fc.evm.s3": "<a href=\"/\">挑一个盘</a>，在开盘钟响前押几股。",
   "fc.evm.open": "打开 Robinhood 水龙头",
   "fc.evm.more": "还要更多测试 ETH：<a href=\"https://faucet.quicknode.com/robinhood/testnet\" target=\"_blank\" rel=\"noopener\">QuickNode</a> 或 <a href=\"https://faucets.chain.link/robinhood-testnet\" target=\"_blank\" rel=\"noopener\">Chainlink</a>。",
-  "home.noBetsNoSeed": "还没有人下注，第一个押对区间的人拿走整个奖池"
+  "home.noBetsNoSeed": "还没有人下注，押对区间的人平分押错区间的筹码"
 }

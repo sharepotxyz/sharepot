@@ -63,8 +63,8 @@ resolve on the same official close; each is staked and paid in its own token.
   bet, stake-weighted, so a late top-up cannot inherit an early rate.
 * **Fees are collected in the stock itself.** A pool staked in NVDAx pays its fee in NVDAx, swept to that token's
   treasury account.
-* On a test network the operator **seeds** a market with a small fee-free prize so an empty pool looks alive. **On
-  mainnet there is no seed** (`SEED_MARKETS=1` overrides it for a deliberate promotion). If nobody picked the winning
+* **There is no house prize** on any network (`seed_market` exists for a deliberate promotion, switched on with
+  `SEED_MARKETS=1`). If nobody picked the winning
   range, everyone is refunded; a **voided** market refunds everyone in full.
 * Payouts are **pushed** to wallets by a permissionless crank after the dispute window. Nobody has to claim.
 * **The one case the crank cannot pay**: the owner's token account for that stock was closed, frozen, or set to require a memo on incoming transfers after the bet.

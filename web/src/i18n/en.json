@@ -352,5 +352,5 @@
   "fc.evm.s3": "<a href=\"/\">Pick a market</a> and stake some shares before the opening bell.",
   "fc.evm.open": "Open the Robinhood faucet",
   "fc.evm.more": "More test ETH: <a href=\"https://faucet.quicknode.com/robinhood/testnet\" target=\"_blank\" rel=\"noopener\">QuickNode</a> or <a href=\"https://faucets.chain.link/robinhood-testnet\" target=\"_blank\" rel=\"noopener\">Chainlink</a>.",
-  "home.noBetsNoSeed": "No bets yet — the first to pick a range takes the whole pot if it wins"
+  "home.noBetsNoSeed": "No bets yet — whoever picks the right range splits what the other ranges staked"
 }

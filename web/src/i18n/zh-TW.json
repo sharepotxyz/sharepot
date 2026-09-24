@@ -352,5 +352,5 @@
   "fc.evm.s3": "<a href=\"/\">挑一個盤</a>，在開盤鐘響前押幾股。",
   "fc.evm.open": "打開 Robinhood 水龍頭",
   "fc.evm.more": "還要更多測試 ETH：<a href=\"https://faucet.quicknode.com/robinhood/testnet\" target=\"_blank\" rel=\"noopener\">QuickNode</a> 或 <a href=\"https://faucets.chain.link/robinhood-testnet\" target=\"_blank\" rel=\"noopener\">Chainlink</a>。",
-  "home.noBetsNoSeed": "還沒有人下注，第一個押對區間的人拿走整個獎池"
+  "home.noBetsNoSeed": "還沒有人下注，押對區間的人平分押錯區間的籌碼"
 }

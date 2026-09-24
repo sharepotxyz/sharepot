@@ -47,7 +47,7 @@ log(`${CHAIN_KEY}: next session ${S.date} opens ${iso(S.open)}; betting window $
 
 const existing = new Map((await allMarkets(p)).map((m) => [`${m.metric}|${m.token.toLowerCase()}`, m]));
 // House prize per market: only on a test network (see server/open-markets.mjs for why mainnet has none).
-const SEED_ON = process.env.SEED_MARKETS === "1" || (process.env.SEED_MARKETS !== "0" && CHAIN_KEY.endsWith("testnet"));
+const SEED_ON = process.env.SEED_MARKETS === "1";   // no house prize unless asked for (see server/open-markets.mjs)
 const seedRaw = (s) => (SEED_ON && s.seed ? parseUnits(String(s.seed), s.decimals) : 0n);
 async function seed(id, s, amount) {
   const have = await publicClient.readContract({ address: s.token, abi: erc20Abi, functionName: "balanceOf", args: [wallet.account.address] });
