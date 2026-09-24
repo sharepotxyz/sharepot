@@ -23,3 +23,5 @@ evm/lib/
 evm/out/
 evm/cache/
 evm/broadcast/
+web/dist-evm/
+web/dist-evm-local/

@@ -162,6 +162,8 @@ gets its account opened once the rebate reaches $10.
   treasury.
 * **The issuer is trusted by construction.** Every xStock carries a permanent delegate and a pause switch; the vaults
   are ordinary token accounts to the issuer. Nothing on Solana can change that, so the site says it on every page.
+  On Robinhood Chain the same holds in ERC-20 terms: the issuer can pause a Stock Token, block any address — the
+  contract included — from sending or receiving it, and burn from any address.
 * **On devnet** both keys are single hot keys: the proposer lives on the server, the admin does not. **Before mainnet**
   the admin, the upgrade authority and the treasury move to a 2-of-3 Squads multisig that the server is not a member
   of; the server keeps only the proposer key, which can never touch funds. Corrections then need a second signature
@@ -193,6 +195,44 @@ xStocks are Token-2022 mints with several extensions. The program and the tests 
   slot on every xStock. It can move or freeze tokens in any account, these vaults included; while a mint is paused no
   bet, payout or sweep for it can move. The tests pause and resume a mint mid-market and show that everything settles
   correctly afterwards. The site states this on every page.
+
+## SharePot on Robinhood Chain
+
+The same product runs on a second chain: [Robinhood Chain](https://docs.robinhood.com/chain), an Ethereum L2 (chain
+id 4663; testnet 46630), staked in Robinhood's own Stock Tokens — on the testnet TSLA, AMZN, PLTR, NFLX and AMD, the
+ones the issuer's faucet hands out. [`evm/src/SharePot.sol`](evm/src/SharePot.sol) is a port of the program with the
+same money model, instruction for instruction; the pages are one code base built twice (`VITE_CHAIN=evm`), and a
+switch in the top bar links the two sites. Pools are separate per chain — a TSLA pool on Solana and one on Robinhood
+Chain are two pots — but both settle on the same official close, read by the same resolver code
+([`server/evm/resolve.mjs`](server/evm/resolve.mjs) imports the price module the Solana resolver uses), so one day's
+TSLA never has two answers. Addresses live in [`server/evm/chains.json`](server/evm/chains.json).
+
+What the EVM changes, and what it does not:
+
+* **One contract is the vault for every market.** Each market's tokens are tracked in its own `held` counter, never
+  read from the contract's balance, so two markets in the same token cannot see each other's funds and tokens sent
+  straight to the contract belong to nobody's pool. Bets and seeds are still booked at what actually arrived.
+* **No token accounts.** A position is a storage entry, a payout goes to the owner's address, a settled position is
+  deleted. `forfeitPosition` (30 days after resolution; the admin at once) first tries to pay the owner and only when
+  that transfer fails — the issuer has blocked the address — pays the treasury. A paused token fails both transfers,
+  so a pause never forfeits anyone.
+* **Robinhood Stock Tokens are plain ERC-20s** with 18 decimals and an ERC-8056 multiplier for dividends and splits;
+  the contract accounts in raw units exactly as on Solana, so a multiplier change scales every pool, stake and
+  payout alike. Their issuer controls: Robinhood can pause a token, block any address from sending or receiving it
+  (this contract included) and burn from any address. The site says so on every page.
+* **Approve, then bet.** The first stake in a token is two signatures (an ERC-20 approval for the contract, then the
+  bet), one after that.
+* **Positions live in a mapping,** so who holds one comes from the contract's events: the server keeps an index
+  ([`server/evm/index-events.mjs`](server/evm/index-events.mjs)) that the crank and the "My bets" page read.
+* **Not on this chain yet:** dispute filing, invite links and the site's own faucet (they verify Solana wallet
+  signatures). The testnet site sends you to Robinhood's faucet instead: 0.05 test ETH and five of each Stock Token
+  a day.
+
+The contract has the program's functions under the same names (`createMarket`, `seedMarket`, `placeBet`,
+`proposeResolution`, `finalizeResolution`, `voidMarket`, `voidStaleMarket`, `settlePosition`, `forfeitPosition`,
+`sweepMarket`, `updateConfig`) and the same hard limits (fee ≤ 10 %, 2–8 ranges, 24 h stale void, 30-day forfeit
+grace). Seventeen Foundry tests cover the same scenarios as the Solana suite plus the shared vault, blocked owners and
+a token that returns nothing (`cd evm && forge test`).
 
 ## Pre-IPO tokens and memes: the same pool, an on-chain close
 
@@ -257,7 +297,8 @@ Instruction | Who | What
 `forfeit_position` | anyone after 30 days, admin any time | only if the owner's token account is gone, frozen or set to require memos: the payout goes to the treasury, the position closes
 `sweep_market` | anyone | after all positions are settled: fees + dust to the treasury's account for that stock, close the vault and the market account; their rent goes back to the proposer that paid it
 
-Program id: `8TzdVXpqa52o3fBvYynSxHTWP4zuWfZmTvSkpdLT9rWW`
+Program id: `8TzdVXpqa52o3fBvYynSxHTWP4zuWfZmTvSkpdLT9rWW`. The EVM contract ([`evm/src/SharePot.sol`](evm/src/SharePot.sol))
+has the same functions under the same names; its addresses are in [`server/evm/chains.json`](server/evm/chains.json).
 
 ## Automation: the API and the program
 
@@ -308,13 +349,28 @@ SYMBOL=TSLA SESSION=2026-09-11 BET_SECS=120 CLUSTER=localnet STATE=./.local/stat
 CLUSTER=localnet SHAREPOT_SECRETS=./.local ADMIN_FINALIZE=1 ADMIN_KEYPAIR=$ANCHOR_WALLET node server/resolve.mjs
 ```
 
+The EVM side, on a local chain (Foundry: `forge`, `anvil`, `cast`):
+
+```bash
+cd evm && forge test                                                              # the 17 contract tests
+anvil &                                                                           # a local chain; account 0 = admin
+PROPOSER=<addr> TREASURY=<addr> MOCK_STOCKS="TSLA AMZN" forge script script/Deploy.s.sol --rpc-url http://127.0.0.1:8545 --private-key <key> --broadcast
+# put the printed addresses into a chains.json entry ("local": rpc, pot, deployBlock 0, stocks with thresholdsBps), then
+cd ../server && EVM_CHAIN=local EVM_CHAINS=./chains.local.json EVM_PROPOSER_KEY_FILE=<file> node evm/open-markets.mjs
+EVM_CHAIN=local EVM_CHAINS=./chains.local.json EVM_PROPOSER_KEY_FILE=<file> node evm/resolve.mjs
+(cd ../web && VITE_CHAIN=evm VITE_OUT_DIR=dist-evm-local VITE_EVM_POT=<pot> VITE_EVM_RPC=http://127.0.0.1:8545 VITE_EVM_CHAIN_ID=31337 npx vite build)
+EVM_CHAIN=local EVM_CHAINS=./chains.local.json STATIC_DIR=../web/dist-evm-local PORT=5042 node evm/api.mjs   # site + API on :5042
+```
+
 ## Status and next steps
 
 * devnet: live since 2026-09-14 — program `8TzdVXpqa52o3fBvYynSxHTWP4zuWfZmTvSkpdLT9rWW`, config
   `3tS4yRS8HrrSnNi4or5UGbfAyFpFrXTJAF3BNMivF5Uh`; nine mock stock tokens copying each issuer's mainnet extension set
   and decimals; markets open and settle on a schedule (`deploy/crontab.txt`), payouts are pushed automatically.
+* Robinhood Chain testnet: the same pools in Robinhood's test Stock Tokens (`server/evm/chains.json` has the contract
+  address; `deploy/crontab-evm.txt` the schedule), reachable from the chain switch in the top bar.
 * Next: weekend markets on the 24/7 xStock price, mainnet with real xStocks after an audit, upgrade authority and
-  treasury behind a Squads multisig.
+  treasury behind a Squads multisig; Robinhood Chain mainnet once the testnet has run a few weeks of sessions.
 
 ## License
 
