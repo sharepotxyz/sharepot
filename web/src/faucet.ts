@@ -53,12 +53,13 @@ function render() {
       busy = true; result = ""; render();
       // a wallet with no ETH (the browser test wallet) gets its fees from the gas faucet first
       if (HAS_GAS_FAUCET) { try { await refreshBalances(); } catch {} if (balances.loaded && balances.native < 0.00002) { result = `<div class="msg">${t("fc.evm.gasFirst")}</div>`; render(); await getGas(sess.address); await refreshBalances().catch(() => {}); } }
-      const done: string[] = [], failed: string[] = [];
+      const done: string[] = [], failed: string[] = []; let why = "";
       for (const tk of mocks) {
         try { const amt = BigInt(Math.round((tk.faucetUi ?? 1) * 10 ** tk.decimals)); await sess.mintMock(tk.mint!, amt); done.push(tk.token); result = `<div class="msg">${esc(done.join(", "))}…</div>`; render(); }
-        catch (e: any) { failed.push(tk.token); if (/reject|denied|cancel/i.test(String(e?.message ?? e))) break; }
+        catch (e: any) { failed.push(tk.token); why ||= String(e?.shortMessage ?? e?.message ?? e).split("\n")[0].slice(0, 160); console.error("mint", tk.token, e); if (/reject|denied|cancel/i.test(String(e?.message ?? e))) break; }
       }
-      result = done.length ? `<div class="msg ok">${t("fc.evm.minted", { list: esc(done.join(", ")) })}${failed.length ? ` <span class="note">${t("fc.evm.mintFailed", { list: esc(failed.join(", ")) })}</span>` : ""}<br><a href="/?cat=memes">${t("fc.pick")}</a></div>` : `<div class="msg err">${t("fc.evm.mintFailed", { list: esc(failed.join(", ")) })}</div>`;
+      const failNote = failed.length ? `${t("fc.evm.mintFailed", { list: esc(failed.join(", ")) })}${why ? ` <span class="hash">${esc(why)}</span>` : ""}` : "";
+      result = done.length ? `<div class="msg ok">${t("fc.evm.minted", { list: esc(done.join(", ")) })}${failNote ? ` <span class="note">${failNote}</span>` : ""}<br><a href="/?cat=memes">${t("fc.pick")}</a></div>` : `<div class="msg err">${failNote}</div>`;
       busy = false; await refreshBalances(); render();
     };
     return;
