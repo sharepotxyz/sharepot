@@ -24,8 +24,9 @@ async function init() {
       <p style="margin:0">${t("fc.evm.intro", { net: esc(NETWORK_NAME) })}</p>
       <div><div class="tlabel">${t("fc.evm.stocksLabel")}</div><div class="ftoks">${stockToks}</div></div>
       <ol class="fsteps">${[t("fc.evm.s1", { faucet: esc(EVM.faucet) }), t("fc.evm.s2", { net: esc(NETWORK_NAME) }), t("fc.evm.s3")].map((x) => `<li>${x}</li>`).join("")}</ol>
-      <a class="primary big" style="display:block;text-align:center;text-decoration:none" href="${esc(EVM.faucet)}" target="_blank" rel="noopener">${t("fc.evm.open")}</a>
+      <button class="primary big" id="fopen">${t("fc.evm.open")}</button>
       <p class="note" style="margin:0">${t("fc.evm.more")}</p>`;
+    const fo = document.getElementById("fopen"); if (fo) fo.onclick = () => window.open(EVM.faucet, "_blank", "noopener");
   } else {
     list.innerHTML = STOCK_ORDER.filter((s) => STOCK_META[s]?.active !== false).flatMap((s) => tokensOf(s).map((tk) => `<span class="ftok">${tickerBadge(s, false, true)}<b>${(tk.faucetUi ?? 2).toLocaleString("en-US", { maximumFractionDigits: 4 })} ${esc(tk.token)}</b><span class="note">${esc(tk.issuer)}</span></span>`)).join("") + `<span class="ftok"><b>+ 0.01 SOL</b><span class="note">${t("fc.forFees")}</span></span>`;
   }
