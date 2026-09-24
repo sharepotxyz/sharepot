@@ -351,5 +351,6 @@
   "fc.evm.s2": "지갑에서 <b>{net}</b>으로 전환하세요(연결할 때 사이트가 네트워크를 추가합니다).",
   "fc.evm.s3": "<a href=\"/\">마켓을 고르고</a> 개장 전에 몇 주 걸어 보세요.",
   "fc.evm.open": "Robinhood 수도꼭지 열기",
-  "fc.evm.more": "테스트 ETH가 더 필요하면: <a href=\"https://faucet.quicknode.com/robinhood/testnet\" target=\"_blank\" rel=\"noopener\">QuickNode</a> 또는 <a href=\"https://faucets.chain.link/robinhood-testnet\" target=\"_blank\" rel=\"noopener\">Chainlink</a>."
+  "fc.evm.more": "테스트 ETH가 더 필요하면: <a href=\"https://faucet.quicknode.com/robinhood/testnet\" target=\"_blank\" rel=\"noopener\">QuickNode</a> 또는 <a href=\"https://faucets.chain.link/robinhood-testnet\" target=\"_blank\" rel=\"noopener\">Chainlink</a>.",
+  "home.noBetsNoSeed": "아직 베팅이 없습니다. 처음 맞힌 사람이 풀 전체를 가져갑니다"
 }

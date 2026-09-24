@@ -1,6 +1,6 @@
 import { API_BASE, HAS_FAUCET_API, HAS_REFERRALS, IS_EVM, IS_TEST, NATIVE, NATIVE_LOW, NETWORK_NAME, OTHER_CHAIN, THIS_CHAIN_NAME } from "./config";
 import { STATUS, fetchBalances, fetchMarkets, type MarketView } from "@chain";
-import { CATEGORIES, STOCK_NAMES, STOCK_ORDER, issuerOf, loadPrices, loadStocks, priceOf, symbolOf, tokenSymbol, uiAmount } from "./stocks";
+import { CATEGORIES, STOCK_META, STOCK_NAMES, STOCK_ORDER, issuerOf, loadPrices, loadStocks, priceOf, symbolOf, tokenSymbol, uiAmount } from "./stocks";
 import { connectWallet, devWallet, listWallets, type Session } from "@wallet";
 import { bindIfPending, captureReferral } from "./referral";
 import { localizeUtc } from "./time";
@@ -123,7 +123,8 @@ function mountNavMenu() {
  *  link home with the category set. The stock picker within a category lives in the home page's filter row. */
 export function renderCatnav(active: string) {
   const el = document.getElementById("catnav"); if (!el) return;
-  const items: [string, string][] = [["all", t("nav.all")], ...CATEGORIES];
+  // only the categories this network lists (Robinhood Chain has stocks only); all three until the listing is known
+  const known = Object.values(STOCK_META), items: [string, string][] = [["all", t("nav.all")], ...CATEGORIES.filter(([k]) => !known.length || known.some((m) => m.category === k))];
   el.innerHTML = items.map(([k, label]) => topOpts.onStock
     ? `<button data-s="${esc(k)}" class="${active === k ? "on" : ""}">${esc(label)}</button>`
     : `<a href="/${k === "all" ? "" : "?cat=" + encodeURIComponent(k)}" class="${active === k ? "on" : ""}">${esc(label)}</a>`).join("");

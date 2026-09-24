@@ -351,5 +351,6 @@
   "fc.evm.s2": "ウォレットで <b>{net}</b> に切り替えます（接続時にサイトがネットワークを追加します）。",
   "fc.evm.s3": "<a href=\"/\">マーケットを選び</a>，寄り付き前に何株か賭けましょう。",
   "fc.evm.open": "Robinhood のフォーセットを開く",
-  "fc.evm.more": "テスト ETH がもっと必要なら：<a href=\"https://faucet.quicknode.com/robinhood/testnet\" target=\"_blank\" rel=\"noopener\">QuickNode</a> か <a href=\"https://faucets.chain.link/robinhood-testnet\" target=\"_blank\" rel=\"noopener\">Chainlink</a>。"
+  "fc.evm.more": "テスト ETH がもっと必要なら：<a href=\"https://faucet.quicknode.com/robinhood/testnet\" target=\"_blank\" rel=\"noopener\">QuickNode</a> か <a href=\"https://faucets.chain.link/robinhood-testnet\" target=\"_blank\" rel=\"noopener\">Chainlink</a>。",
+  "home.noBetsNoSeed": "まだ賭けはありません。最初に当てた人がプールを総取りします"
 }
