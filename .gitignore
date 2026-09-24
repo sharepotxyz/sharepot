@@ -19,3 +19,7 @@ data/
 data-*/
 ledger*/
 .anchor/
+evm/lib/
+evm/out/
+evm/cache/
+evm/broadcast/
