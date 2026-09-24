@@ -46,7 +46,11 @@ export async function connectWallet(choice: WalletChoice): Promise<Session> {
   };
   const placeBet = async (m: MarketView, bucket: number, amountRaw: number, onSent?: (txid: string) => void) => {
     await ensureChain(provider);
-    const token = m.mint as Address, amount = BigInt(Math.round(amountRaw));
+    // The token to approve is the one the contract records for this market, never the one a listing named: a wrong
+    // or forged API answer can then at most fail the bet, not make the wallet approve another token.
+    const onChain = (await publicClient.readContract({ address: potAddress, abi, functionName: "getMarket", args: [BigInt(m.id)] })) as any;
+    const token = onChain.token as Address, amount = BigInt(Math.round(amountRaw));
+    if (token.toLowerCase() !== m.mint.toLowerCase()) throw new Error("This market's token does not match the listing; reload the page.");
     const allowance = await publicClient.readContract({ address: token, abi: erc20Abi, functionName: "allowance", args: [account, potAddress] });
     if (allowance < amount) {
       const h = await client.writeContract({ chain, address: token, abi: erc20Abi, functionName: "approve", args: [potAddress, 2n ** 256n - 1n] });
