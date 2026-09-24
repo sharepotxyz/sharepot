@@ -75,7 +75,7 @@ export function homeHtml(data, html, url, tr) {
     const m0 = ev.markets[0], backed = ev.dist.some((x) => x > 0), label = (i) => bucketName(m0, i, ev.category, tr) || bucketLabel(m0, i, tr);
     const bar = backed ? ev.dist.map((f, i) => `<i style="width:${(f * 100).toFixed(1)}%;background:${bucketColor(m0, i)}"></i>`).join("") : `<i class="empty"></i>`;
     const i = ev.dist.indexOf(Math.max(...ev.dist));
-    const lead = backed ? tr.t("home.mostBacked", { label: `<b>${esc(label(i))}</b>`, pct: Math.round(ev.dist[i] * 100) }) : `<span class="note">${tr.t("home.noBets")}</span>`;
+    const lead = backed ? tr.t("home.mostBacked", { label: `<b>${esc(label(i))}</b>`, pct: Math.round(ev.dist[i] * 100) }) : `<span class="note">${tr.t(ev.markets.some((m) => m.seed > 0) ? "home.noBets" : "home.noBetsNoSeed")}</span>`;
     return `<a class="ev" href="/market.html?e=${encodeURIComponent(ev.key)}">
     <div class="ev-head">${tickerBadge(ev.symbol)}<span class="pill open">${tr.t("status.openShort")}</span></div>
     <div class="ev-top"><div><div class="ev-q">${esc(question(ev, tr))}</div><div class="ev-s">${esc(c.names[ev.symbol] ?? ev.symbol)} · ${ev.markets.map((m) => esc(c.tok(m).token)).join(" · ")}</div></div></div>
