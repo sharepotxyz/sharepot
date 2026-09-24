@@ -194,8 +194,10 @@ const SITE_URL = process.env.SITE_URL ?? "https://robinhood.sharepot.xyz";
 const LOOKUP_IP_DAILY = Number(process.env.LOOKUP_IP_DAILY ?? 200);
 let lookupDay = "", seenLookup = new Map();
 function chargeLookup(ip) { const d = new Date().toISOString().slice(0, 10); if (d !== lookupDay) { lookupDay = d; seenLookup = new Map(); } if ((seenLookup.get(ip) ?? 0) >= LOOKUP_IP_DAILY) throw Object.assign(new Error("too many wallet lookups; try again later"), { status: 429 }); seenLookup.set(ip, (seenLookup.get(ip) ?? 0) + 1); }
-/** Open positions come from the event index (no RPC), settled ones from this chain's settlement log. */
-function betHistory(wallet) {
+/** Open positions come from the event index (no RPC), settled ones from this chain's settlement log. `fresh` first
+ *  indexes the newest blocks, for the moment right after a first bet (the page binds then). */
+async function betHistory(wallet, fresh = false) {
+  if (fresh) { try { await sync(DATA); } catch {} }
   const w = wallet.toLowerCase(); let open = 0;
   for (const set of openPositions(DATA).values()) if (set.has(w)) open++;
   return { open, settled: readRows(SETTLEMENTS).filter((r) => String(r.owner).toLowerCase() === w).length };
@@ -289,7 +291,7 @@ const server = http.createServer(async (req, res) => {
     const rw = p.match(/^\/referral\/(0x[0-9a-fA-F]{40})$/);
     if (rw && req.method === "GET") {
       chargeLookup(clientIp(req));
-      const wallet = rw[1].toLowerCase(), h = betHistory(wallet);
+      const wallet = rw[1].toLowerCase(), h = await betHistory(wallet);
       return json(res, 200, { ...referralView(wallet), eligible: h.open + h.settled > 0, bets: h.open + h.settled, firstBet: h.settled === 0 && h.open > 0 }, { "cache-control": "no-store" });
     }
     if (p === "/referral/code" && req.method === "POST") {
@@ -297,7 +299,7 @@ const server = http.createServer(async (req, res) => {
       if (!isAddr(b.wallet)) return json(res, 400, { error: "wallet required" });
       const wallet = String(b.wallet).toLowerCase(), db = referrals.load(REFERRALS_FILE);
       if (!db.wallets[wallet]) {
-        const h = betHistory(wallet);
+        const h = await betHistory(wallet, true);
         if (h.open + h.settled === 0) return json(res, 403, { error: "place a bet first — the link unlocks with your first stake" });
         referrals.ensureCode(db, wallet); referrals.save(REFERRALS_FILE, db);
         console.log("referral code", wallet.slice(0, 8), db.wallets[wallet].code);
@@ -319,7 +321,7 @@ const server = http.createServer(async (req, res) => {
       const db = referrals.load(REFERRALS_FILE);
       if (db.bindings[wallet]) return json(res, db.bindings[wallet].code === code ? 200 : 409, db.bindings[wallet].code === code ? { ok: true, already: true } : { error: "this wallet is already bound to another code", permanent: true });
       if (!referrals.referrerOf(db, code)) return json(res, 404, { error: "unknown referral code", permanent: true });
-      const h = betHistory(wallet);
+      const h = await betHistory(wallet, true);
       if (h.open === 0 && h.settled === 0) return json(res, 409, { error: "place your first bet, then the link binds" });
       if (h.settled > 0) return json(res, 409, { error: "a referral link only counts on a wallet's first bet", permanent: true });
       const r = referrals.bind(db, { wallet, code, cluster: CHAIN_KEY });
