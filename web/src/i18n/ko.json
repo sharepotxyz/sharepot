@@ -352,5 +352,10 @@
   "fc.evm.s3": "<a href=\"/\">마켓을 고르고</a> 개장 전에 몇 주 걸어 보세요.",
   "fc.evm.open": "Robinhood 수도꼭지 열기",
   "fc.evm.more": "테스트 ETH가 더 필요하면: <a href=\"https://faucet.quicknode.com/robinhood/testnet\" target=\"_blank\" rel=\"noopener\">QuickNode</a> 또는 <a href=\"https://faucets.chain.link/robinhood-testnet\" target=\"_blank\" rel=\"noopener\">Chainlink</a>.",
-  "home.noBetsNoSeed": "아직 베팅이 없습니다. 맞힌 사람들이 틀린 구간의 판돈을 나눠 갖습니다"
+  "home.noBetsNoSeed": "아직 베팅이 없습니다. 맞힌 사람들이 틀린 구간의 판돈을 나눠 갖습니다",
+  "fc.evm.memes": "테스트용 밈 코인",
+  "fc.evm.memesNote": "오늘의 밈 {n}종은 테스트넷에서 목 토큰입니다. 하루치를 지갑에 발행합니다. 토큰마다 서명 한 번.",
+  "fc.evm.mint": "오늘의 밈 발행",
+  "fc.evm.minted": "{list} 발행 완료.",
+  "fc.evm.mintFailed": "{list} 발행 실패."
 }

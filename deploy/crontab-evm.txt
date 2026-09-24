@@ -9,3 +9,7 @@
 
 # propose results after the close, finalize after the dispute window, pay out and sweep (indexes positions first)
 */10 * * * * cd $S/apps/sharepot && EVM_CHAIN=robinhood-testnet DATA_DIR=$S/data EVM_PROPOSER_KEY_FILE=$S/secrets/evm/proposer.key flock -n $S/locks/evm-resolve.lock node server/evm/resolve.mjs >> $S/logs/evm-resolve.log 2>&1
+
+# memes: sample their mainnet quotes every minute (the closing hour's median is the day's close); 11:00 UTC pick tomorrow's
+* * * * * cd $S/apps/sharepot && EVM_CHAIN=robinhood-testnet DATA_DIR=$S/data flock -n $S/locks/evm-sample-prices.lock node server/evm/sample-prices.mjs >> $S/logs/evm-sample-prices.log 2>&1
+0 11 * * * cd $S/apps/sharepot && EVM_CHAIN=robinhood-testnet DATA_DIR=$S/data flock -n $S/locks/evm-select-chain.lock node server/evm/select-chain.mjs >> $S/logs/evm-select-chain.log 2>&1

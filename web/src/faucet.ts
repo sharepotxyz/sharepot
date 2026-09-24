@@ -19,7 +19,7 @@ async function init() {
     const intro = document.querySelector<HTMLElement>("[data-t='fc.intro']"), steps = document.querySelector<HTMLElement>("[data-t='fc.s1']")?.closest("ol");
     if (intro) intro.innerHTML = t("fc.evm.intro", { net: esc(NETWORK_NAME) });
     if (steps) steps.innerHTML = [t("fc.evm.s1", { faucet: esc(EVM.faucet) }), t("fc.evm.s2", { net: esc(NETWORK_NAME) }), t("fc.evm.s3")].map((s) => `<li>${s}</li>`).join("");
-    list.innerHTML = STOCK_ORDER.filter((s) => STOCK_META[s]?.active !== false).flatMap((s) => tokensOf(s).map((tk) => `<span class="ftok">${tickerBadge(s, false, true)}<b>5 ${esc(tk.token)}</b><span class="note">${esc(tk.issuer)}</span></span>`)).join("") + `<span class="ftok"><b>+ 0.05 ETH</b><span class="note">${t("fc.forFees")}</span></span>`;
+    list.innerHTML = STOCK_ORDER.filter((s) => STOCK_META[s]?.active !== false).flatMap((s) => tokensOf(s).map((tk) => `<span class="ftok">${tickerBadge(s, false, true)}<b>${tk.mock ? (tk.faucetUi ?? 1).toLocaleString("en-US", { maximumFractionDigits: 4 }) : 5} ${esc(tk.token)}</b><span class="note">${esc(tk.issuer)}</span></span>`)).join("") + `<span class="ftok"><b>+ 0.05 ETH</b><span class="note">${t("fc.forFees")}</span></span>`;
   } else {
     list.innerHTML = STOCK_ORDER.filter((s) => STOCK_META[s]?.active !== false).flatMap((s) => tokensOf(s).map((tk) => `<span class="ftok">${tickerBadge(s, false, true)}<b>${(tk.faucetUi ?? 2).toLocaleString("en-US", { maximumFractionDigits: 4 })} ${esc(tk.token)}</b><span class="note">${esc(tk.issuer)}</span></span>`)).join("") + `<span class="ftok"><b>+ 0.01 SOL</b><span class="note">${t("fc.forFees")}</span></span>`;
   }
@@ -29,10 +29,27 @@ function render() {
   if (!IS_TEST) { box.innerHTML = `<p style="margin:0">${t("fc.testOnly")}</p>`; return; }
   const s = getSession();
   if (!HAS_FAUCET_API) {
+    // testnet memes are mocks whose mint is public: the wallet mints them itself, one transaction per token
+    const mocks = STOCK_ORDER.filter((sy) => STOCK_META[sy]?.active !== false).flatMap((sy) => tokensOf(sy).filter((tk) => tk.mock && tk.mint));
     box.innerHTML = `<div class="thead"><b>${t("fc.get")}</b>${s ? `<span class="note mono">${short(s.address)}</span>` : ""}</div>
       <p class="note" style="margin:0">${t("fc.evm.s1", { faucet: esc(EVM.faucet) })}</p>
       <a class="primary big" style="display:block;text-align:center;text-decoration:none" href="${esc(EVM.faucet)}" target="_blank" rel="noopener">${t("fc.evm.open")}</a>
-      <p class="note" style="margin:0">${t("fc.evm.more")}</p>`;
+      <p class="note" style="margin:0">${t("fc.evm.more")}</p>
+      ${mocks.length ? `<hr><div class="thead"><b>${t("fc.evm.memes")}</b></div><p class="note" style="margin:0">${t("fc.evm.memesNote", { n: mocks.length })}</p>
+      ${s ? `<button class="primary big" id="mintbtn"${busy ? " disabled" : ""}>${busy ? t("fb.sending") : t("fc.evm.mint")}</button>` : `<button class="primary big" id="fconnect">${t("common.connectWallet")}</button>`}<div id="fmsg">${result}</div>` : ""}`;
+    const c = document.getElementById("fconnect"); if (c) c.onclick = (e) => { e.stopPropagation(); openWalletMenu(); };
+    const mb = document.getElementById("mintbtn") as HTMLButtonElement | null;
+    if (mb) mb.onclick = async () => {
+      const sess = getSession(); if (!sess?.mintMock) return;
+      busy = true; result = ""; render();
+      const done: string[] = [], failed: string[] = [];
+      for (const tk of mocks) {
+        try { const amt = BigInt(Math.round((tk.faucetUi ?? 1) * 10 ** tk.decimals)); await sess.mintMock(tk.mint!, amt); done.push(tk.token); result = `<div class="msg">${esc(done.join(", "))}…</div>`; render(); }
+        catch (e: any) { failed.push(tk.token); if (/reject|denied|cancel/i.test(String(e?.message ?? e))) break; }
+      }
+      result = done.length ? `<div class="msg ok">${t("fc.evm.minted", { list: esc(done.join(", ")) })}${failed.length ? ` <span class="note">${t("fc.evm.mintFailed", { list: esc(failed.join(", ")) })}</span>` : ""}<br><a href="/?cat=memes">${t("fc.pick")}</a></div>` : `<div class="msg err">${t("fc.evm.mintFailed", { list: esc(failed.join(", ")) })}</div>`;
+      busy = false; await refreshBalances(); render();
+    };
     return;
   }
   box.innerHTML = s

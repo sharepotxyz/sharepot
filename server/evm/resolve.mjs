@@ -11,7 +11,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { keccak256, stringToBytes } from "viem";
-import { closeMove, parseMetric, nasdaqMarketInfo, nyToUnix } from "../prices.mjs";
+import { closeMove, chainMove, parseMetric, nasdaqMarketInfo, nyToUnix } from "../prices.mjs";
+import { readRegistry } from "../chain-tokens.mjs";
 import { notify } from "../notify.mjs";
 import { CHAIN_KEY, chainCfg, walletFor, pot, allMarkets, readMarket, readConfig, readPosition, send, Status, stockByToken, explorerTx, publicClient, erc20Abi } from "./chain.mjs";
 import { sync, openPositions, evmDir } from "./index-events.mjs";
@@ -30,6 +31,15 @@ const FORFEITED_TOPIC = keccak256(stringToBytes("PositionForfeited(uint256,addre
 const short = (e) => String(e?.shortMessage ?? e?.message ?? e).split("\n")[0].slice(0, 200);
 
 const wallet = DRY ? null : walletFor();
+// memes: registry entries (mainnet address → testnet mock), so a market's token maps back to the address the
+// sampler quotes; a token no longer listed still resolves
+const EVM_SOURCES = { primary: "dexscreener", primaryNote: "api.dexscreener.com (deepest pair)", secondary: "geckoterminal", secondaryNote: "api.geckoterminal.com" };
+const memeByToken = new Map();
+for (const [addr, t] of Object.entries(readRegistry(DIR).tokens)) {
+  const v = { mainnet: addr, symbol: t.symbol, decimals: t.decimals };
+  memeByToken.set(addr.toLowerCase(), v); if (t.mock) memeByToken.set(String(t.mock).toLowerCase(), v);
+}
+const tokenMeta = (token) => stockByToken(token) ?? memeByToken.get(String(token).toLowerCase()) ?? null;
 const admin = process.env.ADMIN_FINALIZE === "1" && process.env.EVM_ADMIN_KEY_FILE ? walletFor(process.env.EVM_ADMIN_KEY_FILE) : null;
 const p = pot(wallet ?? undefined);
 
@@ -72,9 +82,19 @@ async function propose(markets, now) {
     try {
       if (m.status !== Status.Open || now < m.resolveAfterTs) continue;
       const spec = parseMetric(m.metric);
-      if (!spec || spec.kind !== "close") { log(`market #${m.id}: unsupported metric ${m.metric}`); continue; }
-      const thr = m.thresholds;
-      const ev = await closeMove(spec.symbol, spec.date, now, thr);
+      if (!spec) { log(`market #${m.id}: unknown metric ${m.metric}`); continue; }
+      const onChain = spec.kind === "day", thr = m.thresholds;
+      const ev = onChain ? chainMove(DIR, memeByToken.get(m.token.toLowerCase())?.mainnet ?? m.token, spec.symbol, spec.date, now, thr, EVM_SOURCES) : await closeMove(spec.symbol, spec.date, now, thr);
+      if (!ev.ok && onChain) {
+        // Not enough closing-hour quotes (sampler outage, or the token's price feed disappeared): hold; a market still
+        // unresolved a day after its resolve time is voided by the proposer, everyone refunded.
+        const overdue = now >= m.resolveAfterTs + OVERDUE_SECS;
+        log(`market #${m.id} (${m.metric}): cannot resolve yet — ${ev.reason}`);
+        if (await voidStale(m, ev.reason, now)) continue;
+        if (ev.alert) notify("⚠️ 鏈上盤無法結算(Robinhood)", `#${m.id} ${m.metric}\n${ev.reason}\n結算時間過 24h 後會自動 void 退款`, `evm-hold:${m.id}`, 120);
+        else if (overdue) notify("⏳ 鏈上盤結算逾時(Robinhood)", `#${m.id} ${m.metric} 日結束後 ${Math.round((now - m.resolveAfterTs) / 3600)} 小時仍未提案\n${ev.reason}\n過 24h 會自動 void 退款`, `evm-overdue:${m.id}`, 360);
+        continue;
+      }
       if (!ev.ok) {
         const prevTraded = await lastTradedDate(), overdue = now >= m.resolveAfterTs + OVERDUE_SECS;
         if (ev.disagree) {
@@ -93,7 +113,7 @@ async function propose(markets, now) {
         continue;
       }
       const bucket = thr.filter((t) => ev.value >= t).length;
-      log(`market #${m.id} (${m.metric}): move ${ev.value} ppm (${ev.detail.prevClose} → ${ev.detail.close}); thresholds ${thr.join("/")} → bucket ${bucket} of ${m.nBuckets}`);
+      log(`market #${m.id} (${m.metric}): move ${ev.value} ppm (${onChain ? ev.detail.baseline : ev.detail.prevClose} → ${ev.detail.close}${onChain ? `, median of ${ev.detail.samples} quotes` : ""}); thresholds ${thr.join("/")} → bucket ${bucket} of ${m.nBuckets}`);
       if (DRY) continue;
       const hash = createHash("sha256").update(ev.evidence.response).digest();
       const evidence = { chain: CHAIN_KEY, id: m.id, metric: m.metric, ...ev.detail, movePpm: ev.value, source: ev.evidence.source, response: ev.evidence.response, thresholds: thr, bucket, responseSha256: hash.toString("hex"), at: new Date().toISOString() };
@@ -124,7 +144,7 @@ async function settle(markets) {
   for (const m0 of markets) {
     if (m0.status !== Status.Resolved && m0.status !== Status.Voided) continue;
     try {
-      const stock = stockByToken(m0.token), close = officialClose(m0.id), multiplier = await multiplierOf(m0.token);
+      const stock = tokenMeta(m0.token), close = officialClose(m0.id), multiplier = await multiplierOf(m0.token);
       const owners = [...(open.get(m0.id) ?? [])];
       if (m0.positionsOpen > 0 && owners.length === 0) log(`market #${m0.id}: ${m0.positionsOpen} open position(s) on-chain but none in the event index — re-run after index-events catches up`);
       if (owners.length) log(`market #${m0.id}: settling ${owners.length} position(s)`);
@@ -170,7 +190,7 @@ const LOW_ETH = Number(process.env.PROPOSER_LOW_ETH ?? 0.005);
 if (wallet) { try { const b = Number(await publicClient.getBalance({ address: wallet.account.address })) / 1e18; if (b < LOW_ETH) notify("⛽ Robinhood proposer 快沒 ETH", `剩 ${b.toFixed(5)} ETH(${wallet.account.address})\n水龍頭:${chainCfg.faucet ?? "-"}`, "evm-proposer-low", 360); } catch {} }
 const cfg = await readConfig(p);
 const markets = await allMarkets(p);
-const now = Math.floor(Date.now() / 1000);
+const now = Number(process.env.NOW ?? Math.floor(Date.now() / 1000));   // NOW: test runs against a local chain with its clock moved
 log(`chain=${CHAIN_KEY} markets=${markets.length} proposer=${wallet?.account.address ?? "(dry)"} dry=${DRY} steps=${ONLY.join(",")}`);
 if (ONLY.includes("propose")) await propose(markets, now);
 if (ONLY.includes("finalize")) await finalize(await allMarkets(p), now, cfg);

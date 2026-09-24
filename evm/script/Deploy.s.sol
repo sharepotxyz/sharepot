@@ -32,7 +32,7 @@ contract Deploy is Script {
         if (bytes(mocks).length > 0) {
             string[] memory syms = vm.split(mocks, " ");
             for (uint256 i = 0; i < syms.length; i++) {
-                MockStock t = new MockStock(string.concat(syms[i], " (SharePot testnet mock)"), syms[i]);
+                MockStock t = new MockStock(string.concat(syms[i], " (SharePot testnet mock)"), syms[i], 18);
                 console.log(syms[i], address(t));
             }
         }

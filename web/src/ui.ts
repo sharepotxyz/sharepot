@@ -145,6 +145,7 @@ export function trackStocks(ms: MarketView[], all = true) {
   const seen = new Map<string, Tracked>(tracked.map((t) => [t.mint, t]));
   for (const m of ms) if (!seen.has(m.mint)) seen.set(m.mint, { symbol: symbolOf(m), token: tokenSymbol(m), mint: m.mint, view: m });
   tracked = [...seen.values()].sort((a, b) => STOCK_ORDER.indexOf(a.symbol) - STOCK_ORDER.indexOf(b.symbol) || a.token.localeCompare(b.token));
+  renderCatnav(topOpts.active ?? "");   // the listing is known now: only the categories this network has
   refreshBalances();
 }
 function ensureTracked() {

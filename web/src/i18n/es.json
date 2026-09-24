@@ -352,5 +352,10 @@
   "fc.evm.s3": "<a href=\"/\">Elige un mercado</a> y apuesta algunas acciones antes de la campana de apertura.",
   "fc.evm.open": "Abrir el grifo de Robinhood",
   "fc.evm.more": "Más ETH de prueba: <a href=\"https://faucet.quicknode.com/robinhood/testnet\" target=\"_blank\" rel=\"noopener\">QuickNode</a> o <a href=\"https://faucets.chain.link/robinhood-testnet\" target=\"_blank\" rel=\"noopener\">Chainlink</a>.",
-  "home.noBetsNoSeed": "Sin apuestas aún: quienes acierten el rango se reparten lo apostado en los demás"
+  "home.noBetsNoSeed": "Sin apuestas aún: quienes acierten el rango se reparten lo apostado en los demás",
+  "fc.evm.memes": "Memes de prueba",
+  "fc.evm.memesNote": "Los {n} memes de hoy son tokens simulados en la testnet: acuña un día entero en tu cartera, una firma por token.",
+  "fc.evm.mint": "Acuñar los memes de hoy",
+  "fc.evm.minted": "Acuñados {list}.",
+  "fc.evm.mintFailed": "No se pudo acuñar {list}."
 }

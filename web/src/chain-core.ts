@@ -26,6 +26,8 @@ export type Session = {
   placeBet: (m: MarketView, bucket: number, amountRaw: number, onSent?: (txid: string) => void) => Promise<string>;
   signMessage: (msg: Uint8Array) => Promise<Uint8Array>;
   signIn?: (input: SignInInput) => Promise<SignInOutput>;
+  /** Test networks only: mint `amountRaw` of a mock token (its mint is public) to this wallet; the transaction id. */
+  mintMock?: (token: string, amountRaw: bigint) => Promise<string>;
   disconnect: () => Promise<void>;
 };
 export type SignInInput = { domain: string; address: string; statement: string; uri?: string; version?: string; chainId?: string; nonce?: string; issuedAt?: string };

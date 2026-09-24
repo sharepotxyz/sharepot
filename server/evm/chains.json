@@ -74,7 +74,8 @@
         ],
         "seed": 0.5
       }
-    ]
+    ],
+    "test": true
   },
   "robinhood": {
     "name": "Robinhood Chain",
@@ -83,6 +84,7 @@
     "explorer": "https://robinhoodchain.blockscout.com",
     "pot": null,
     "deployBlock": null,
-    "stocks": []
+    "stocks": [],
+    "test": false
   }
 }

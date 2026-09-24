@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-/// A stand-in for a Robinhood Stock Token, for tests and for the testnet faucet: a plain 18-decimal ERC-20 with the
+/// A stand-in for a Robinhood Stock Token or a meme, for tests and for the testnet: a plain ERC-20 with the
 /// issuer controls the real one has (pause, per-address block, an ERC-8056-style UI multiplier for dividends and
 /// splits) plus an optional transfer fee, so the contract can be exercised against every behaviour it must survive.
 /// Anyone may mint: this token has no value.
 contract MockStock {
     string public name;
     string public symbol;
-    uint8 public constant decimals = 18;
+    uint8 public immutable decimals;
     uint256 public totalSupply;
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
@@ -30,9 +30,10 @@ contract MockStock {
     error InsufficientAllowance();
     error NotOwner();
 
-    constructor(string memory name_, string memory symbol_) {
+    constructor(string memory name_, string memory symbol_, uint8 decimals_) {
         name = name_;
         symbol = symbol_;
+        decimals = decimals_;
         owner = msg.sender;
     }
 

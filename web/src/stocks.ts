@@ -8,7 +8,7 @@ import { API_BASE } from "./config";
 import { dayEnd, fmtDay, fmtHm } from "./time";
 import { DAY_LOCALE, t } from "./i18n";
 
-type TokenInfo = { token: string; issuer: string; decimals: number; symbol: string; name: string; faucetUi?: number; mainnetMint?: string };
+type TokenInfo = { token: string; issuer: string; decimals: number; symbol: string; name: string; faucetUi?: number; mainnetMint?: string; mint?: string; mock?: boolean };
 export type Category = "stocks" | "preipo" | "memes";
 export const CATEGORIES: [Category, string][] = [["stocks", t("cat.stocks")], ["preipo", t("cat.preipo")], ["memes", t("cat.memes")]];
 export const CATEGORY_NAME: Record<string, string> = Object.fromEntries(CATEGORIES);

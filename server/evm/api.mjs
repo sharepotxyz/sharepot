@@ -16,6 +16,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { CHAIN_KEY, chainCfg, allMarkets, readConfig, publicClient, erc20Abi } from "./chain.mjs";
 import { sync, openPositions, evmDir } from "./index-events.mjs";
+import { readRegistry, asStock, REGISTRY_FILE } from "../chain-tokens.mjs";
+import { utcDate, addDays, chainClose } from "../prices.mjs";
 import { leaderboard } from "../points.mjs";
 import { homeHtml, eventHtml } from "../ssr.mjs";
 import { resolveLang, translateHtml, translator, langScript } from "../i18n.mjs";
@@ -30,10 +32,25 @@ const parseLine = (l) => { try { return JSON.parse(l); } catch { return null; } 
 const readRows = (f) => (fs.existsSync(f) ? fs.readFileSync(f, "utf8").split("\n").filter(Boolean).map(parseLine).filter(Boolean) : []);
 
 // ---------- listing ----------
-// One token per stock on this chain, named by its ticker (the issuer's token symbol is the ticker itself).
-const stocks = chainCfg.stocks.filter((s) => Array.isArray(s.thresholdsBps)).map((s) => ({ symbol: s.symbol, name: s.name, category: "stocks", kind: "close", thresholdsBps: s.thresholdsBps, icon: null, active: true,
+// One token per stock on this chain, named by its ticker (the issuer's token symbol is the ticker itself), plus the
+// memes select-chain.mjs picks (registry in <data>/evm/<chain>/chain-tokens.json, re-read when it changes). On the
+// testnet a meme's token is the mock the opener deployed, flagged `mock` so the faucet page offers to mint it.
+const TESTNET = chainCfg.test === true;
+const fromChains = chainCfg.stocks.filter((s) => Array.isArray(s.thresholdsBps)).map((s) => ({ symbol: s.symbol, name: s.name, category: "stocks", kind: "close", thresholdsBps: s.thresholdsBps, icon: null, active: true,
   tokens: [{ token: s.symbol, issuer: s.issuer, decimals: s.decimals, mint: s.token, mainnetMint: s.token, faucetUi: 5 }] }));
-const stockByToken = new Map(stocks.map((s) => [s.tokens[0].mint.toLowerCase(), s]));
+let stocks = fromChains, stockByToken = new Map(), listingStamp = null;
+function refreshListing() {
+  let stamp = "-"; try { const st = fs.statSync(REGISTRY_FILE(DIR)); stamp = `${st.size}:${st.mtimeMs}`; } catch {}
+  if (stamp === listingStamp) return;
+  listingStamp = stamp;
+  const today = utcDate(Date.now() / 1000), activeDays = [today, addDays(today, 1)];
+  const memes = Object.entries(readRegistry(DIR).tokens).map(([addr, t]) => ({ ...asStock(addr, t, TESTNET ? "devnet" : "mainnet"), active: (t.selectedFor ?? []).some((d) => activeDays.includes(d)), selectedFor: t.selectedFor ?? [], liquidity: t.liquidity ?? null, volume24h: t.volume24h ?? null }))
+    .filter((s) => s.tokens[0].mint).map((s) => ({ ...s, tokens: s.tokens.map((t) => ({ ...t, mock: TESTNET })) }))
+    .sort((a, b) => Number(b.active) - Number(a.active) || (b.volume24h ?? 0) - (a.volume24h ?? 0));
+  stocks = [...fromChains, ...memes];
+  stockByToken = new Map(stocks.map((s) => [s.tokens[0].mint.toLowerCase(), s]));
+}
+refreshListing(); setInterval(() => { try { refreshListing(); } catch (e) { console.error("listing refresh failed:", String(e?.message ?? e).slice(0, 120)); } }, 60_000).unref();
 
 // ---------- cached contract state ----------
 const multipliers = new Map();   // token → { m, at }: the ERC-8056 multiplier (dividends / splits), re-read every 10 min
@@ -72,7 +89,16 @@ setInterval(() => sync(DATA).catch((e) => console.error("event sync failed:", St
 let priceCache = { at: 0, prices: {} };
 async function refreshPrices() {
   const out = {};
-  await Promise.all(stocks.map(async (s) => {
+  // memes: the sampler's latest quote (server/evm/sample-prices.mjs) and the latest known daily close
+  try {
+    const latest = JSON.parse(fs.readFileSync(path.join(DIR, "ticks", "latest.json"), "utf8")), today = utcDate(Date.now() / 1000);
+    for (const s of stocks) if (s.kind === "day") for (const t of s.tokens) {
+      const px = latest.p?.[String(t.mainnetMint).toLowerCase()];
+      let prevClose = null; for (const d of [addDays(today, -1), addDays(today, -2)]) { const c = chainClose(DIR, String(t.mainnetMint).toLowerCase(), d); if (c.ok) { prevClose = { date: d, close: c.close, samples: c.samples }; break; } }
+      if (px > 0) out[t.token] = { usd: px, stock: null, prevClose };
+    }
+  } catch (e) { if (e?.code !== "ENOENT") console.error("meme prices:", String(e?.message ?? e).slice(0, 100)); }
+  await Promise.all(stocks.filter((s) => s.kind === "close").map(async (s) => {
     try {
       const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${s.symbol}?range=1d&interval=1d`, { headers: { "user-agent": "Mozilla/5.0 (SharePot)" }, signal: AbortSignal.timeout(8000) });
       const px = Number((await r.json())?.chart?.result?.[0]?.meta?.regularMarketPrice);

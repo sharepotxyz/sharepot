@@ -1,7 +1,7 @@
 // EVM wallets (MetaMask, Rabby, Coinbase Wallet, Robinhood Wallet, …) over EIP-6963 discovery with the plain
 // window.ethereum as fallback. Selected as "@wallet" when VITE_CHAIN=evm. Staking is two signatures the first time
 // (an ERC-20 approval for the contract, then the bet) and one after that.
-import { createWalletClient, custom, type Address, type EIP1193Provider } from "viem";
+import { createWalletClient, custom, parseAbiItem, type Address, type EIP1193Provider } from "viem";
 import { abi, erc20Abi, potAddress, publicClient } from "./chain-evm";
 import { EVM } from "./config";
 import type { MarketView, Session, SignInInput, SignInOutput, WalletChoice } from "./chain-core";
@@ -62,8 +62,14 @@ export async function connectWallet(choice: WalletChoice): Promise<Session> {
     await wait(hash);
     return hash;
   };
+  const mintMock = async (token: string, amountRaw: bigint) => {
+    await ensureChain(provider);
+    const hash = await client.writeContract({ chain, address: token as Address, abi: [parseAbiItem("function mint(address to, uint256 amount)")], functionName: "mint", args: [account, amountRaw] });
+    await wait(hash);
+    return hash;
+  };
   const signMessage = async (message: Uint8Array) => { const sig = await client.signMessage({ account, message: { raw: message } }); return Uint8Array.from(sig.slice(2).match(/.{2}/g)!.map((x) => parseInt(x, 16))); };
-  return { label: choice.name, address: account, placeBet, signMessage, disconnect: async () => {} };
+  return { label: choice.name, address: account, placeBet, signMessage, mintMock, disconnect: async () => {} };
 }
 
 /** No browser burner wallet on an EVM chain: gas has to come from a faucet anyway. */

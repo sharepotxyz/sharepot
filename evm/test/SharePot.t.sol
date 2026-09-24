@@ -32,8 +32,8 @@ contract SharePotTest is Test {
     function setUp() public {
         vm.warp(T0);
         pot = new SharePot(cfg());
-        tsla = new MockStock("Tesla", "TSLA");
-        nvda = new MockStock("NVIDIA", "NVDA");
+        tsla = new MockStock("Tesla", "TSLA", 18);
+        nvda = new MockStock("NVIDIA", "NVDA", 18);
         address[4] memory who = [alice, bob, carol, treasury];
         for (uint256 i = 0; i < who.length; i++) {
             tsla.mint(who[i], 1_000e18);

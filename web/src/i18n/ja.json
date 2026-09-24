@@ -352,5 +352,10 @@
   "fc.evm.s3": "<a href=\"/\">マーケットを選び</a>，寄り付き前に何株か賭けましょう。",
   "fc.evm.open": "Robinhood のフォーセットを開く",
   "fc.evm.more": "テスト ETH がもっと必要なら：<a href=\"https://faucet.quicknode.com/robinhood/testnet\" target=\"_blank\" rel=\"noopener\">QuickNode</a> か <a href=\"https://faucets.chain.link/robinhood-testnet\" target=\"_blank\" rel=\"noopener\">Chainlink</a>。",
-  "home.noBetsNoSeed": "まだ賭けはありません。当てた人たちが外れた側の賭け金を分け合います"
+  "home.noBetsNoSeed": "まだ賭けはありません。当てた人たちが外れた側の賭け金を分け合います",
+  "fc.evm.memes": "テスト用ミームコイン",
+  "fc.evm.memesNote": "今日の {n} 種のミームはテストネットではモックです。1 日分をウォレットに発行します。トークンごとに署名 1 回。",
+  "fc.evm.mint": "今日のミームを発行",
+  "fc.evm.minted": "{list} を発行しました。",
+  "fc.evm.mintFailed": "{list} を発行できませんでした。"
 }
