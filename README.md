@@ -16,7 +16,7 @@ browser test wallet, then press "Get test tokens": every wallet gets mock tokens
 SOL for fees. A new stock pool opens for every token at each US opening bell; a pre-IPO or meme day's pool opens at
 11:00 UTC the day before.
 
-Updates: [@sharepotxyz on X](https://x.com/sharepotxyz) · contact: hello@sharepot.xyz
+Contact: hello@sharepot.xyz
 
 ## How a market works
 
