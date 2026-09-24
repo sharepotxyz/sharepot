@@ -57,6 +57,7 @@ export function mountTopbar(opts: TopbarOpts = {}) {
     q.onkeydown = (e) => { if (e.key === "Enter" && !opts.onSearch) location.href = "/?q=" + encodeURIComponent(q.value.trim()); };
   }
   renderCatnav(opts.active ?? "");
+  loadStocks().then(() => renderCatnav(opts.active ?? "")).catch(() => {});   // pages that load no markets still get the network's own categories
   mountWallet();
   mountFeedback();
 }
