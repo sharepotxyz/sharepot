@@ -2,7 +2,7 @@
 // window.ethereum as fallback, plus a browser test wallet on test networks (a key kept in localStorage, like the
 // Solana one). Selected as "@wallet" when VITE_CHAIN=evm. Staking is two signatures the first time (an ERC-20
 // approval for the contract, then the bet) and one after that.
-import { createWalletClient, custom, http, parseAbiItem, type Address, type EIP1193Provider, type WalletClient } from "viem";
+import { createWalletClient, custom, http, parseAbiItem, type Address, type EIP1193Provider, type LocalAccount, type WalletClient } from "viem";
 import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import { abi, erc20Abi, potAddress, publicClient } from "./chain-evm";
 import { EVM, IS_TEST } from "./config";
@@ -40,8 +40,9 @@ async function wait(hash: `0x${string}`) {
   catch (e: any) { if (/timed? ?out|Timed out/i.test(String(e?.message ?? e))) throw Object.assign(new Error("Not confirmed after 90s. Check transaction " + hash), { unconfirmed: true, txid: hash }); throw e; }
 }
 
-/** The session behind both kinds of wallet: the same approve-then-bet flow, signed by whichever client. */
-function sessionFor(label: string, account: Address, client: WalletClient, before: () => Promise<void>, signMessage: Session["signMessage"]): Session {
+/** The session behind both kinds of wallet: the same approve-then-bet flow, signed by whichever client. `signer` is the
+ *  address for a wallet extension (it signs) and the local account object for the browser test wallet (viem signs). */
+function sessionFor(label: string, account: Address, client: WalletClient, before: () => Promise<void>, signMessage: Session["signMessage"], signer: Address | LocalAccount = account): Session {
   const placeBet = async (m: MarketView, bucket: number, amountRaw: number, onSent?: (txid: string) => void) => {
     await before();
     // The token to approve is the one the contract records for this market, never the one a listing named: a wrong
@@ -51,18 +52,18 @@ function sessionFor(label: string, account: Address, client: WalletClient, befor
     if (token.toLowerCase() !== m.mint.toLowerCase()) throw new Error("This market's token does not match the listing; reload the page.");
     const allowance = await publicClient.readContract({ address: token, abi: erc20Abi, functionName: "allowance", args: [account, potAddress] });
     if (allowance < amount) {
-      const h = await client.writeContract({ account, chain, address: token, abi: erc20Abi, functionName: "approve", args: [potAddress, 2n ** 256n - 1n] });
+      const h = await client.writeContract({ account: signer, chain, address: token, abi: erc20Abi, functionName: "approve", args: [potAddress, 2n ** 256n - 1n] });
       await wait(h);
     }
-    const { request } = await publicClient.simulateContract({ account, address: potAddress, abi, functionName: "placeBet", args: [BigInt(m.id), bucket, amount] });
-    const hash = await client.writeContract({ ...request, account, chain });
+    const { request } = await publicClient.simulateContract({ account: signer, address: potAddress, abi, functionName: "placeBet", args: [BigInt(m.id), bucket, amount] });
+    const hash = await client.writeContract({ ...request, account: signer, chain });
     onSent?.(hash);
     await wait(hash);
     return hash;
   };
   const mintMock = async (token: string, amountRaw: bigint) => {
     await before();
-    const hash = await client.writeContract({ account, chain, address: token as Address, abi: [parseAbiItem("function mint(address to, uint256 amount)")], functionName: "mint", args: [account, amountRaw] });
+    const hash = await client.writeContract({ account: signer, chain, address: token as Address, abi: [parseAbiItem("function mint(address to, uint256 amount)")], functionName: "mint", args: [account, amountRaw] });
     await wait(hash);
     return hash;
   };
@@ -94,7 +95,7 @@ export function devWallet(): Session | null {
   const account = privateKeyToAccount(key);
   const client = createWalletClient({ account, chain, transport: http(EVM.rpc, { retryCount: 3, retryDelay: 800 }) });
   const signMessage = async (message: Uint8Array) => hexToBytes(await account.signMessage({ message: { raw: message } }));
-  return sessionFor("Test wallet (browser)", account.address, client, async () => {}, signMessage);
+  return sessionFor("Test wallet (browser)", account.address, client, async () => {}, signMessage, account);
 }
 
 const hexToBytes = (sig: string) => Uint8Array.from(sig.slice(2).match(/.{2}/g)!.map((x) => parseInt(x, 16)));
