@@ -361,5 +361,9 @@
   "fc.evm.stocksHead": "주식 토큰 — Robinhood 수도꼭지에서 받습니다. 이 사이트는 주지 않습니다",
   "fc.evm.stocksLabel": "Robinhood 수도꼭지가 24시간마다 주는 양",
   "fc.evm.mintLabel": "한 번 누르면 발행",
-  "fc.evm.memesNone": "오늘 밈은 아직 없습니다. 내일 것은 11:00 UTC에 고릅니다."
+  "fc.evm.memesNone": "오늘 밈은 아직 없습니다. 내일 것은 11:00 UTC에 고릅니다.",
+  "fc.evm.gasNote": "수수료: 여기서는 베팅 한 번에 약 0.000002 ETH가 듭니다. 브라우저 테스트 지갑은 처음에 ETH가 없습니다.",
+  "fc.evm.gas": "수수료용 테스트 ETH 조금 받기",
+  "fc.evm.gasSent": "{amt} 보냈습니다.",
+  "fc.evm.gasFirst": "먼저 수수료용 테스트 ETH를 조금 받는 중…"
 }

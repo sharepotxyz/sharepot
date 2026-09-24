@@ -361,5 +361,9 @@
   "fc.evm.stocksHead": "股票代币——由 Robinhood 的水龙头发放，本站不发",
   "fc.evm.stocksLabel": "Robinhood 水龙头每 24 小时给",
   "fc.evm.mintLabel": "点一下铸出",
-  "fc.evm.memesNone": "今天还没有列出迷因币，明天的在 11:00 UTC 选出。"
+  "fc.evm.memesNone": "今天还没有列出迷因币，明天的在 11:00 UTC 选出。",
+  "fc.evm.gasNote": "手续费：这里下一注约 0.000002 ETH。浏览器测试钱包一开始没有 ETH。",
+  "fc.evm.gas": "领一点测试 ETH 付手续费",
+  "fc.evm.gasSent": "已发送 {amt}。",
+  "fc.evm.gasFirst": "先领一点测试 ETH 付手续费…"
 }

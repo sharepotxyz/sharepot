@@ -214,7 +214,7 @@ function renderWallet() {
   const el = document.getElementById("wallet"); if (!el) return;
   if (!session) {
     const wallets = listWallets();
-    el.innerHTML = `<button class="primary wbtn" id="wbtn">${t("wallet.connect")}</button>${menuOpen ? `<div class="menu" id="wmenu"><div class="mh">${t("wallet.connectTitle")}</div>${wallets.map((w, i) => `<button data-i="${i}">${esc(w.name)}</button>`).join("")}${IS_TEST && !IS_EVM ? `<button id="wdev" title="${esc(t("wallet.testTitle"))}">${t("wallet.test")}</button>` : ""}${!wallets.length && (IS_EVM || !IS_TEST) ? `<div class="note" style="padding:6px">${t(IS_EVM ? "wallet.installEvm" : "wallet.install")}</div>` : ""}</div>` : ""}`;
+    el.innerHTML = `<button class="primary wbtn" id="wbtn">${t("wallet.connect")}</button>${menuOpen ? `<div class="menu" id="wmenu"><div class="mh">${t("wallet.connectTitle")}</div>${wallets.map((w, i) => `<button data-i="${i}">${esc(w.name)}</button>`).join("")}${IS_TEST ? `<button id="wdev" title="${esc(t("wallet.testTitle"))}">${t("wallet.test")}</button>` : ""}${!wallets.length && (IS_EVM || !IS_TEST) ? `<div class="note" style="padding:6px">${t(IS_EVM ? "wallet.installEvm" : "wallet.install")}</div>` : ""}</div>` : ""}`;
     el.querySelector<HTMLButtonElement>("#wbtn")!.onclick = (e) => { e.stopPropagation(); closeNav(); menuOpen = !menuOpen; renderWallet(); };
     el.querySelectorAll<HTMLButtonElement>("button[data-i]").forEach((b) => (b.onclick = async () => { try { setSession(await connectWallet(wallets[Number(b.dataset.i)])); } catch (e: any) { alert(e.message ?? e); } }));
     const d = el.querySelector<HTMLButtonElement>("#wdev"); if (d) d.onclick = () => setSession(devWallet());

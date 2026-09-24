@@ -38,6 +38,8 @@ export const THIS_CHAIN_NAME = IS_EVM ? "Robinhood" : "Solana";
 export const HAS_REFERRALS = !IS_EVM;
 export const HAS_DISPUTES = !IS_EVM;
 export const HAS_FAUCET_API = !IS_EVM;
+/** A test EVM network: the API hands a little ETH for fees to any address (the browser test wallet has none). */
+export const HAS_GAS_FAUCET = IS_EVM && IS_TEST;
 
 // Only a well-formed id ever goes into an explorer link; anything else links nowhere (these land in href attributes).
 const b58 = (s: unknown) => (typeof s === "string" && /^[1-9A-HJ-NP-Za-km-z]{32,90}$/.test(s) ? s : null);

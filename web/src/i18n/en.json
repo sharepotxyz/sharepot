@@ -361,5 +361,9 @@
   "fc.evm.stocksHead": "Stock tokens — from Robinhood's faucet, not from this site",
   "fc.evm.stocksLabel": "Robinhood's faucet gives, every 24 hours",
   "fc.evm.mintLabel": "One press mints",
-  "fc.evm.memesNone": "No memes are listed for today yet; tomorrow's are picked at 11:00 UTC."
+  "fc.evm.memesNone": "No memes are listed for today yet; tomorrow's are picked at 11:00 UTC.",
+  "fc.evm.gasNote": "Fees: a bet costs about 0.000002 ETH here. The browser test wallet starts with none.",
+  "fc.evm.gas": "Get a little test ETH for fees",
+  "fc.evm.gasSent": "Sent {amt}.",
+  "fc.evm.gasFirst": "Getting a little test ETH for fees first…"
 }

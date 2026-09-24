@@ -3,8 +3,8 @@
 // issuer's faucet hands out the test Stock Tokens themselves, so the page points there.
 import { fetchMarkets } from "@chain";
 import { STOCK_META, STOCK_ORDER, loadPrices, loadStocks, tokensOf } from "./stocks";
-import { esc, getSession, mountTopbar, onSession, openWalletMenu, refreshBalances, short, tickerBadge, trackStocks } from "./ui";
-import { API_BASE, EVM, HAS_FAUCET_API, IS_EVM, IS_TEST, NETWORK_NAME, explorerTx } from "./config";
+import { balances, esc, getSession, mountTopbar, onSession, openWalletMenu, refreshBalances, short, tickerBadge, trackStocks } from "./ui";
+import { API_BASE, EVM, HAS_FAUCET_API, HAS_GAS_FAUCET, IS_EVM, IS_TEST, NETWORK_NAME, explorerTx } from "./config";
 import { t } from "./i18n";
 
 mountTopbar({});
@@ -42,12 +42,17 @@ function render() {
     box.innerHTML = `<div class="thead"><b>${t("fc.evm.memes")}</b>${s ? `<span class="note mono">${short(s.address)}</span>` : ""}</div>
       <p class="note" style="margin:0">${mocks.length ? t("fc.evm.memesNote", { n: mocks.length }) : t("fc.evm.memesNone")}</p>
       ${mocks.length ? `<div><div class="tlabel">${t("fc.evm.mintLabel")}</div><div class="ftoks">${memeToks}</div></div>
-      ${s ? `<button class="primary big" id="mintbtn"${busy ? " disabled" : ""}>${busy ? t("fb.sending") : t("fc.evm.mint")}</button>` : `<button class="primary big" id="fconnect">${t("common.connectWallet")}</button>`}<div id="fmsg">${result}</div>` : ""}`;
+      ${s ? `<button class="primary big" id="mintbtn"${busy ? " disabled" : ""}>${busy ? t("fb.sending") : t("fc.evm.mint")}</button>` : `<button class="primary big" id="fconnect">${t("common.connectWallet")}</button>`}<div id="fmsg">${result}</div>` : ""}
+      ${HAS_GAS_FAUCET && s ? `<hr><p class="note" style="margin:0">${t("fc.evm.gasNote")}</p><button id="gasbtn"${busy ? " disabled" : ""}>${t("fc.evm.gas")}</button><div id="gmsg"></div>` : ""}`;
     const c = document.getElementById("fconnect"); if (c) c.onclick = (e) => { e.stopPropagation(); openWalletMenu(); };
+    const gb = document.getElementById("gasbtn") as HTMLButtonElement | null;
+    if (gb) gb.onclick = async () => { gb.disabled = true; const g = document.getElementById("gmsg")!; g.innerHTML = `<span class="note">${t("fb.sending")}</span>`; g.innerHTML = await getGas(getSession()!.address); gb.disabled = false; await refreshBalances(); };
     const mb = document.getElementById("mintbtn") as HTMLButtonElement | null;
     if (mb) mb.onclick = async () => {
       const sess = getSession(); if (!sess?.mintMock) return;
       busy = true; result = ""; render();
+      // a wallet with no ETH (the browser test wallet) gets its fees from the gas faucet first
+      if (HAS_GAS_FAUCET) { try { await refreshBalances(); } catch {} if (balances.loaded && balances.native < 0.00002) { result = `<div class="msg">${t("fc.evm.gasFirst")}</div>`; render(); await getGas(sess.address); await refreshBalances().catch(() => {}); } }
       const done: string[] = [], failed: string[] = [];
       for (const tk of mocks) {
         try { const amt = BigInt(Math.round((tk.faucetUi ?? 1) * 10 ** tk.decimals)); await sess.mintMock(tk.mint!, amt); done.push(tk.token); result = `<div class="msg">${esc(done.join(", "))}…</div>`; render(); }
@@ -78,6 +83,14 @@ function render() {
     } catch { result = `<div class="msg err">${t("fc.unreachable")}</div>`; }
     busy = false; await refreshBalances(); render();
   };
+}
+/** POST /api/faucet: a little test ETH for fees; the API limits it per address and per day. Returns markup for the page. */
+async function getGas(address: string) {
+  try {
+    const r = await fetch(API_BASE + "/faucet", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ address }) });
+    const j = await r.json();
+    return r.ok ? `<div class="msg ok">${t("fc.evm.gasSent", { amt: esc(j.sent) })} <a href="${explorerTx(j.tx)}" target="_blank" rel="noopener">tx</a></div>` : `<div class="msg err">${esc(j.error ?? t("fc.err"))}</div>`;
+  } catch { return `<div class="msg err">${t("fc.unreachable")}</div>`; }
 }
 onSession(() => render());
 init().catch((e) => (box.innerHTML = `<div class="msg err">${t("fc.loadErr", { err: esc(e.message ?? e) })}</div>`));

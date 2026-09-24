@@ -361,5 +361,9 @@
   "fc.evm.stocksHead": "株式トークン—Robinhood のフォーセットが配ります。このサイトは配りません",
   "fc.evm.stocksLabel": "Robinhood のフォーセットが 24 時間ごとに配る量",
   "fc.evm.mintLabel": "1 回の操作で発行",
-  "fc.evm.memesNone": "今日のミームはまだありません。明日の分は 11:00 UTC に選ばれます。"
+  "fc.evm.memesNone": "今日のミームはまだありません。明日の分は 11:00 UTC に選ばれます。",
+  "fc.evm.gasNote": "手数料：ここでは 1 回の賭けに約 0.000002 ETH かかります。ブラウザのテストウォレットは最初 ETH を持っていません。",
+  "fc.evm.gas": "手数料用のテスト ETH を少し受け取る",
+  "fc.evm.gasSent": "{amt} を送りました。",
+  "fc.evm.gasFirst": "まず手数料用のテスト ETH を少し受け取ります…"
 }

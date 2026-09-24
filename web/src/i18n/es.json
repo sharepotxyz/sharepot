@@ -361,5 +361,9 @@
   "fc.evm.stocksHead": "Stock Tokens: los da el grifo de Robinhood, no este sitio",
   "fc.evm.stocksLabel": "El grifo de Robinhood da, cada 24 horas",
   "fc.evm.mintLabel": "Una pulsación acuña",
-  "fc.evm.memesNone": "Aún no hay memes listados para hoy; los de mañana se eligen a las 11:00 UTC."
+  "fc.evm.memesNone": "Aún no hay memes listados para hoy; los de mañana se eligen a las 11:00 UTC.",
+  "fc.evm.gasNote": "Comisiones: una apuesta cuesta aquí unos 0,000002 ETH. La cartera de prueba del navegador empieza sin nada.",
+  "fc.evm.gas": "Recibir un poco de ETH de prueba para comisiones",
+  "fc.evm.gasSent": "Enviado {amt}.",
+  "fc.evm.gasFirst": "Primero, un poco de ETH de prueba para comisiones…"
 }

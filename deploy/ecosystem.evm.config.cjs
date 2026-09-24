@@ -12,7 +12,7 @@ module.exports = {
       name: "sharepot-evm",
       cwd: `${HOME}/apps/sharepot`,
       script: "server/evm/api.mjs",
-      env: { EVM_CHAIN: "robinhood-testnet", DATA_DIR: `${HOME}/data`, STATIC_DIR: `${HOME}/apps/sharepot/web/dist-evm`, PORT: "5042", ...env },
+      env: { EVM_CHAIN: "robinhood-testnet", DATA_DIR: `${HOME}/data`, STATIC_DIR: `${HOME}/apps/sharepot/web/dist-evm`, PORT: "5042", EVM_FAUCET_KEY_FILE: `${HOME}/secrets/evm/faucet.key`, ...env },
       max_memory_restart: "300M",
       out_file: `${HOME}/logs/evm-api.out.log`,
       error_file: `${HOME}/logs/evm-api.err.log`,

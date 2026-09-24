@@ -361,5 +361,9 @@
   "fc.evm.stocksHead": "股票代幣——由 Robinhood 的水龍頭發放，本站不發",
   "fc.evm.stocksLabel": "Robinhood 水龍頭每 24 小時給",
   "fc.evm.mintLabel": "按一下鑄出",
-  "fc.evm.memesNone": "今天還沒有列出迷因幣，明天的在 11:00 UTC 選出。"
+  "fc.evm.memesNone": "今天還沒有列出迷因幣，明天的在 11:00 UTC 選出。",
+  "fc.evm.gasNote": "手續費：這裡下一注約 0.000002 ETH。瀏覽器測試錢包一開始沒有 ETH。",
+  "fc.evm.gas": "領一點測試 ETH 付手續費",
+  "fc.evm.gasSent": "已送出 {amt}。",
+  "fc.evm.gasFirst": "先領一點測試 ETH 付手續費…"
 }

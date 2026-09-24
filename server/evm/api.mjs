@@ -14,7 +14,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { CHAIN_KEY, chainCfg, allMarkets, readConfig, publicClient, erc20Abi } from "./chain.mjs";
+import { CHAIN_KEY, chainCfg, allMarkets, readConfig, publicClient, erc20Abi, walletFor } from "./chain.mjs";
 import { sync, openPositions, evmDir } from "./index-events.mjs";
 import { readRegistry, asStock, REGISTRY_FILE } from "../chain-tokens.mjs";
 import { utcDate, addDays, chainClose } from "../prices.mjs";
@@ -185,6 +185,9 @@ const readBody = (req, max = 4096) => new Promise((ok, err) => { let b = ""; req
 const clientIp = (req) => String(req.headers["cf-connecting-ip"] ?? req.socket.remoteAddress ?? "?").trim();
 const isAddr = (s) => /^0x[0-9a-fA-F]{40}$/.test(String(s ?? ""));
 const FEEDBACK = path.join(DIR, "feedback.jsonl");
+const GAS_WEI = BigInt(Math.round(Number(process.env.GAS_FAUCET_ETH ?? 0.0001) * 1e18)), GAS_LOW_WEI = GAS_WEI * 10n, GAS_DAILY_GLOBAL = Number(process.env.GAS_FAUCET_DAILY ?? 200);
+const gasFaucet = chainCfg.test && process.env.EVM_FAUCET_KEY_FILE && fs.existsSync(process.env.EVM_FAUCET_KEY_FILE) ? walletFor(process.env.EVM_FAUCET_KEY_FILE) : null;
+let gasDay = "", gasToday = 0; const gasAddr = new Set(), gasIp = new Map();
 let feedbackDay = "", feedbackToday = 0; const seenFeedback = new Map();
 
 const server = http.createServer(async (req, res) => {
@@ -193,7 +196,7 @@ const server = http.createServer(async (req, res) => {
   const p = url.pathname.slice(4);
   try {
     if (!url.pathname.startsWith("/api/")) return serveStatic(res, url, req);
-    if (p === "/health") return json(res, 200, { ok: true, chain: CHAIN_KEY, chainId: chainCfg.chainId, pot: chainCfg.pot, faucet: false });
+    if (p === "/health") return json(res, 200, { ok: true, chain: CHAIN_KEY, chainId: chainCfg.chainId, pot: chainCfg.pot, faucet: !!gasFaucet });
     if (p === "/stocks") return json(res, 200, { cluster: CHAIN_KEY, stocks }, { "cache-control": "public, max-age=60" });
     if (p === "/prices") return priceCache.at ? json(res, 200, { prices: priceCache.prices }, { "cache-control": "public, max-age=60" }) : json(res, 503, { error: "price source unavailable" });
     if (p === "/markets" || p === "/config" || /^\/markets\/\d+$/.test(p)) {
@@ -226,7 +229,29 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { window: win, at: board.at, totals: board.totals, entries: board.entries.slice(0, limit).map((e) => ({ ...e, test: false })) }, { "cache-control": "public, max-age=30" });
     }
     if (p === "/disputes") return json(res, 200, { disputes: [] });
-    if (p === "/faucet" || p === "/dispute" || p.startsWith("/referral")) return json(res, 403, { error: `not available on ${chainCfg.name}` });
+    // Gas faucet (test networks): a little ETH for fees to any address, so the browser test wallet can bet. Pays from a
+    // dedicated low-balance key; once per address per day, capped per network and per day.
+    if (p === "/faucet" && req.method === "POST") {
+      if (!gasFaucet) return json(res, 403, { error: `no faucet on ${chainCfg.name}` });
+      const day = new Date().toISOString().slice(0, 10); if (day !== gasDay) { gasDay = day; gasToday = 0; gasAddr.clear(); gasIp.clear(); }
+      let address; try { address = String(JSON.parse(await readBody(req)).address); } catch { return json(res, 400, { error: "body must be {\"address\": \"0x…\"}" }); }
+      if (!isAddr(address)) return json(res, 400, { error: "address must be 0x + 40 hex" });
+      const k = address.toLowerCase(), ip = clientIp(req);
+      if (gasAddr.has(k)) return json(res, 429, { error: "this address already received test ETH today" });
+      if ((gasIp.get(ip) ?? 0) >= 20) return json(res, 429, { error: "too many faucet requests from this network today" });
+      if (gasToday >= GAS_DAILY_GLOBAL) return json(res, 429, { error: "faucet is empty for today, try tomorrow" });
+      gasAddr.add(k); gasIp.set(ip, (gasIp.get(ip) ?? 0) + 1); gasToday++;
+      try {
+        const have = await publicClient.getBalance({ address });
+        if (have >= GAS_WEI) { gasAddr.delete(k); gasToday--; return json(res, 200, { ok: true, sent: "nothing: this wallet already has enough ETH for fees", tx: null }); }
+        const tx = await gasFaucet.client.sendTransaction({ account: gasFaucet.account, to: address, value: GAS_WEI });
+        const rc = await publicClient.waitForTransactionReceipt({ hash: tx, timeout: 90_000 });
+        if (rc.status !== "success") throw new Error("transfer reverted");
+        publicClient.getBalance({ address: gasFaucet.account.address }).then((b) => { if (b < GAS_LOW_WEI) notify("⛽ Robinhood gas 水龍頭快沒 ETH", `剩 ${(Number(b) / 1e18).toFixed(5)} ETH(${gasFaucet.account.address}),每次送 ${Number(GAS_WEI) / 1e18}`, "evm-gas-faucet-low", 360); }).catch(() => {});
+        return json(res, 200, { ok: true, address, sent: `${Number(GAS_WEI) / 1e18} ETH for fees`, tx });
+      } catch (e) { gasAddr.delete(k); gasToday--; console.error("gas faucet failed", String(e?.shortMessage ?? e?.message ?? e).slice(0, 160)); return json(res, 503, { error: "faucet transaction failed, try again in a minute" }); }
+    }
+    if (p === "/dispute" || p.startsWith("/referral")) return json(res, 403, { error: `not available on ${chainCfg.name}` });
     if (p === "/feedback" && req.method === "POST") {
       const day = new Date().toISOString().slice(0, 10); if (day !== feedbackDay) { feedbackDay = day; feedbackToday = 0; seenFeedback.clear(); }
       const ip = clientIp(req); seenFeedback.set(ip, (seenFeedback.get(ip) ?? 0) + 1);
