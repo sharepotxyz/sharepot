@@ -6,8 +6,8 @@
     "rpc": "https://rpc.testnet.chain.robinhood.com",
     "explorer": "https://explorer.testnet.chain.robinhood.com",
     "faucet": "https://faucet.testnet.chain.robinhood.com",
-    "pot": null,
-    "deployBlock": null,
+    "pot": "0x405d57163d4C7Fdb2b78086066802455968c1B43",
+    "deployBlock": 123609862,
     "stocks": [
       {
         "symbol": "TSLA",
