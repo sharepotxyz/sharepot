@@ -115,6 +115,12 @@ setInterval(() => refreshPrices().catch(() => {}), 60_000).unref(); refreshPrice
 // ---------- leaderboard ----------
 const SETTLEMENTS = path.join(DIR, "settlements.jsonl");
 const boards = new Map();
+// Our own wallets (the activity bots write data/evm/<chain>/test-wallets.json), so the board can say so out loud.
+let testWallets = { at: 0, set: new Set() };
+function ownWallets() {
+  if (Date.now() - testWallets.at > 300_000) { let set = new Set(); try { set = new Set((JSON.parse(fs.readFileSync(path.join(DIR, "test-wallets.json"), "utf8")).wallets ?? []).map((w) => String(w).toLowerCase())); } catch {} testWallets = { at: Date.now(), set }; }
+  return testWallets.set;
+}
 function leaderboardCached(key, since) {
   let stamp = "-"; try { const st = fs.statSync(SETTLEMENTS); stamp = `${st.size}:${st.mtimeMs}`; } catch {}
   const hit = boards.get(key);
@@ -257,7 +263,7 @@ const server = http.createServer(async (req, res) => {
       const days = win === "7d" ? 7 : win === "30d" ? 30 : 0, since = days ? Math.floor(Date.now() / 1000) - days * 86400 : 0;
       const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") ?? 100) || 100));
       const board = leaderboardCached(win, since);
-      return json(res, 200, { window: win, at: board.at, totals: board.totals, entries: board.entries.slice(0, limit).map((e) => ({ ...e, test: false })) }, { "cache-control": "public, max-age=30" });
+      return json(res, 200, { window: win, at: board.at, totals: board.totals, entries: board.entries.slice(0, limit).map((e) => ({ ...e, test: ownWallets().has(String(e.wallet).toLowerCase()) })) }, { "cache-control": "public, max-age=30" });
     }
     if (p === "/disputes") return json(res, 200, { disputes: [] });
     // Gas faucet (test networks): a little ETH for fees to any address, so the browser test wallet can bet. Pays from a

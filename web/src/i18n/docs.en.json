@@ -88,5 +88,12 @@
   "docs.faq.7": "Do I need to claim?",
   "docs.faq.8": "No. A permissionless crank pays every position after the dispute window and closes it; the rent goes back to you.",
   "docs.faq.9": "Is there real money on devnet?",
-  "docs.faq.10": "No. The tokens here are mock copies of the real ones with the same settings and no value."
+  "docs.faq.10": "No. The tokens here are mock copies of the real ones with the same settings and no value.",
+  "docs.toc.rh": "Robinhood Chain",
+  "docs.rh.h": "The same pools on Robinhood Chain",
+  "docs.rh.1": "<b>Two chains, one product.</b> SharePot also runs on <a href=\"https://docs.robinhood.com/chain\" target=\"_blank\" rel=\"noopener\">Robinhood Chain</a>, an Ethereum L2, staked in Robinhood's own Stock Tokens (TSLA, AMZN, PLTR, NFLX, AMD on the testnet) and in the chain's most-traded memes. The switch in the top bar takes you to the other chain's site.",
+  "docs.rh.2": "<b>Separate pots, one answer.</b> A TSLA pool on Solana and one on Robinhood Chain are two pots, but both settle on the same official close, read by the same resolver code, so one day's TSLA never has two results.",
+  "docs.rh.3": "<b>The contract is a port of the program.</b> Same functions under the same names, same fee rule (only on winnings, locked per bet), same two-step resolution with a dispute window, same permissionless payout. One contract is the vault for every market, with each market's tokens counted separately.",
+  "docs.rh.4": "<b>Approve, then bet.</b> The first stake in a token is two signatures (an ERC-20 approval, then the bet), one after that. A wallet that cannot receive the token (blocked by the issuer) is paid the moment it can, or, thirty days after settlement, its payout goes to the treasury.",
+  "docs.rh.5": "<b>Issuer controls, disclosed.</b> Robinhood can pause a Stock Token, block any address from sending or receiving it (this contract included) and burn from any address. Dividends and splits are applied as an on-chain multiplier; the accounting is in raw units, as on Solana. Dispute filing is Solana-only for now."
 }

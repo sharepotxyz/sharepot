@@ -88,5 +88,12 @@
   "docs.faq.7": "¿Tengo que reclamar algo?",
   "docs.faq.8": "No. Un crank que cualquiera puede ejecutar paga cada posición tras el período de disputa y la cierra; el rent vuelve a ti.",
   "docs.faq.9": "¿Hay dinero real en devnet?",
-  "docs.faq.10": "No. Los tokens de aquí son copias simuladas de los reales, con la misma configuración y sin valor."
+  "docs.faq.10": "No. Los tokens de aquí son copias simuladas de los reales, con la misma configuración y sin valor.",
+  "docs.toc.rh": "Robinhood Chain",
+  "docs.rh.h": "Los mismos fondos comunes en Robinhood Chain",
+  "docs.rh.1": "<b>Dos cadenas, un producto.</b> SharePot también funciona en <a href=\"https://docs.robinhood.com/chain\" target=\"_blank\" rel=\"noopener\">Robinhood Chain</a>, una L2 de Ethereum, apostando con los propios Stock Tokens de Robinhood (TSLA, AMZN, PLTR, NFLX, AMD en la testnet) y con los memes más negociados de la cadena. El selector de la barra superior lleva al sitio de la otra cadena.",
+  "docs.rh.2": "<b>Fondos separados, una sola respuesta.</b> Un fondo de TSLA en Solana y otro en Robinhood Chain son dos botes, pero ambos se liquidan con el mismo cierre oficial, leído por el mismo código de liquidación, así que el TSLA de un día nunca tiene dos resultados.",
+  "docs.rh.3": "<b>El contrato es una adaptación del programa.</b> Las mismas funciones con los mismos nombres, la misma regla de comisión (solo sobre ganancias, fijada al apostar), la misma liquidación en dos pasos con ventana de disputa, el mismo pago sin permisos. Un solo contrato es la bóveda de todos los mercados, con los tokens de cada mercado contados por separado.",
+  "docs.rh.4": "<b>Aprobar y después apostar.</b> La primera apuesta en un token son dos firmas (una aprobación ERC-20 y luego la apuesta); después, una. Una cartera que no puede recibir el token (bloqueada por el emisor) cobra en cuanto puede o, treinta días después de la liquidación, su pago va a la tesorería.",
+  "docs.rh.5": "<b>Controles del emisor, declarados.</b> Robinhood puede pausar un Stock Token, bloquear a cualquier dirección (este contrato incluido) para enviar o recibir, y quemar desde cualquier dirección. Dividendos y splits se aplican como un multiplicador en cadena; la contabilidad es en unidades brutas, como en Solana. Las disputas, por ahora, solo en Solana."
 }
