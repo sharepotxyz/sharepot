@@ -16,10 +16,16 @@ async function init() {
   trackStocks(ms);
   if (IS_EVM) {
     // the static intro and steps describe the Solana devnet faucet; this chain gets its own words
-    const intro = document.querySelector<HTMLElement>("[data-t='fc.intro']"), steps = document.querySelector<HTMLElement>("[data-t='fc.s1']")?.closest("ol");
-    if (intro) intro.innerHTML = t("fc.evm.intro", { net: esc(NETWORK_NAME) });
-    if (steps) steps.innerHTML = [t("fc.evm.s1", { faucet: esc(EVM.faucet) }), t("fc.evm.s2", { net: esc(NETWORK_NAME) }), t("fc.evm.s3")].map((s) => `<li>${s}</li>`).join("");
-    list.innerHTML = STOCK_ORDER.filter((s) => STOCK_META[s]?.active !== false).flatMap((s) => tokensOf(s).map((tk) => `<span class="ftok">${tickerBadge(s, false, true)}<b>${tk.mock ? (tk.faucetUi ?? 1).toLocaleString("en-US", { maximumFractionDigits: 4 }) : 5} ${esc(tk.token)}</b><span class="note">${esc(tk.issuer)}</span></span>`)).join("") + `<span class="ftok"><b>+ 0.05 ETH</b><span class="note">${t("fc.forFees")}</span></span>`;
+    // left card = the issuer's stock tokens, which only Robinhood's faucet hands out; right card (#faucet) = the memes,
+    // mock tokens this site lets the wallet mint. Two cards so nobody reads "faucet" as "this site sends stocks".
+    const left = list.closest(".fcard") as HTMLElement | null;
+    const stockToks = STOCK_ORDER.filter((s) => STOCK_META[s]?.active !== false).flatMap((s) => tokensOf(s).filter((tk) => !tk.mock).map((tk) => `<span class="ftok">${tickerBadge(s, false, true)}<b>5 ${esc(tk.token)}</b><span class="note">${esc(tk.issuer)}</span></span>`)).join("") + `<span class="ftok"><b>+ 0.05 ETH</b><span class="note">${t("fc.forFees")}</span></span>`;
+    if (left) left.innerHTML = `<div class="thead"><b>${t("fc.evm.stocksHead")}</b></div>
+      <p style="margin:0">${t("fc.evm.intro", { net: esc(NETWORK_NAME) })}</p>
+      <div><div class="tlabel">${t("fc.evm.stocksLabel")}</div><div class="ftoks">${stockToks}</div></div>
+      <ol class="fsteps">${[t("fc.evm.s1", { faucet: esc(EVM.faucet) }), t("fc.evm.s2", { net: esc(NETWORK_NAME) }), t("fc.evm.s3")].map((x) => `<li>${x}</li>`).join("")}</ol>
+      <a class="primary big" style="display:block;text-align:center;text-decoration:none" href="${esc(EVM.faucet)}" target="_blank" rel="noopener">${t("fc.evm.open")}</a>
+      <p class="note" style="margin:0">${t("fc.evm.more")}</p>`;
   } else {
     list.innerHTML = STOCK_ORDER.filter((s) => STOCK_META[s]?.active !== false).flatMap((s) => tokensOf(s).map((tk) => `<span class="ftok">${tickerBadge(s, false, true)}<b>${(tk.faucetUi ?? 2).toLocaleString("en-US", { maximumFractionDigits: 4 })} ${esc(tk.token)}</b><span class="note">${esc(tk.issuer)}</span></span>`)).join("") + `<span class="ftok"><b>+ 0.01 SOL</b><span class="note">${t("fc.forFees")}</span></span>`;
   }
@@ -31,11 +37,10 @@ function render() {
   if (!HAS_FAUCET_API) {
     // testnet memes are mocks whose mint is public: the wallet mints them itself, one transaction per token
     const mocks = STOCK_ORDER.filter((sy) => STOCK_META[sy]?.active !== false).flatMap((sy) => tokensOf(sy).filter((tk) => tk.mock && tk.mint));
-    box.innerHTML = `<div class="thead"><b>${t("fc.get")}</b>${s ? `<span class="note mono">${short(s.address)}</span>` : ""}</div>
-      <p class="note" style="margin:0">${t("fc.evm.s1", { faucet: esc(EVM.faucet) })}</p>
-      <a class="primary big" style="display:block;text-align:center;text-decoration:none" href="${esc(EVM.faucet)}" target="_blank" rel="noopener">${t("fc.evm.open")}</a>
-      <p class="note" style="margin:0">${t("fc.evm.more")}</p>
-      ${mocks.length ? `<hr><div class="thead"><b>${t("fc.evm.memes")}</b></div><p class="note" style="margin:0">${t("fc.evm.memesNote", { n: mocks.length })}</p>
+    const memeToks = mocks.map((tk) => `<span class="ftok">${tickerBadge(tk.symbol, false, true)}<b>${(tk.faucetUi ?? 1).toLocaleString("en-US", { maximumFractionDigits: 4 })} ${esc(tk.token)}</b><span class="note">${esc(tk.issuer)}</span></span>`).join("");
+    box.innerHTML = `<div class="thead"><b>${t("fc.evm.memes")}</b>${s ? `<span class="note mono">${short(s.address)}</span>` : ""}</div>
+      <p class="note" style="margin:0">${mocks.length ? t("fc.evm.memesNote", { n: mocks.length }) : t("fc.evm.memesNone")}</p>
+      ${mocks.length ? `<div><div class="tlabel">${t("fc.evm.mintLabel")}</div><div class="ftoks">${memeToks}</div></div>
       ${s ? `<button class="primary big" id="mintbtn"${busy ? " disabled" : ""}>${busy ? t("fb.sending") : t("fc.evm.mint")}</button>` : `<button class="primary big" id="fconnect">${t("common.connectWallet")}</button>`}<div id="fmsg">${result}</div>` : ""}`;
     const c = document.getElementById("fconnect"); if (c) c.onclick = (e) => { e.stopPropagation(); openWalletMenu(); };
     const mb = document.getElementById("mintbtn") as HTMLButtonElement | null;

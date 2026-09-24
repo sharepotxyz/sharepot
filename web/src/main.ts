@@ -7,8 +7,8 @@ import { t, tn } from "./i18n";
 import { bucketColor, esc, fmtTs, mountTopbar, renderCatnav, tickerBadge, timeLeft, trackStocks } from "./ui";
 
 const qs = new URLSearchParams(location.search);
-const state = { cat: qs.get("cat") ?? "all", stock: qs.get("stock") ?? "all", issuer: qs.get("issuer") ?? "all", status: qs.get("status") ?? "open", sort: qs.get("sort") ?? "closing", q: qs.get("q") ?? "" };
-const DEFAULTS: Record<string, string> = { cat: "all", stock: "all", issuer: "all", status: "open", sort: "closing", q: "" };
+const state = { cat: qs.get("cat") ?? "stocks", stock: qs.get("stock") ?? "all", issuer: qs.get("issuer") ?? "all", status: qs.get("status") ?? "open", sort: qs.get("sort") ?? "closing", q: qs.get("q") ?? "" };
+const DEFAULTS: Record<string, string> = { cat: "stocks", stock: "all", issuer: "all", status: "open", sort: "closing", q: "" };
 let events: EventView[] = [];
 const grid = document.getElementById("events")!, filters = document.getElementById("filters")!, summary = document.getElementById("summary")!;
 // the tabs under the top bar switch category; a stock within it is picked in the filter row
@@ -63,7 +63,7 @@ function update() {
   grid.innerHTML = list.length ? list.map(card).join("") : `<div class="empty-state">${t("home.empty")}</div>`;
   renderFilters(); renderCatnav(state.cat);
   // the pitch is for the front page; a category tab or a stock filter goes straight to those markets
-  const hero = document.querySelector<HTMLElement>(".hero"); if (hero) hero.hidden = state.cat !== "all" || state.stock !== "all";
+  const hero = document.querySelector<HTMLElement>(".hero"); if (hero) hero.hidden = state.cat !== DEFAULTS.cat || state.stock !== "all";
   const p = new URLSearchParams(); for (const [k, v] of Object.entries(state)) if (v && v !== DEFAULTS[k]) p.set(k, v);
   history.replaceState(null, "", p.toString() ? "?" + p : location.pathname);
 }

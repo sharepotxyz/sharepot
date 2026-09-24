@@ -357,5 +357,9 @@
   "fc.evm.memesNote": "Today's {n} memes are mock tokens on the testnet: mint a day's worth into your wallet, one signature per token.",
   "fc.evm.mint": "Mint today's memes",
   "fc.evm.minted": "Minted {list}.",
-  "fc.evm.mintFailed": "Could not mint {list}."
+  "fc.evm.mintFailed": "Could not mint {list}.",
+  "fc.evm.stocksHead": "Stock tokens — from Robinhood's faucet, not from this site",
+  "fc.evm.stocksLabel": "Robinhood's faucet gives, every 24 hours",
+  "fc.evm.mintLabel": "One press mints",
+  "fc.evm.memesNone": "No memes are listed for today yet; tomorrow's are picked at 11:00 UTC."
 }

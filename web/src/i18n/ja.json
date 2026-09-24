@@ -357,5 +357,9 @@
   "fc.evm.memesNote": "今日の {n} 種のミームはテストネットではモックです。1 日分をウォレットに発行します。トークンごとに署名 1 回。",
   "fc.evm.mint": "今日のミームを発行",
   "fc.evm.minted": "{list} を発行しました。",
-  "fc.evm.mintFailed": "{list} を発行できませんでした。"
+  "fc.evm.mintFailed": "{list} を発行できませんでした。",
+  "fc.evm.stocksHead": "株式トークン—Robinhood のフォーセットが配ります。このサイトは配りません",
+  "fc.evm.stocksLabel": "Robinhood のフォーセットが 24 時間ごとに配る量",
+  "fc.evm.mintLabel": "1 回の操作で発行",
+  "fc.evm.memesNone": "今日のミームはまだありません。明日の分は 11:00 UTC に選ばれます。"
 }

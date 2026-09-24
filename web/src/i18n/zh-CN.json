@@ -357,5 +357,9 @@
   "fc.evm.memesNote": "今天的 {n} 种迷因币在测试网上是假币，点一下就铸一天的量到你钱包，每种签一次。",
   "fc.evm.mint": "铸今天的迷因币",
   "fc.evm.minted": "已铸 {list}。",
-  "fc.evm.mintFailed": "铸不出 {list}。"
+  "fc.evm.mintFailed": "铸不出 {list}。",
+  "fc.evm.stocksHead": "股票代币——由 Robinhood 的水龙头发放，本站不发",
+  "fc.evm.stocksLabel": "Robinhood 水龙头每 24 小时给",
+  "fc.evm.mintLabel": "点一下铸出",
+  "fc.evm.memesNone": "今天还没有列出迷因币，明天的在 11:00 UTC 选出。"
 }

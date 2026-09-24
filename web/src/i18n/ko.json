@@ -357,5 +357,9 @@
   "fc.evm.memesNote": "오늘의 밈 {n}종은 테스트넷에서 목 토큰입니다. 하루치를 지갑에 발행합니다. 토큰마다 서명 한 번.",
   "fc.evm.mint": "오늘의 밈 발행",
   "fc.evm.minted": "{list} 발행 완료.",
-  "fc.evm.mintFailed": "{list} 발행 실패."
+  "fc.evm.mintFailed": "{list} 발행 실패.",
+  "fc.evm.stocksHead": "주식 토큰 — Robinhood 수도꼭지에서 받습니다. 이 사이트는 주지 않습니다",
+  "fc.evm.stocksLabel": "Robinhood 수도꼭지가 24시간마다 주는 양",
+  "fc.evm.mintLabel": "한 번 누르면 발행",
+  "fc.evm.memesNone": "오늘 밈은 아직 없습니다. 내일 것은 11:00 UTC에 고릅니다."
 }

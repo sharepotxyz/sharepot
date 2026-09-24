@@ -357,5 +357,9 @@
   "fc.evm.memesNote": "Los {n} memes de hoy son tokens simulados en la testnet: acuña un día entero en tu cartera, una firma por token.",
   "fc.evm.mint": "Acuñar los memes de hoy",
   "fc.evm.minted": "Acuñados {list}.",
-  "fc.evm.mintFailed": "No se pudo acuñar {list}."
+  "fc.evm.mintFailed": "No se pudo acuñar {list}.",
+  "fc.evm.stocksHead": "Stock Tokens: los da el grifo de Robinhood, no este sitio",
+  "fc.evm.stocksLabel": "El grifo de Robinhood da, cada 24 horas",
+  "fc.evm.mintLabel": "Una pulsación acuña",
+  "fc.evm.memesNone": "Aún no hay memes listados para hoy; los de mañana se eligen a las 11:00 UTC."
 }
