@@ -1,6 +1,6 @@
 // Home: events (one stock × one session) as compact cards, with stock tabs, status / issuer filters, sorting and search.
 // Detail — the four ranges, odds, pools — lives on the event page only.
-import { fetchMarkets } from "./chain";
+import { fetchMarkets } from "@chain";
 import { STATUS_LABEL, buildEvents, type EventView } from "./events";
 import { STOCK_META, STOCK_NAMES, STOCK_ORDER, bucketLabel, bucketName, fmtMove, fmtUsd, issuerOf, loadPrices, loadStocks, question, tokenSymbol } from "./stocks";
 import { t, tn } from "./i18n";

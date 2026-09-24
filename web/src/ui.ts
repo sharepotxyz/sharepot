@@ -1,9 +1,7 @@
-import { PublicKey } from "@solana/web3.js";
-import { getAssociatedTokenAddressSync } from "@solana/spl-token";
-import { API_BASE, CLUSTER, IS_TEST } from "./config";
-import { STATUS, connection, fetchMarkets, type MarketView } from "./chain";
+import { API_BASE, HAS_FAUCET_API, HAS_REFERRALS, IS_EVM, IS_TEST, NATIVE, NATIVE_LOW, NETWORK_NAME, OTHER_CHAIN, THIS_CHAIN_NAME } from "./config";
+import { STATUS, fetchBalances, fetchMarkets, type MarketView } from "@chain";
 import { CATEGORIES, STOCK_NAMES, STOCK_ORDER, issuerOf, loadPrices, loadStocks, priceOf, symbolOf, tokenSymbol, uiAmount } from "./stocks";
-import { connectWallet, devWallet, listWallets, type Session } from "./wallet";
+import { connectWallet, devWallet, listWallets, type Session } from "@wallet";
 import { bindIfPending, captureReferral } from "./referral";
 import { localizeUtc } from "./time";
 import { LANG, LANGS, setLang, t } from "./i18n";
@@ -12,7 +10,7 @@ import { LANG, LANGS, setLang, t } from "./i18n";
 export const esc = (v: unknown) => String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
 export const isBase58 = (s: unknown) => typeof s === "string" && /^[1-9A-HJ-NP-Za-km-z]{32,90}$/.test(s);
 export { fmtTs, timeLeft } from "./time";
-export const short = (pk: PublicKey | string) => { const s = pk.toString(); return s.slice(0, 4) + "…" + s.slice(-4); };
+export const short = (pk: string) => { const s = String(pk); return s.slice(0, 4) + "…" + s.slice(-4); };
 export function statusPill(m: MarketView) {
   const now = Date.now() / 1000;
   const label = m.status === 0 ? (now < m.openTs ? t("status.upcoming") : now < m.closeTs ? t("status.open") : t("status.trading")) : m.status === 1 ? t("status.proposed") : t("status.chain." + STATUS[m.status]);
@@ -37,16 +35,17 @@ export function mountTopbar(opts: TopbarOpts = {}) {
   topOpts = opts;
   localizeUtc();
   // test networks only: the faucet page, linked from the nav and the network badge (the badge stays visible on phones)
-  const faucetOn = IS_TEST && !!API_BASE, net = CLUSTER === "devnet" ? "Devnet" : CLUSTER;
+  const faucetOn = IS_TEST && (HAS_FAUCET_API ? !!API_BASE : true), net = NETWORK_NAME;
   const nb = document.getElementById("netbadge");
-  if (nb && IS_TEST) nb.innerHTML = faucetOn
+  // the same product runs on two chains: a two-way switch next to the network badge (both builds show it)
+  const sw = OTHER_CHAIN.url ? `<span class="chains" title="${esc(t("net.chainSwitch"))}"><span class="on">${esc(THIS_CHAIN_NAME)}</span><a href="${esc(OTHER_CHAIN.url)}">${esc(OTHER_CHAIN.name)}</a></span>` : "";
+  if (nb) nb.innerHTML = sw + (!IS_TEST ? "" : faucetOn
     ? `<a class="netbadge" href="/faucet.html" title="${esc(t("net.titleFaucet"))}">${esc(net)}</a>`
-    : `<span class="netbadge" title="${esc(t("net.title"))}">${esc(net)}</span>`;
+    : `<span class="netbadge" title="${esc(t("net.title"))}">${esc(net)}</span>`);
   const fl = document.getElementById("faucetlink"); if (fl) fl.hidden = !faucetOn;
   mountLang();
   mountNavMenu();
-  captureReferral();
-  onSession((s) => { if (s) bindIfPending(s); });
+  if (HAS_REFERRALS) { captureReferral(); onSession((s) => { if (s) bindIfPending(s); }); }
   const q = document.getElementById("q") as HTMLInputElement | null;
   if (q) {
     q.value = opts.q ?? "";
@@ -81,7 +80,7 @@ function mountFeedback() {
       if (msg.value.trim().length < 5) { note.textContent = t("fb.tooShort"); return; }
       send.disabled = true; send.textContent = t("fb.sending");
       try {
-        const r = await fetch(API_BASE + "/feedback", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: msg.value, contact: $<HTMLInputElement>("fbcontact").value, website: $<HTMLInputElement>("fbweb").value, page: location.pathname + location.search, wallet: session ? String(session.publicKey) : null }) });
+        const r = await fetch(API_BASE + "/feedback", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: msg.value, contact: $<HTMLInputElement>("fbcontact").value, website: $<HTMLInputElement>("fbweb").value, page: location.pathname + location.search, wallet: session ? session.address : null }) });
         const j = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(j.error ?? "HTTP " + r.status);
         box.innerHTML = `<div class="fbhead"><b>${t("fb.thanks")}</b></div><div class="note">${t("fb.thanksNote")}</div>`;
@@ -129,17 +128,17 @@ export function renderCatnav(active: string) {
 
 // ---------- wallet + balances ----------
 let session: Session | null = null;
-type Tracked = { symbol: string; token: string; mint: PublicKey; view: MarketView };
+type Tracked = { symbol: string; token: string; mint: string; view: MarketView };
 let tracked: Tracked[] = [];
-export const balances: { sol: number; loaded: boolean; raw: Record<string, number> } = { sol: 0, loaded: false, raw: {} };
+export const balances: { native: number; loaded: boolean; raw: Record<string, number> } = { native: 0, loaded: false, raw: {} };
 /** Pages hand the wallet the markets they already loaded (one tracked entry per mint). `all` = that was the whole
  *  market list; a page that only knows part of it (one event) or nothing (leaderboard, invite) leaves the rest to
  *  ensureTracked, so the wallet menu lists the same holdings on every page. */
 let trackedAll = false, selfTracking = false;
 export function trackStocks(ms: MarketView[], all = true) {
   if (all) trackedAll = true;
-  const seen = new Map<string, Tracked>(tracked.map((t) => [t.mint.toBase58(), t]));
-  for (const m of ms) if (!seen.has(m.mint.toBase58())) seen.set(m.mint.toBase58(), { symbol: symbolOf(m), token: tokenSymbol(m), mint: m.mint, view: m });
+  const seen = new Map<string, Tracked>(tracked.map((t) => [t.mint, t]));
+  for (const m of ms) if (!seen.has(m.mint)) seen.set(m.mint, { symbol: symbolOf(m), token: tokenSymbol(m), mint: m.mint, view: m });
   tracked = [...seen.values()].sort((a, b) => STOCK_ORDER.indexOf(a.symbol) - STOCK_ORDER.indexOf(b.symbol) || a.token.localeCompare(b.token));
   refreshBalances();
 }
@@ -151,9 +150,9 @@ function ensureTracked() {
   }, 1500);
 }
 /** Raw balance of this market's token in the connected wallet. */
-export const shareBalance = (m: MarketView) => balances.raw[m.mint.toBase58()] ?? 0;
-/** SOL + every tracked token balance of the connected wallet in two RPC calls (all of the wallet's accounts per token
- *  program at once, not one call per token), so public RPC rate limits are not hit. Concurrent calls share one request;
+export const shareBalance = (m: MarketView) => balances.raw[m.mint] ?? 0;
+/** The gas token + every tracked token balance of the connected wallet, in as few RPC calls as the chain allows
+ *  (@chain fetchBalances), so public RPC rate limits are not hit. Concurrent calls share one request;
  *  a call that arrives while one is in flight queues exactly one more run, because the running one may have started
  *  before the page's tokens were known (or before a faucet claim landed) and would otherwise report zeros as final. */
 let refreshing: Promise<void> | null = null, again = false;
@@ -166,18 +165,9 @@ export function refreshBalances(): Promise<void> {
   refreshing = (async () => {
     do try {
       again = false;
-      const owner = session?.publicKey; if (!owner) { balances.loaded = false; break; }
-      const programs = [...new Set(tracked.map((t) => t.view.tokenProgram.toBase58()))];
-      const [sol, ...lists] = await Promise.all([
-        connection.getBalance(owner),
-        ...programs.map((p) => connection.getParsedTokenAccountsByOwner(owner, { programId: new PublicKey(p) })),
-      ]);
-      const raw: Record<string, number> = {};
-      for (const list of lists) for (const a of list.value) {
-        const info = (a.account.data as any).parsed?.info; if (!info) continue;
-        raw[info.mint] = (raw[info.mint] ?? 0) + Number(info.tokenAmount?.amount ?? 0);
-      }
-      balances.sol = sol / 1e9; balances.raw = Object.fromEntries(tracked.map((t) => [t.mint.toBase58(), raw[t.mint.toBase58()] ?? 0])); balances.loaded = true;
+      const owner = session?.address; if (!owner) { balances.loaded = false; break; }
+      const b = await fetchBalances(owner, tracked.map((t) => t.view));
+      balances.native = b.native; balances.raw = Object.fromEntries(tracked.map((t) => [t.mint, b.raw[t.mint] ?? 0])); balances.loaded = true;
     } catch { balances.loaded = false; } while (again);
     renderWallet();
     balanceListeners.forEach((f) => { try { f(); } catch (e) { console.error(e); } });
@@ -218,15 +208,15 @@ function renderWallet() {
   const el = document.getElementById("wallet"); if (!el) return;
   if (!session) {
     const wallets = listWallets();
-    el.innerHTML = `<button class="primary wbtn" id="wbtn">${t("wallet.connect")}</button>${menuOpen ? `<div class="menu" id="wmenu"><div class="mh">${t("wallet.connectTitle")}</div>${wallets.map((w, i) => `<button data-i="${i}">${esc(w.name)}</button>`).join("")}${IS_TEST ? `<button id="wdev" title="${esc(t("wallet.testTitle"))}">${t("wallet.test")}</button>` : ""}${!wallets.length && !IS_TEST ? `<div class="note" style="padding:6px">${t("wallet.install")}</div>` : ""}</div>` : ""}`;
+    el.innerHTML = `<button class="primary wbtn" id="wbtn">${t("wallet.connect")}</button>${menuOpen ? `<div class="menu" id="wmenu"><div class="mh">${t("wallet.connectTitle")}</div>${wallets.map((w, i) => `<button data-i="${i}">${esc(w.name)}</button>`).join("")}${IS_TEST && !IS_EVM ? `<button id="wdev" title="${esc(t("wallet.testTitle"))}">${t("wallet.test")}</button>` : ""}${!wallets.length && (IS_EVM || !IS_TEST) ? `<div class="note" style="padding:6px">${t(IS_EVM ? "wallet.installEvm" : "wallet.install")}</div>` : ""}</div>` : ""}`;
     el.querySelector<HTMLButtonElement>("#wbtn")!.onclick = (e) => { e.stopPropagation(); closeNav(); menuOpen = !menuOpen; renderWallet(); };
     el.querySelectorAll<HTMLButtonElement>("button[data-i]").forEach((b) => (b.onclick = async () => { try { setSession(await connectWallet(wallets[Number(b.dataset.i)])); } catch (e: any) { alert(e.message ?? e); } }));
     const d = el.querySelector<HTMLButtonElement>("#wdev"); if (d) d.onclick = () => setSession(devWallet());
     return;
   }
   // holdings: one row per token (stock badge, token, stock · issuer, amount, dollar value), biggest value first
-  const addr = session.publicKey.toBase58();
-  const held = tracked.map((t) => ({ t, raw: balances.raw[t.mint.toBase58()] ?? 0 })).filter((h) => h.raw > 0)
+  const addr = session.address;
+  const held = tracked.map((t) => ({ t, raw: balances.raw[t.mint] ?? 0 })).filter((h) => h.raw > 0)
     .map((h) => { const amt = uiAmount(h.t.view, h.raw), p = priceOf(h.t.view); return { ...h, amt, usd: p != null ? amt * p : null }; })
     .sort((a, b) => (b.usd ?? -1) - (a.usd ?? -1) || STOCK_ORDER.indexOf(a.t.symbol) - STOCK_ORDER.indexOf(b.t.symbol));
   const priced = held.filter((h) => h.usd != null), total = priced.reduce((a, h) => a + h.usd!, 0);
@@ -234,10 +224,10 @@ function renderWallet() {
   const rows = !balances.loaded ? `<div class="note" style="padding:4px">${t("wallet.loading")}</div>` : held.length
     ? held.map((h) => `<div class="hold">${tickerBadge(h.t.symbol, false, true)}<span class="hname"><b>${esc(h.t.token)}</b><small>${esc(STOCK_NAMES[h.t.symbol] ?? h.t.symbol)} · ${esc(issuerOf(h.t.view))}</small></span><span class="hamt"><b>${h.amt.toLocaleString("en-US", { maximumFractionDigits: 4 })}</b><small>${h.usd != null ? usd(h.usd) : t("wallet.noPrice")}</small></span></div>`).join("")
     : `<div class="note" style="padding:4px">${t("wallet.none")}</div>`;
-  el.innerHTML = `<button class="wbtn" id="wbtn"><span class="dot"></span><span class="mono">${short(session.publicKey)}</span>${balances.loaded ? `<span class="note">${balances.sol.toFixed(3)} SOL</span>` : ""}</button>${menuOpen ? `<div class="menu wmenu" id="wmenu">
+  el.innerHTML = `<button class="wbtn" id="wbtn"><span class="dot"></span><span class="mono">${short(addr)}</span>${balances.loaded ? `<span class="note">${balances.native.toFixed(IS_EVM ? 4 : 3)} ${NATIVE}</span>` : ""}</button>${menuOpen ? `<div class="menu wmenu" id="wmenu">
     <div class="whead"><div><div class="mh">${esc(session.label === TEST_WALLET ? t("wallet.test") : session.label)}</div><button class="addr" id="wcopy" title="${esc(t("wallet.copyTitle"))}">${short(addr)}</button></div><button class="ghost" id="wdis">${t("wallet.disconnect")}</button></div>
-    <div class="wtotal"><span class="note">${t("wallet.stockTokens")}</span><span class="sol">${balances.loaded ? balances.sol.toFixed(3) + " SOL" : ""}</span><b>${!balances.loaded ? "…" : priced.length ? usd(total) : held.length ? "—" : "$0.00"}</b></div>
-    ${balances.loaded && balances.sol < 0.002 ? `<div class="note warn" style="padding:0 4px">${t("wallet.lowSol")}</div>` : ""}
+    <div class="wtotal"><span class="note">${t("wallet.stockTokens")}</span><span class="sol">${balances.loaded ? balances.native.toFixed(IS_EVM ? 4 : 3) + " " + NATIVE : ""}</span><b>${!balances.loaded ? "…" : priced.length ? usd(total) : held.length ? "—" : "$0.00"}</b></div>
+    ${balances.loaded && balances.native < NATIVE_LOW ? `<div class="note warn" style="padding:0 4px">${t(IS_EVM ? "wallet.lowEth" : "wallet.lowSol")}</div>` : ""}
     <div class="wlist" id="wholdings">${rows}</div><hr>
     <a class="mi" href="/portfolio.html">${t("nav.mybets")}</a></div>` : ""}`;
   el.querySelector<HTMLButtonElement>("#wbtn")!.onclick = (e) => { e.stopPropagation(); closeNav(); menuOpen = !menuOpen; renderWallet(); };

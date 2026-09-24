@@ -341,5 +341,15 @@
   "title.docs": "SharePot · 運作方式",
   "meta.docs": "SharePot：美股每日彩池制（同注分彩）預測，以代幣化股票本身押注與派彩。說明市場、結算、手續費與信任模型如何運作，並附示範影片。",
   "title.leaderboard": "SharePot · 排行榜",
-  "title.invite": "SharePot · 邀請朋友"
+  "title.invite": "SharePot · 邀請朋友",
+  "wallet.lowEth": "ETH 不夠付網路手續費。",
+  "wallet.installEvm": "請安裝 MetaMask、Rabby 或 Robinhood Wallet。",
+  "trade.errEth": "你的錢包 ETH 不夠付網路手續費。",
+  "net.chainSwitch": "同樣的彩池在兩條鏈上都有",
+  "fc.evm.intro": "<b>{net}</b> 上的 SharePot 用的是發行方自己的測試股票代幣（Tesla、Amazon、Palantir、Netflix、AMD），由 Robinhood 的水龍頭免費發放。本站沒有自己的水龍頭。",
+  "fc.evm.s1": "打開 <a href=\"{faucet}\" target=\"_blank\" rel=\"noopener\">Robinhood Chain 測試網水龍頭</a>，貼上你的錢包地址領取：0.05 測試 ETH（付手續費）加每種股票代幣 5 股，每 24 小時一次。",
+  "fc.evm.s2": "在錢包裡切到 <b>{net}</b>（連線時網站會自動幫你加這條鏈）。",
+  "fc.evm.s3": "<a href=\"/\">挑一個盤</a>，在開盤鐘響前押幾股。",
+  "fc.evm.open": "打開 Robinhood 水龍頭",
+  "fc.evm.more": "還要更多測試 ETH：<a href=\"https://faucet.quicknode.com/robinhood/testnet\" target=\"_blank\" rel=\"noopener\">QuickNode</a> 或 <a href=\"https://faucets.chain.link/robinhood-testnet\" target=\"_blank\" rel=\"noopener\">Chainlink</a>。"
 }

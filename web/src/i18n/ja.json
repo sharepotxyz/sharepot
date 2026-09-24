@@ -341,5 +341,15 @@
   "title.docs": "SharePot · 仕組み",
   "meta.docs": "SharePot：米国株を対象にした日次のパリミュチュエル方式プール。ステークも払い戻しもトークン化株式そのもので行います。マーケット、決済、手数料、トラストモデルの仕組みをデモ動画付きで解説します。",
   "title.leaderboard": "SharePot · ランキング",
-  "title.invite": "SharePot · 友だちを招待"
+  "title.invite": "SharePot · 友だちを招待",
+  "wallet.lowEth": "ネットワーク手数料を払う ETH が足りません。",
+  "wallet.installEvm": "MetaMask、Rabby または Robinhood Wallet をインストールしてください。",
+  "trade.errEth": "ウォレットの ETH がネットワーク手数料に足りません。",
+  "net.chainSwitch": "同じプールが 2 つのチェーンで動いています",
+  "fc.evm.intro": "<b>{net}</b> 上の SharePot は発行元自身のテスト株式トークン（Tesla、Amazon、Palantir、Netflix、AMD）を使います。Robinhood のフォーセットが無料で配っています。このサイトにフォーセットはありません。",
+  "fc.evm.s1": "<a href=\"{faucet}\" target=\"_blank\" rel=\"noopener\">Robinhood Chain テストネットのフォーセット</a>を開き，ウォレットアドレスを貼って受け取ります：手数料用のテスト ETH 0.05 と各株式トークン 5 株，24 時間に 1 回。",
+  "fc.evm.s2": "ウォレットで <b>{net}</b> に切り替えます（接続時にサイトがネットワークを追加します）。",
+  "fc.evm.s3": "<a href=\"/\">マーケットを選び</a>，寄り付き前に何株か賭けましょう。",
+  "fc.evm.open": "Robinhood のフォーセットを開く",
+  "fc.evm.more": "テスト ETH がもっと必要なら：<a href=\"https://faucet.quicknode.com/robinhood/testnet\" target=\"_blank\" rel=\"noopener\">QuickNode</a> か <a href=\"https://faucets.chain.link/robinhood-testnet\" target=\"_blank\" rel=\"noopener\">Chainlink</a>。"
 }

@@ -341,5 +341,15 @@
   "title.docs": "SharePot · Cómo funciona",
   "meta.docs": "SharePot: pozos diarios de apuestas mutuas (parimutuel) sobre acciones de EE. UU., con apuestas y pagos en la propia acción tokenizada. Cómo funcionan los mercados, la liquidación, las comisiones y el modelo de confianza, con un video de demostración.",
   "title.leaderboard": "SharePot · Clasificación",
-  "title.invite": "SharePot · Invita a tus amigos"
+  "title.invite": "SharePot · Invita a tus amigos",
+  "wallet.lowEth": "No hay suficiente ETH para las comisiones de red.",
+  "wallet.installEvm": "Instala MetaMask, Rabby o Robinhood Wallet.",
+  "trade.errEth": "Tu cartera no tiene suficiente ETH para la comisión de red.",
+  "net.chainSwitch": "Los mismos fondos comunes funcionan en dos cadenas",
+  "fc.evm.intro": "SharePot en <b>{net}</b> usa los propios Stock Tokens de prueba del emisor (Tesla, Amazon, Palantir, Netflix y AMD), que Robinhood reparte gratis en su grifo. Este sitio no tiene grifo propio.",
+  "fc.evm.s1": "Abre el <a href=\"{faucet}\" target=\"_blank\" rel=\"noopener\">grifo de la testnet de Robinhood Chain</a>, pega la dirección de tu cartera y reclama: 0,05 ETH de prueba para comisiones más 5 de cada Stock Token, una vez cada 24 horas.",
+  "fc.evm.s2": "En tu cartera, cambia a <b>{net}</b> (el sitio añade la red al conectar).",
+  "fc.evm.s3": "<a href=\"/\">Elige un mercado</a> y apuesta algunas acciones antes de la campana de apertura.",
+  "fc.evm.open": "Abrir el grifo de Robinhood",
+  "fc.evm.more": "Más ETH de prueba: <a href=\"https://faucet.quicknode.com/robinhood/testnet\" target=\"_blank\" rel=\"noopener\">QuickNode</a> o <a href=\"https://faucets.chain.link/robinhood-testnet\" target=\"_blank\" rel=\"noopener\">Chainlink</a>."
 }

@@ -341,5 +341,15 @@
   "title.docs": "SharePot · 이용 안내",
   "meta.docs": "SharePot: 토큰화 주식 그 자체로 스테이크하고 지급받는 미국 주식 데일리 패리뮤추얼 방식 풀. 마켓, 정산, 수수료, 신뢰 모델의 작동 방식을 데모 영상과 함께 설명합니다.",
   "title.leaderboard": "SharePot · 리더보드",
-  "title.invite": "SharePot · 친구 초대"
+  "title.invite": "SharePot · 친구 초대",
+  "wallet.lowEth": "네트워크 수수료를 낼 ETH가 부족합니다.",
+  "wallet.installEvm": "MetaMask, Rabby 또는 Robinhood Wallet을 설치하세요.",
+  "trade.errEth": "지갑의 ETH가 네트워크 수수료에 부족합니다.",
+  "net.chainSwitch": "같은 풀이 두 체인에서 돌아갑니다",
+  "fc.evm.intro": "<b>{net}</b>의 SharePot은 발행사가 직접 만든 테스트 주식 토큰(Tesla, Amazon, Palantir, Netflix, AMD)을 씁니다. Robinhood 수도꼭지에서 무료로 나눠 줍니다. 이 사이트에는 자체 수도꼭지가 없습니다.",
+  "fc.evm.s1": "<a href=\"{faucet}\" target=\"_blank\" rel=\"noopener\">Robinhood Chain 테스트넷 수도꼭지</a>를 열고 지갑 주소를 붙여 넣어 받으세요: 수수료용 테스트 ETH 0.05와 각 주식 토큰 5주, 24시간에 한 번.",
+  "fc.evm.s2": "지갑에서 <b>{net}</b>으로 전환하세요(연결할 때 사이트가 네트워크를 추가합니다).",
+  "fc.evm.s3": "<a href=\"/\">마켓을 고르고</a> 개장 전에 몇 주 걸어 보세요.",
+  "fc.evm.open": "Robinhood 수도꼭지 열기",
+  "fc.evm.more": "테스트 ETH가 더 필요하면: <a href=\"https://faucet.quicknode.com/robinhood/testnet\" target=\"_blank\" rel=\"noopener\">QuickNode</a> 또는 <a href=\"https://faucets.chain.link/robinhood-testnet\" target=\"_blank\" rel=\"noopener\">Chainlink</a>."
 }

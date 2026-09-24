@@ -3,7 +3,7 @@
 // in /api/stocks (one stock can trade as several tokens from different issuers; each token has its own pool).
 // Amounts on-chain are raw token units; wallets show them times the token's ScaledUiAmount multiplier (dividends and
 // splits), and so does this page. Thresholds are the move in ppm (1 ppm = 0.01 bp).
-import type { MarketView } from "./chain";
+import type { MarketView } from "./chain-core";
 import { API_BASE } from "./config";
 import { dayEnd, fmtDay, fmtHm } from "./time";
 import { DAY_LOCALE, t } from "./i18n";
@@ -38,7 +38,7 @@ export async function loadStocks() {
   } catch {}
 }
 export const tokensOf = (symbol: string) => tokensByStock.get(symbol) ?? [];
-export const tokenInfo = (m: MarketView) => byMint.get(m.mint.toBase58());
+export const tokenInfo = (m: MarketView) => byMint.get(m.mint);
 /** "<SYMBOL>.close:<date>" = official close of a New York session; "<SYMBOL>.day:<date>" = on-chain close of a UTC day. */
 export function parseMetric(tag: string) {
   const m = tag.match(/^([A-Za-z0-9$_\-]{1,20})\.(close|day):(\d{4}-\d{2}-\d{2})$/);

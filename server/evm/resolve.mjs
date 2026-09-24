@@ -135,8 +135,10 @@ async function settle(markets) {
           const m = await readMarket(m0.id, p), pos = await readPosition(m0.id, owner, p);
           if (!pos.open) continue; // settled by someone else since the index ran
           const { payout, fee, kind } = payoutFor(m, pos);
-          const row = { at: new Date().toISOString(), chain: CHAIN_KEY, id: m.id, metric: m.metric, token: m.token, owner, amounts: pos.amounts.slice(0, m.nBuckets), status: m.status, outcome: m.outcome, observed: String(m.proposedValue), fee: fee.toString(),
-            symbol: stock?.symbol ?? null, decimals: stock?.decimals ?? 18, multiplier, close, pools: m.pools, seed: m.seedAmount };
+          // the same row shape as the Solana crank writes (points.mjs and the site read both): status in the Solana
+          // program's numbering (Resolved 2, Voided 3), the token under `mint`
+          const row = { at: new Date().toISOString(), chain: CHAIN_KEY, id: m.id, metric: m.metric, mint: m.token, owner, amounts: pos.amounts.slice(0, m.nBuckets), status: m.status - 1, outcome: m.outcome, observed: String(m.proposedValue), fee: fee.toString(),
+            token: stock?.symbol ?? null, decimals: stock?.decimals ?? 18, multiplier, close, pools: m.pools, seed: m.seedAmount };
           let res;
           try { res = await send(wallet, "settlePosition", [BigInt(m.id), owner]); }
           catch (e) {

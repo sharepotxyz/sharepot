@@ -1,12 +1,12 @@
 // Event page: one stock × one session. Left: the question, a token (issuer) switcher, the ranges of the selected
 // token's pool with chance / payout multiple / pool size, then Rules · Resolution · Details tabs. Right: trade panel.
-import { bs58 } from "./wallet";
-import { NO_OUTCOME, buildPlaceBetTx, confirmBySig, currentFeeBps, earlyBirdUntil, fetchConfig, fetchMarkets, fetchPositionAmounts, impliedPayout, totalPool, type MarketView } from "./chain";
+import { encodeSig } from "@wallet";
+import { NO_OUTCOME, currentFeeBps, earlyBirdUntil, fetchConfig, fetchMarkets, fetchPositionAmounts, impliedPayout, totalPool, type ConfigView, type MarketView } from "@chain";
 import { STATUS_LABEL, buildEvents, eventKey, payoutMultiple, statusOf, type EventView } from "./events";
 import { CATEGORY_NAME, bucketLabel, bucketName, fmtAmt, fmtMove, fmtPx, fmtUsd, issuerOf, loadPrices, loadStocks, minUnitExp, fmtUnit, snapUnit, isUnitMultiple, closeMoment, prevCloseOf, priceOf, question, sessionLabel, toRaw, tokenSymbol, uiAmount, usdOf } from "./stocks";
 import { dayEnd, dayStart, fmtDay, fmtHm, fmtHmRange, fmtTsShort } from "./time";
 import { balances, bucketColor, esc, fmtTs, getSession, mountTopbar, onBalances, onSession, openWalletMenu, refreshBalances, shareBalance, tickerBadge, timeLeft, trackStocks } from "./ui";
-import { API_BASE, IS_TEST, explorerTx } from "./config";
+import { API_BASE, HAS_DISPUTES, IS_EVM, IS_TEST, explorerTx } from "./config";
 import { bindReferralAfterBet } from "./referral";
 import { t, tn } from "./i18n";
 
@@ -14,7 +14,7 @@ const MIN_BET_USD = 1;
 
 const qs = new URLSearchParams(location.search);
 const root = document.getElementById("event")!;
-let ev: EventView | undefined, m: MarketView, cfg: any, bucket = -1, tab: "rules" | "resolution" | "details" = "rules";
+let ev: EventView | undefined, m: MarketView, cfg: ConfigView, bucket = -1, tab: "rules" | "resolution" | "details" = "rules";
 const name = (i: number) => bucketName(m, i) || bucketLabel(m, i);
 const full = (i: number) => (bucketName(m, i) ? `${bucketName(m, i)} (${bucketLabel(m, i)})` : bucketLabel(m, i));
 
@@ -49,7 +49,7 @@ function render() {
     return `<div class="orow${bucket === i && st === "open" ? " sel" : ""}${won ? " win" : ""}" style="--c:${bucketColor(m, i)}"><span class="oname"><i></i><b>${esc(name(i))}</b>${bucketName(m, i) ? `<small>${esc(bucketLabel(m, i))}</small>` : ""}</span><span class="ochance">${pct}</span><span class="opays">${mult ? mult.toFixed(2) + "×" : st === "open" ? t("mkt.wholePot") : "—"}</span><span class="opool">${fmtAmt(m, p, 3)} ${esc(tok)}</span><span>${action}</span></div>`;
   }).join("");
   const res = m.status === 2 || m.status === 4 ? (m.outcome === NO_OUTCOME ? t("mkt.voided") : `${t("mkt.result", { label: `<b>${esc(full(m.outcome))}</b>`, move: fmtMove(m.proposedValue) })} · ${m.pools[m.outcome] === 0 ? t("mkt.resultRefund") : t("mkt.resultPaid")}`)
-    : m.status === 3 ? t("mkt.voided") : m.status === 1 ? `${t("mkt.proposedResult", { label: `<b>${esc(full(m.proposedOutcome))}</b>`, move: fmtMove(m.proposedValue), ts: fmtTs(m.proposedAt + cfg.disputeWindowSecs.toNumber()), left: timeLeft(m.proposedAt + cfg.disputeWindowSecs.toNumber()) })}${m.pools[m.proposedOutcome] === 0 ? " " + t("mkt.proposedRefund") : ""}` : "";
+    : m.status === 3 ? t("mkt.voided") : m.status === 1 ? `${t("mkt.proposedResult", { label: `<b>${esc(full(m.proposedOutcome))}</b>`, move: fmtMove(m.proposedValue), ts: fmtTs(m.proposedAt + cfg.disputeWindowSecs), left: timeLeft(m.proposedAt + cfg.disputeWindowSecs) })}${m.pools[m.proposedOutcome] === 0 ? " " + t("mkt.proposedRefund") : ""}` : "";
   root.innerHTML = `<div class="evpage">
     <div class="evtop">
       <nav class="crumb"><a href="/">${t("mkt.crumb")}</a><span>›</span><a href="/?cat=${encodeURIComponent(ev.category)}">${esc(CATEGORY_NAME[ev.category] ?? ev.category)}</a><span>›</span><a href="/?cat=${encodeURIComponent(ev.category)}&stock=${encodeURIComponent(ev.symbol)}">${esc(ev.name)}</a><span>›</span><span>${esc(fmtDay(closeMoment(m)))}</span></nav>
@@ -76,7 +76,7 @@ function render() {
 
 /** The market's whole schedule on the viewer's clock: what has happened, what comes next and when. */
 function timeline() {
-  const now = Date.now() / 1000, win = cfg.disputeWindowSecs.toNumber(), voided = m.status === 3 || ((m.status === 2 || m.status === 4) && m.outcome === NO_OUTCOME);
+  const now = Date.now() / 1000, win = cfg.disputeWindowSecs, voided = m.status === 3 || ((m.status === 2 || m.status === 4) && m.outcome === NO_OUTCOME);
   const proposedTs = m.proposedAt || m.resolveAfterTs, finalTs = proposedTs + win, settled = m.status >= 2;
   const steps: { label: string; when: string; ts: number; done: boolean }[] = [
     { label: t("tl.opens"), when: fmtTsShort(m.openTs), ts: m.openTs, done: now >= m.openTs },
@@ -101,7 +101,7 @@ function renderTab() {
     el.innerHTML = `<ul>
       <li>${t("rules.day.q", { sym, ts: esc(fmtTs(dayEnd(ev!.date))), n: m.nBuckets })}</li>
       <li>${t("rules.day.betting", { open: fmtTs(m.openTs), close: fmtTs(m.closeTs) })}</li>
-      <li>${t("rules.day.result", { range: esc(fmtHmRange(dayEnd(ev!.date) - 3600, dayEnd(ev!.date))), day: esc(fmtDay(dayEnd(ev!.date))), base: esc(fmtTs(dayStart(ev!.date))), after: fmtTs(m.resolveAfterTs), h: cfg.disputeWindowSecs.toNumber() / 3600 })}</li>
+      <li>${t("rules.day.result", { range: esc(fmtHmRange(dayEnd(ev!.date) - 3600, dayEnd(ev!.date))), day: esc(fmtDay(dayEnd(ev!.date))), base: esc(fmtTs(dayStart(ev!.date))), after: fmtTs(m.resolveAfterTs), h: cfg.disputeWindowSecs / 3600 })}</li>
       <li>${payouts}</li>
       ${issuerFee ? `<li>${t("rules.issuerFee", { iss: esc(iss), fee: issuerFee, tok })}</li>` : ""}
       ${ev!.category === "memes" ? `<li>${t("rules.day.why", { time: esc(fmtHm(m.openTs)) })}</li>` : ""}
@@ -110,17 +110,17 @@ function renderTab() {
     el.innerHTML = `<ul>
       <li>${t("rules.close.q", { sym, ts: esc(fmtTs(closeMoment(m))) })}</li>
       <li>${t("rules.close.betting", { open: fmtTs(m.openTs), openBell: atBell(m.openTs) ? t("rules.close.openBell") : "", close: fmtTs(m.closeTs), closeBell: atBell(m.closeTs) ? t("rules.close.closeBell") : "" })}</li>
-      <li>${t("rules.close.result", { after: fmtTs(m.resolveAfterTs), h: cfg.disputeWindowSecs.toNumber() / 3600 })}</li>
+      <li>${t("rules.close.result", { after: fmtTs(m.resolveAfterTs), h: cfg.disputeWindowSecs / 3600 })}</li>
       <li>${t("rules.payouts", { tok, early: (cfg.feeBps - cfg.earlyBirdDiscountBps) / 100, until: fmtTs(earlyBirdUntil(cfg, m)), fee: cfg.feeBps / 100 })}</li>
       <li>${t("rules.close.divs")}</li>
       <li>${t("rules.close.issuer", { iss: esc(issuerOf(m)) || t("rules.theIssuer"), tok })}</li>
       <li>${t("rules.close.ranges", { sym })}</li></ul>`;
   } else if (tab === "resolution") {
-    el.innerHTML = m.proposedAt ? `<div class="kv"><b>${t("res.proposed")}</b><span>${fmtTs(m.proposedAt)} · ${t("res.move", { move: `<span class="mono">${fmtMove(m.proposedValue)}</span>` })} → <b>${esc(full(m.proposedOutcome))}</b></span><b>${t("res.evidence")}</b><span id="evidence" class="note">${t("res.loading")}</span>${m.status === 1 ? `<b>${t("res.disagree")}</b><span><button id="dbtn">${t("res.dispute")}</button> <span class="note">${t("res.disputeUntil", { ts: fmtTs(m.proposedAt + cfg.disputeWindowSecs.toNumber()) })}</span><div id="dlist" class="note"></div></span>` : ""}</div>`
+    el.innerHTML = m.proposedAt ? `<div class="kv"><b>${t("res.proposed")}</b><span>${fmtTs(m.proposedAt)} · ${t("res.move", { move: `<span class="mono">${fmtMove(m.proposedValue)}</span>` })} → <b>${esc(full(m.proposedOutcome))}</b></span><b>${t("res.evidence")}</b><span id="evidence" class="note">${t("res.loading")}</span>${m.status === 1 && HAS_DISPUTES ? `<b>${t("res.disagree")}</b><span><button id="dbtn">${t("res.dispute")}</button> <span class="note">${t("res.disputeUntil", { ts: fmtTs(m.proposedAt + cfg.disputeWindowSecs) })}</span><div id="dlist" class="note"></div></span>` : ""}</div>`
       : `<p class="note">${t("res.pending", { ts: fmtTs(m.resolveAfterTs) })}</p>`;
     loadEvidence(); mountDispute();
   } else {
-    el.innerHTML = `<div class="kv"><b>${t("det.token")}</b><span class="hash">${tok} · ${esc(issuerOf(m))} · ${m.mint.toBase58()}${m.multiplier !== 1 ? ` · ${t("det.multiplier", { x: m.multiplier })}` : ""}</span><b>${t("det.account")}</b><span class="hash">${m.pubkey.toBase58()} (#${m.id})</span><b>${t("det.openClose")}</b><span>${fmtTs(m.openTs)} → ${fmtTs(m.closeTs)}</span><b>${t("det.resolvesAfter")}</b><span>${fmtTs(m.resolveAfterTs)}</span></div>`;
+    el.innerHTML = `<div class="kv"><b>${t("det.token")}</b><span class="hash">${tok} · ${esc(issuerOf(m))} · ${esc(m.mint)}${m.multiplier !== 1 ? ` · ${t("det.multiplier", { x: m.multiplier })}` : ""}</span><b>${t("det.account")}</b><span class="hash">${esc(m.address)} (#${m.id})</span><b>${t("det.openClose")}</b><span>${fmtTs(m.openTs)} → ${fmtTs(m.closeTs)}</span><b>${t("det.resolvesAfter")}</b><span>${fmtTs(m.resolveAfterTs)}</span></div>`;
   }
 }
 
@@ -132,14 +132,14 @@ function renderTrade() {
   const s = getSession(), st = statusOf(m), tok = esc(tokenSymbol(m)), held = shareBalance(m), fee = currentFeeBps(cfg, m), tot = totalPool(m);
   if (st !== "open") {
     const next = `<a href="/?cat=${ev!.category}&stock=${encodeURIComponent(ev!.symbol)}">${t("trade.seeOpen", { sym: esc(ev!.symbol) })}</a>`;
-    box.innerHTML = `<div class="tcard"><div class="thead"><b>${STATUS_LABEL[st]}</b></div><p class="note" style="margin:0">${st === "trading" ? t("trade.closedTrading", { close: fmtTs(m.closeTs), after: fmtTs(m.resolveAfterTs), final: fmtTs(m.resolveAfterTs + cfg.disputeWindowSecs.toNumber()) }) : st === "proposed" ? t("trade.closedProposed", { ts: fmtTs(m.proposedAt + cfg.disputeWindowSecs.toNumber()), left: timeLeft(m.proposedAt + cfg.disputeWindowSecs.toNumber()) }) : t("trade.closedSettled")}</p>${next}</div><div id="pos">${posHtml()}</div>`;
+    box.innerHTML = `<div class="tcard"><div class="thead"><b>${STATUS_LABEL[st]}</b></div><p class="note" style="margin:0">${st === "trading" ? t("trade.closedTrading", { close: fmtTs(m.closeTs), after: fmtTs(m.resolveAfterTs), final: fmtTs(m.resolveAfterTs + cfg.disputeWindowSecs) }) : st === "proposed" ? t("trade.closedProposed", { ts: fmtTs(m.proposedAt + cfg.disputeWindowSecs), left: timeLeft(m.proposedAt + cfg.disputeWindowSecs) }) : t("trade.closedSettled")}</p>${next}</div><div id="pos">${posHtml()}</div>`;
     showPosition(); return;
   }
   // The floor is shown as a round number of shares, a power of ten worth at least MIN_BET_USD, so nobody has to work it
   // out from the share price. The program's own floor is in raw units (dust stakes cost more in payout rent than they
   // can win — see forfeit_position); without a price that is all there is.
   const px = priceOf(m), minExp = px ? minUnitExp(px, MIN_BET_USD, m.decimals) : null;
-  const minRaw = Math.max(cfg.minBet.toNumber(), minExp != null ? toRaw(m, 10 ** minExp) : 0);
+  const minRaw = Math.max(cfg.minBet, minExp != null ? toRaw(m, 10 ** minExp) : 0);
   const unitExp = minExp != null && minRaw === toRaw(m, 10 ** minExp) ? minExp : null;   // null: no price, the program's raw floor only
   const minTxt = unitExp != null ? fmtUnit(unitExp) : fmtAmt(m, minRaw, 8);
   box.innerHTML = `<div class="tcard">
@@ -194,16 +194,13 @@ function renderTrade() {
     msg.innerHTML = `<div class="msg">${t("trade.confirm")}</div>`;
     let sig = "";
     try {
-      const tx = await buildPlaceBetTx(sess.publicKey, m, bucket, a);
-      sig = await sess.signAndSend(tx);
-      msg.innerHTML = `<div class="msg">${t("trade.sent")}</div>`;
-      await confirmBySig(sig);
+      sig = await sess.placeBet(m, bucket, a, () => { msg.innerHTML = `<div class="msg">${t("trade.sent")}</div>`; });
     } catch (e: any) {
       // Sent but not seen yet: it may still land, so the button stays off rather than invite a second stake.
-      if (sig && e?.unconfirmed) { msg.innerHTML = `<div class="msg err">${t("trade.unconfirmed", { tx: explorerTx(sig) })}</div>`; return; }
+      if (e?.unconfirmed && e?.txid) { msg.innerHTML = `<div class="msg err">${t("trade.unconfirmed", { tx: explorerTx(String(e.txid)) })}</div>`; return; }
       const raw = String(e?.message ?? e) + " " + (Array.isArray(e?.logs) ? e.logs.join(" ") : "");
       let why = esc(String(e?.message ?? e).split(/ Logs:|\n/)[0].slice(0, 200));   // never the simulation log dump
-      if (/insufficient lamports|Attempt to debit|insufficient funds for (fee|rent)/i.test(raw)) why = t("trade.errSol");
+      if (/insufficient lamports|Attempt to debit|insufficient funds for (fee|rent|gas)|exceeds the balance of the account/i.test(raw)) why = t(IS_EVM ? "trade.errEth" : "trade.errSol");
       else if (/insufficient funds/i.test(raw)) { try { await refreshBalances(); } catch {} why = shortOf(balances.loaded ? shareBalance(m) : null); }
       else if (/reject|denied|cancel/i.test(raw)) why = t("trade.errCancel");
       else if (/429|rate limit/i.test(raw)) why = t("trade.errBusy");
@@ -229,7 +226,7 @@ function renderTrade() {
 // chain is asked again) and only a real answer replaces it: an RPC error leaves it alone, and while bets are open a
 // smaller total is a lagging node (stakes only ever add up until the market settles), so that is ignored too.
 const posCache = new Map<string, number[]>();
-const posKey = () => { const s = getSession(); return s && m ? `${m.pubkey.toBase58()}:${s.publicKey.toBase58()}` : ""; };
+const posKey = () => { const s = getSession(); return s && m ? `${m.address}:${s.address}` : ""; };
 function posHtml() {
   const amounts = posCache.get(posKey()); if (!amounts) return "";
   const parts = amounts.slice(0, m.nBuckets).map((x, i) => [x, i]).filter(([x]) => x > 0).map(([x, i]) => `<div class="r"><span>${esc(name(i))}</span><b>${fmtAmt(m, x)} ${esc(tokenSymbol(m))}</b></div>`);
@@ -237,7 +234,7 @@ function posHtml() {
 }
 async function showPosition() {
   const s = getSession(), k = posKey(); if (!s || !k) return;
-  let got: number[] | null; try { got = await fetchPositionAmounts(m.pubkey, s.publicKey); } catch { return; }
+  let got: number[] | null; try { got = await fetchPositionAmounts(m, s.address); } catch { return; }
   if (k !== posKey()) return;   // another pool or wallet was picked while this was in flight
   const sum = (v?: number[] | null) => (v ?? []).reduce((x, y) => x + y, 0);
   if (statusOf(m) === "open" && sum(got) < sum(posCache.get(k))) return;
@@ -247,16 +244,16 @@ async function showPosition() {
 
 async function mountDispute() {
   const btn = document.getElementById("dbtn") as HTMLButtonElement | null; if (!btn) return;
-  try { const r = await fetch(`${API_BASE}/disputes?market=${m.pubkey.toBase58()}`); const j = await r.json(); const open = (j.disputes ?? []).filter((d: any) => d.status === "open"); if (open.length) document.getElementById("dlist")!.textContent = tn("res.disputesOpen", open.length); } catch {}
+  try { const r = await fetch(`${API_BASE}/disputes?market=${encodeURIComponent(m.address)}`); const j = await r.json(); const open = (j.disputes ?? []).filter((d: any) => d.status === "open"); if (open.length) document.getElementById("dlist")!.textContent = tn("res.disputesOpen", open.length); } catch {}
   btn.onclick = async () => {
     const s = getSession(); if (!s) { openWalletMenu(); return; }
     const reason = prompt(t("res.promptWhy")); if (!reason || reason.trim().length < 5) return;
     const claimed = prompt(t("res.promptMove")) ?? "";
     btn.disabled = true;
     try {
-      const msg = `sharepot-dispute v1\nmarket=${m.pubkey.toBase58()}\nwallet=${s.publicKey.toBase58()}\nclaimed=${claimed.trim()}\nreason=${reason.trim().slice(0, 2000)}`;
+      const msg = `sharepot-dispute v1\nmarket=${m.address}\nwallet=${s.address}\nclaimed=${claimed.trim()}\nreason=${reason.trim().slice(0, 2000)}`;
       const sig = await s.signMessage(new TextEncoder().encode(msg));
-      const r = await fetch(`${API_BASE}/dispute`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ market: m.pubkey.toBase58(), wallet: s.publicKey.toBase58(), reason: reason.trim().slice(0, 2000), claimedValue: claimed.trim() || null, signature: bs58(sig) }) });
+      const r = await fetch(`${API_BASE}/dispute`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ market: m.address, wallet: s.address, reason: reason.trim().slice(0, 2000), claimedValue: claimed.trim() || null, signature: encodeSig(sig) }) });
       const j = await r.json(); if (!r.ok) throw new Error(j.error ?? "failed");
       document.getElementById("dlist")!.textContent = t("res.disputeFiled");
     } catch (e: any) { alert(e?.message ?? e); btn.disabled = false; }
@@ -280,7 +277,7 @@ async function loadEvidence() {
       : `<div><b>${esc(e.symbol)}</b> ${t("ev.close")} ${esc(e.prevDate)} <span class="mono">$${esc(e.prevClose)}</span> → ${esc(e.date)} <span class="mono">$${esc(e.close)}</span>${div} = <span class="mono">${fmtMove(e.movePpm)}</span>${e.split ? ` · ${t("ev.split", { x: esc(e.split) })}` : ""}</div>`;
     el.innerHTML +=
       `<div><a href="${API_BASE}/evidence/${m.id}/raw" target="_blank" rel="noopener">${e.samples != null ? t("ev.sampled") : t("ev.raw")}</a> · sha256 <span class="hash">${sha.slice(0, 16)}…</span> · <span class="${match ? "" : "warn"}">${match ? t("ev.match") : t("ev.mismatch")}</span></div>
-      ${e.signature ? `<div><a href="${explorerTx(e.signature)}" target="_blank" rel="noopener">${t("ev.proposalTx")}</a></div>` : ""}`;
+      ${e.tx ?? e.signature ? `<div><a href="${explorerTx(String(e.tx ?? e.signature))}" target="_blank" rel="noopener">${t("ev.proposalTx")}</a></div>` : ""}`;
   } catch { el.textContent = t("res.notPublished"); }
 }
 

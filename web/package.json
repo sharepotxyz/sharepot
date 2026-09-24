@@ -14,7 +14,8 @@
     "@wallet-standard/app": "^1.1.0",
     "@wallet-standard/base": "^1.1.0",
     "buffer": "^6.0.3",
-    "tweetnacl": "^1.0.3"
+    "tweetnacl": "^1.0.3",
+    "viem": "^2.56.8"
   },
   "devDependencies": {
     "@types/node": "^22.20.2",
