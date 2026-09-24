@@ -34,8 +34,8 @@ export const NATIVE_LOW = IS_EVM ? 0.0005 : 0.002;
 /** The same product on the other chain, for the switch in the top bar (empty = no switch). */
 export const OTHER_CHAIN = { name: (import.meta.env.VITE_OTHER_CHAIN_NAME as string | undefined) ?? "", url: (import.meta.env.VITE_OTHER_CHAIN_URL as string | undefined) ?? "" };
 export const THIS_CHAIN_NAME = IS_EVM ? "Robinhood" : "Solana";
-// Features the API only provides for Solana so far (they verify ed25519 wallet signatures).
-export const HAS_REFERRALS = !IS_EVM;
+// Disputes are filed through the Solana API only so far.
+export const HAS_REFERRALS = true;
 export const HAS_DISPUTES = !IS_EVM;
 export const HAS_FAUCET_API = !IS_EVM;
 /** A test EVM network: the API hands a little ETH for fees to any address (the browser test wallet has none). */

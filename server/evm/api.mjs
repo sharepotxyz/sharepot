@@ -22,6 +22,8 @@ import { leaderboard } from "../points.mjs";
 import { homeHtml, eventHtml } from "../ssr.mjs";
 import { resolveLang, translateHtml, translator, langScript } from "../i18n.mjs";
 import { notify } from "../notify.mjs";
+import * as referrals from "../referrals.mjs";
+import { verifyMessage } from "viem";
 
 const PORT = Number(process.env.PORT ?? 5042);
 const DATA = process.env.DATA_DIR ?? path.join(process.cwd(), "data");
@@ -186,6 +188,32 @@ const readBody = (req, max = 4096) => new Promise((ok, err) => { let b = ""; req
 const clientIp = (req) => String(req.headers["cf-connecting-ip"] ?? req.socket.remoteAddress ?? "?").trim();
 const isAddr = (s) => /^0x[0-9a-fA-F]{40}$/.test(String(s ?? ""));
 const FEEDBACK = path.join(DIR, "feedback.jsonl");
+// ---------- referrals (server/referrals.mjs): bindings keyed by lowercase EVM address, per chain ----------
+const REFERRALS_FILE = process.env.REFERRALS_FILE ?? path.join(DIR, "referrals.json"), REFERRAL_PAYOUTS = path.join(DIR, "referral-payouts.jsonl");
+const SITE_URL = process.env.SITE_URL ?? "https://robinhood.sharepot.xyz";
+const LOOKUP_IP_DAILY = Number(process.env.LOOKUP_IP_DAILY ?? 200);
+let lookupDay = "", seenLookup = new Map();
+function chargeLookup(ip) { const d = new Date().toISOString().slice(0, 10); if (d !== lookupDay) { lookupDay = d; seenLookup = new Map(); } if ((seenLookup.get(ip) ?? 0) >= LOOKUP_IP_DAILY) throw Object.assign(new Error("too many wallet lookups; try again later"), { status: 429 }); seenLookup.set(ip, (seenLookup.get(ip) ?? 0) + 1); }
+/** Open positions come from the event index (no RPC), settled ones from this chain's settlement log. */
+function betHistory(wallet) {
+  const w = wallet.toLowerCase(); let open = 0;
+  for (const set of openPositions(DATA).values()) if (set.has(w)) open++;
+  return { open, settled: readRows(SETTLEMENTS).filter((r) => String(r.owner).toLowerCase() === w).length };
+}
+const referralPoints = () => new Map(leaderboardCached("all", 0).entries.map((e) => [e.wallet, e.points]));
+function referralView(wallet) {
+  const db = referrals.load(REFERRALS_FILE), rows = readRows(SETTLEMENTS), pts = referralPoints();
+  const earn = referrals.earnings(rows, db, (w) => pts.get(w) ?? 0), payouts = referrals.effectivePayouts(referrals.readPayouts(REFERRAL_PAYOUTS));
+  const e = earn.byWallet.get(wallet), own = db.wallets[wallet], b = db.bindings[wallet] ?? null, points = pts.get(wallet) ?? 0;
+  const ui = (raw, m) => (m.decimals == null ? null : (Number(raw) / 10 ** m.decimals) * (m.multiplier || 1));
+  const paidBy = new Map(); for (const p of payouts) if (p.wallet === wallet) paidBy.set(p.mint, (paidBy.get(p.mint) ?? 0n) + BigInt(p.raw));
+  const earned = e ? [...e.earned.values()].map((m) => ({ mint: m.mint, token: m.token, earned: ui(m.raw, m), asReferrer: ui(m.asReferrer, m), asReferee: ui(m.asReferee, m), paid: ui(paidBy.get(m.mint) ?? 0n, m), usd: m.usd, settlements: m.rows })) : [];
+  return { wallet, code: own?.code ?? null, link: own ? `${SITE_URL}/?ref=${own.code}` : null,
+    bound: b ? { code: b.code, referrer: b.referrer.slice(0, 6) + "…" + b.referrer.slice(-4), at: b.at } : null,
+    referred: e?.referred.size ?? 0, points, tierBps: referrals.tierBps(points), nextTier: referrals.nextTier(points), refereeBps: referrals.REFEREE_BPS, tiers: referrals.REFERRER_TIERS,
+    earned, earnedUsd: earned.reduce((a, x) => a + (x.usd ?? 0), 0),
+    payouts: payouts.filter((p) => p.wallet === wallet).slice(-20).reverse().map(({ at, mint, token, raw, ui: amount, signature }) => ({ at, mint, token, raw, amount, signature })) };
+}
 const GAS_WEI = BigInt(Math.round(Number(process.env.GAS_FAUCET_ETH ?? 0.0001) * 1e18)), GAS_LOW_WEI = GAS_WEI * 10n, GAS_DAILY_GLOBAL = Number(process.env.GAS_FAUCET_DAILY ?? 200);
 const gasFaucet = chainCfg.test && process.env.EVM_FAUCET_KEY_FILE && fs.existsSync(process.env.EVM_FAUCET_KEY_FILE) ? walletFor(process.env.EVM_FAUCET_KEY_FILE) : null;
 let gasDay = "", gasToday = 0; const gasAddr = new Set(), gasIp = new Map();
@@ -252,7 +280,55 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { ok: true, address, sent: `${Number(GAS_WEI) / 1e18} ETH for fees`, tx });
       } catch (e) { gasAddr.delete(k); gasToday--; console.error("gas faucet failed", String(e?.shortMessage ?? e?.message ?? e).slice(0, 160)); return json(res, 503, { error: "faucet transaction failed, try again in a minute" }); }
     }
-    if (p === "/dispute" || p.startsWith("/referral")) return json(res, 403, { error: `not available on ${chainCfg.name}` });
+    // ---------- referrals ----------
+    const rl = p.match(/^\/referral\/lookup\/([A-Za-z0-9]{4,12})$/);
+    if (rl) {
+      const code = referrals.normalizeCode(rl[1]), w = referrals.referrerOf(referrals.load(REFERRALS_FILE), code);
+      return json(res, 200, w ? { valid: true, code, referrer: w.slice(0, 6) + "…" + w.slice(-4), refereeBps: referrals.REFEREE_BPS } : { valid: false, code }, { "cache-control": "public, max-age=60" });
+    }
+    const rw = p.match(/^\/referral\/(0x[0-9a-fA-F]{40})$/);
+    if (rw && req.method === "GET") {
+      chargeLookup(clientIp(req));
+      const wallet = rw[1].toLowerCase(), h = betHistory(wallet);
+      return json(res, 200, { ...referralView(wallet), eligible: h.open + h.settled > 0, bets: h.open + h.settled, firstBet: h.settled === 0 && h.open > 0 }, { "cache-control": "no-store" });
+    }
+    if (p === "/referral/code" && req.method === "POST") {
+      let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: "bad body" }); }
+      if (!isAddr(b.wallet)) return json(res, 400, { error: "wallet required" });
+      const wallet = String(b.wallet).toLowerCase(), db = referrals.load(REFERRALS_FILE);
+      if (!db.wallets[wallet]) {
+        const h = betHistory(wallet);
+        if (h.open + h.settled === 0) return json(res, 403, { error: "place a bet first — the link unlocks with your first stake" });
+        referrals.ensureCode(db, wallet); referrals.save(REFERRALS_FILE, db);
+        console.log("referral code", wallet.slice(0, 8), db.wallets[wallet].code);
+      }
+      return json(res, 200, { ...referralView(wallet), eligible: true });
+    }
+    // Bind a first-time bettor to the code it arrived with: the wallet signs the plain message (EIP-191) naming this
+    // site and the time; accepted for BIND_MAX_AGE_SECS only, so a signature cannot be kept and replayed.
+    if (p === "/referral/bind" && req.method === "POST") {
+      let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: "bad body" }); }
+      const code = referrals.normalizeCode(b.code);
+      if (!isAddr(b.wallet) || !referrals.CODE_RE.test(code)) return json(res, 400, { error: "wallet and code required" });
+      const host = new URL(SITE_URL).host, nowS = Math.floor(Date.now() / 1000), ts = Number(b.ts);
+      if (!Number.isInteger(ts) || Math.abs(nowS - ts) > referrals.BIND_MAX_AGE_SECS) return json(res, 401, { error: "signature is too old; try again" });
+      let ok = false;
+      try { ok = await verifyMessage({ address: b.wallet, message: referrals.bindMessage(String(b.wallet), code, host, ts), signature: String(b.signature ?? "") }); } catch {}
+      if (!ok) return json(res, 401, { error: "signature does not match the wallet" });
+      const wallet = String(b.wallet).toLowerCase();
+      const db = referrals.load(REFERRALS_FILE);
+      if (db.bindings[wallet]) return json(res, db.bindings[wallet].code === code ? 200 : 409, db.bindings[wallet].code === code ? { ok: true, already: true } : { error: "this wallet is already bound to another code", permanent: true });
+      if (!referrals.referrerOf(db, code)) return json(res, 404, { error: "unknown referral code", permanent: true });
+      const h = betHistory(wallet);
+      if (h.open === 0 && h.settled === 0) return json(res, 409, { error: "place your first bet, then the link binds" });
+      if (h.settled > 0) return json(res, 409, { error: "a referral link only counts on a wallet's first bet", permanent: true });
+      const r = referrals.bind(db, { wallet, code, cluster: CHAIN_KEY });
+      if (r.error) return json(res, 409, { error: r.error, permanent: true });
+      referrals.save(REFERRALS_FILE, db);
+      console.log("referral bind", wallet.slice(0, 8), "→", code);
+      return json(res, 200, { ok: true });
+    }
+    if (p === "/dispute") return json(res, 403, { error: `not available on ${chainCfg.name}` });
     if (p === "/feedback" && req.method === "POST") {
       const day = new Date().toISOString().slice(0, 10); if (day !== feedbackDay) { feedbackDay = day; feedbackToday = 0; seenFeedback.clear(); }
       const ip = clientIp(req); seenFeedback.set(ip, (seenFeedback.get(ip) ?? 0) + 1);
