@@ -207,7 +207,7 @@ function renderTrade() {
       msg.innerHTML = `<div class="msg err">${why}</div>`; go.disabled = false; return;
     }
     // The stake is on-chain from here on: nothing below may turn that into an error message.
-    const done = `${t("trade.staked", { amt: `${fmtAmt(m, a)} ${tok}`, label: esc(full(bucket)) })} <a href="${explorerTx(sig)}" target="_blank" rel="noopener">${t("trade.viewTx")}</a>`;
+    const done = `${t("trade.staked", { amt: `${fmtAmt(m, a, 8)} ${tok}`, label: esc(full(bucket)) })} <a href="${explorerTx(sig)}" target="_blank" rel="noopener">${t("trade.viewTx")}</a>`;
     typed = { id: -1, v: "" };
     const show = (note = "") => { const m2 = document.getElementById("msg"); if (m2) m2.innerHTML = `<div class="msg ok">${done}${note ? `<br>${esc(note)}` : ""}</div>`; };
     // Show the stake at once, from what was just confirmed: the position box and the pools are updated here and the
@@ -229,7 +229,7 @@ const posCache = new Map<string, number[]>();
 const posKey = () => { const s = getSession(); return s && m ? `${m.address}:${s.address}` : ""; };
 function posHtml() {
   const amounts = posCache.get(posKey()); if (!amounts) return "";
-  const parts = amounts.slice(0, m.nBuckets).map((x, i) => [x, i]).filter(([x]) => x > 0).map(([x, i]) => `<div class="r"><span>${esc(name(i))}</span><b>${fmtAmt(m, x)} ${esc(tokenSymbol(m))}</b></div>`);
+  const parts = amounts.slice(0, m.nBuckets).map((x, i) => [x, i]).filter(([x]) => x > 0).map(([x, i]) => `<div class="r"><span>${esc(name(i))}</span><b>${fmtAmt(m, x, 8)} ${esc(tokenSymbol(m))}</b></div>`);
   return parts.length ? `<div class="tcard"><div class="thead"><b>${t("trade.position")}</b><a href="/portfolio.html" class="note">${t("trade.allBets")}</a></div><div class="tsum">${parts.join("")}</div></div>` : "";
 }
 async function showPosition() {

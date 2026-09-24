@@ -33,12 +33,14 @@ export async function loadStocks() {
       STOCK_META[s.symbol] = { category: s.category ?? "stocks", kind: s.kind ?? "close", active: s.active !== false, icon: s.icon ?? null, thresholdsBps: s.thresholdsBps ?? [] };
       const list = s.tokens.filter((t: any) => t.mint).map((t: any) => ({ ...t, symbol: s.symbol, name: s.name }));
       tokensByStock.set(s.symbol, list);
-      for (const t of list) byMint.set(t.mint, t);
+      for (const t of list) byMint.set(mintKey(t.mint), t);
     }
   } catch {}
 }
 export const tokensOf = (symbol: string) => tokensByStock.get(symbol) ?? [];
-export const tokenInfo = (m: MarketView) => byMint.get(m.mint);
+/** A mint as a map key: hex addresses compare case-insensitively (the chain checksums them, files keep them lowercase). */
+export const mintKey = (s: string) => (/^0x[0-9a-fA-F]{40}$/.test(s) ? s.toLowerCase() : s);
+export const tokenInfo = (m: MarketView) => byMint.get(mintKey(m.mint));
 /** "<SYMBOL>.close:<date>" = official close of a New York session; "<SYMBOL>.day:<date>" = on-chain close of a UTC day. */
 export function parseMetric(tag: string) {
   const m = tag.match(/^([A-Za-z0-9$_\-]{1,20})\.(close|day):(\d{4}-\d{2}-\d{2})$/);

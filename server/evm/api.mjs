@@ -37,7 +37,7 @@ const readRows = (f) => (fs.existsSync(f) ? fs.readFileSync(f, "utf8").split("\n
 // testnet a meme's token is the mock the opener deployed, flagged `mock` so the faucet page offers to mint it.
 const TESTNET = chainCfg.test === true;
 const fromChains = chainCfg.stocks.filter((s) => Array.isArray(s.thresholdsBps)).map((s) => ({ symbol: s.symbol, name: s.name, category: "stocks", kind: "close", thresholdsBps: s.thresholdsBps, icon: null, active: true,
-  tokens: [{ token: s.symbol, issuer: s.issuer, decimals: s.decimals, mint: s.token, mainnetMint: s.token, faucetUi: 5 }] }));
+  tokens: [{ token: s.symbol, issuer: s.issuer, decimals: s.decimals, mint: s.token.toLowerCase(), mainnetMint: s.token, faucetUi: 5 }] }));
 let stocks = fromChains, stockByToken = new Map(), listingStamp = null;
 function refreshListing() {
   let stamp = "-"; try { const st = fs.statSync(REGISTRY_FILE(DIR)); stamp = `${st.size}:${st.mtimeMs}`; } catch {}
@@ -60,7 +60,8 @@ async function multiplierOf(token) {
   let m = 1; try { m = Number(await publicClient.readContract({ address: token, abi: erc20Abi, functionName: "uiMultiplier" })) / 1e18 || 1; } catch {}
   multipliers.set(k, { m, at: Date.now() }); return m;
 }
-const serializeMarket = (m, multiplier) => ({ pubkey: `${chainCfg.pot}#${m.id}`, id: m.id, mint: m.token, tokenProgram: "", decimals: stockByToken.get(m.token.toLowerCase())?.tokens[0].decimals ?? 18, multiplier, metric: m.metric, nBuckets: m.nBuckets, thresholds: m.thresholds, openTs: m.openTs, closeTs: m.closeTs, resolveAfterTs: m.resolveAfterTs, baseline: m.baseline,
+// mints lowercase everywhere the site sees them (the chain checksums addresses, the registry keeps them lowercase)
+const serializeMarket = (m, multiplier) => ({ pubkey: `${chainCfg.pot}#${m.id}`, id: m.id, mint: m.token.toLowerCase(), tokenProgram: "", decimals: stockByToken.get(m.token.toLowerCase())?.tokens[0].decimals ?? 18, multiplier, metric: m.metric, nBuckets: m.nBuckets, thresholds: m.thresholds, openTs: m.openTs, closeTs: m.closeTs, resolveAfterTs: m.resolveAfterTs, baseline: m.baseline,
   pools: m.pools.map(Number), seed: Number(m.seedAmount), status: m.status - 1, outcome: m.outcome, proposedOutcome: m.proposedOutcome, proposedValue: m.proposedValue, proposedAt: m.proposedAt, positions: m.positions, positionsOpen: m.positionsOpen, feeCollected: Number(m.feeCollected), snapshotHash: String(m.snapshotHash).replace(/^0x/, "") });
 const serializeConfig = (c, marketCount) => ({ admin: c.admin, proposer: c.proposer, treasuryOwner: c.treasury, feeBps: c.feeBps, earlyBirdDiscountBps: c.earlyBirdDiscountBps, earlyBirdSecs: c.earlyBirdSecs, disputeWindowSecs: c.disputeWindowSecs, minBet: Number(c.minBet), marketCount, paused: c.paused });
 let chainCache = { at: 0, markets: null, config: null, pending: null };

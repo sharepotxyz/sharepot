@@ -33,7 +33,7 @@ async function tokenInfoOf(token: Address) {
 function toView(id: number, m: any, ti: { decimals: number; multiplier: number }): MarketView {
   const n = Number(m.nBuckets);
   return {
-    address: marketAddress(id), id, mint: m.token, tokenProgram: "", decimals: ti.decimals, multiplier: ti.multiplier, metric: hexToStr(m.metric), nBuckets: n, thresholds: m.thresholds.slice(0, n - 1).map(Number),
+    address: marketAddress(id), id, mint: String(m.token).toLowerCase(), tokenProgram: "", decimals: ti.decimals, multiplier: ti.multiplier, metric: hexToStr(m.metric), nBuckets: n, thresholds: m.thresholds.slice(0, n - 1).map(Number),
     openTs: Number(m.openTs), closeTs: Number(m.closeTs), resolveAfterTs: Number(m.resolveAfterTs), baseline: Number(m.baseline), pools: m.pools.slice(0, n).map(Number), seed: Number(m.seedAmount),
     status: Number(m.status) - 1, outcome: Number(m.outcome), proposedOutcome: Number(m.proposedOutcome), proposedValue: Number(m.proposedValue), proposedAt: Number(m.proposedAt),
     positions: Number(m.positions), positionsOpen: Number(m.positionsOpen), feeCollected: Number(m.feeCollected), snapshotHash: String(m.snapshotHash).replace(/^0x/, ""),
