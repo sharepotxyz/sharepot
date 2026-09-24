@@ -26,7 +26,8 @@ export const EVM = {
 
 export const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
 export const IS_TEST = IS_EVM ? EVM.test : CLUSTER !== "mainnet";
-export const NETWORK_NAME = IS_EVM ? EVM.name : CLUSTER === "devnet" ? "Devnet" : CLUSTER;
+/** Short: the chain switch already names the chain, so the badge only says which network of it. */
+export const NETWORK_NAME = IS_EVM ? (EVM.test ? "Testnet" : "Mainnet") : CLUSTER === "devnet" ? "Devnet" : CLUSTER;
 /** The gas token: what the wallet button shows next to the address and what a low balance warns about. */
 export const NATIVE = IS_EVM ? "ETH" : "SOL";
 export const NATIVE_LOW = IS_EVM ? 0.0005 : 0.002;

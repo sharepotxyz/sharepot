@@ -38,11 +38,15 @@ export function mountTopbar(opts: TopbarOpts = {}) {
   const faucetOn = IS_TEST && (HAS_FAUCET_API ? !!API_BASE : true), net = NETWORK_NAME;
   const nb = document.getElementById("netbadge");
   // the same product runs on two chains: a two-way switch next to the network badge (both builds show it)
-  const sw = OTHER_CHAIN.url ? `<span class="chains" title="${esc(t("net.chainSwitch"))}"><span class="on">${esc(THIS_CHAIN_NAME)}</span><a href="${esc(OTHER_CHAIN.url)}">${esc(OTHER_CHAIN.name)}</a></span>` : "";
+  // each chain in its own colour: Robinhood green, Solana purple
+  const cls = (name: string) => (/robinhood/i.test(name) ? "rh" : "sol");
+  const sw = OTHER_CHAIN.url ? `<span class="chains" title="${esc(t("net.chainSwitch"))}"><span class="on ${cls(THIS_CHAIN_NAME)}">${esc(THIS_CHAIN_NAME)}</span><a class="${cls(OTHER_CHAIN.name)}" href="${esc(OTHER_CHAIN.url)}">${esc(OTHER_CHAIN.name)}</a></span>` : "";
   if (nb) nb.innerHTML = sw + (!IS_TEST ? "" : faucetOn
     ? `<a class="netbadge" href="/faucet.html" title="${esc(t("net.titleFaucet"))}">${esc(net)}</a>`
     : `<span class="netbadge" title="${esc(t("net.title"))}">${esc(net)}</span>`);
   const fl = document.getElementById("faucetlink"); if (fl) fl.hidden = !faucetOn;
+  // invite links only exist where the API can verify the wallet's signature (Solana)
+  const il = document.querySelector<HTMLAnchorElement>('a.navlink[href="/invite.html"]'); if (il) il.hidden = !HAS_REFERRALS;
   mountLang();
   mountNavMenu();
   if (HAS_REFERRALS) { captureReferral(); onSession((s) => { if (s) bindIfPending(s); }); }
