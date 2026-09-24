@@ -7,7 +7,7 @@
 #   DRY_RUN=1 previews. REMOTE_DATA defaults to data/evm/<chain> on the app host; LOCAL_DATA to ../payout-data/evm-<chain>.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-: "${REMOTE:?ssh host alias of the app host}" "${EVM_CHAIN:?robinhood-testnet|robinhood}" "${REBATE_KEY_FILE:?path to the rebate wallet's key}"
+: "${REMOTE:?ssh host alias of the app host}" "${EVM_CHAIN:?robinhood-testnet|robinhood}" "${REBATE_KEY_FILE:?path to the rebate wallet key}"
 REMOTE_DATA="${REMOTE_DATA:-data/evm/$EVM_CHAIN}"
 LOCAL_DATA="${LOCAL_DATA:-$(pwd)/../payout-data/evm-$EVM_CHAIN}"
 NODE="${NODE:-$(command -v node)}"
