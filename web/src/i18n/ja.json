@@ -91,7 +91,7 @@
   "home.result": "結果：{label}",
   "home.proposed": "提案：{label}",
   "home.mostBacked": "一番人気：{label} {pct}%",
-  "home.noBets": "まだベットなし — 当てた人がハウス賞金を獲得",
+  "home.noBets": "まだ賭けはありません。当てた人たちが外れた側の賭け金を分け合います",
   "home.left": "残り{t}",
   "home.resultAt": "結果 ~{ts}",
   "home.distTitle": "各レンジへの資金の配分",

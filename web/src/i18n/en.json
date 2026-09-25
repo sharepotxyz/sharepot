@@ -91,7 +91,7 @@
   "home.result": "Result: {label}",
   "home.proposed": "Proposed: {label}",
   "home.mostBacked": "Most backed: {label} {pct}%",
-  "home.noBets": "No bets yet — the house prize goes to whoever picks right",
+  "home.noBets": "No bets yet — whoever picks the right range splits what the other ranges staked",
   "home.left": "{t} left",
   "home.resultAt": "result ~{ts}",
   "home.distTitle": "How the money is spread across the ranges",

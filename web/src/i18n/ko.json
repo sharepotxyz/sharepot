@@ -91,7 +91,7 @@
   "home.result": "결과: {label}",
   "home.proposed": "제안: {label}",
   "home.mostBacked": "최다 베팅: {label} {pct}%",
-  "home.noBets": "아직 베팅 없음 — 맞히는 사람이 하우스 상금을 가져갑니다",
+  "home.noBets": "아직 베팅이 없습니다. 맞힌 사람들이 틀린 구간의 판돈을 나눠 갖습니다",
   "home.left": "{t} 남음",
   "home.resultAt": "결과 ~{ts}",
   "home.distTitle": "구간별 베팅 분포",

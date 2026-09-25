@@ -91,7 +91,7 @@
   "home.result": "结果：{label}",
   "home.proposed": "已提交：{label}",
   "home.mostBacked": "最多人押：{label} {pct}%",
-  "home.noBets": "暂无下注——平台奖金归押中的人",
+  "home.noBets": "还没有人下注，押对区间的人平分押错区间的筹码",
   "home.left": "剩余 {t}",
   "home.resultAt": "结果约 {ts}",
   "home.distTitle": "资金在各区间的分布",
