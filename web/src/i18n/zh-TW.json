@@ -91,7 +91,7 @@
   "home.result": "結果：{label}",
   "home.proposed": "提出結果：{label}",
   "home.mostBacked": "最多人押：{label} {pct}%",
-  "home.noBets": "還沒有人下注——押對的人獨得莊家獎金",
+  "home.noBets": "還沒有人下注，押對區間的人平分押錯區間的籌碼",
   "home.left": "剩 {t}",
   "home.resultAt": "結果約 {ts}",
   "home.distTitle": "資金在各區間的分布",

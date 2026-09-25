@@ -91,7 +91,7 @@
   "home.result": "Resultado: {label}",
   "home.proposed": "Propuesto: {label}",
   "home.mostBacked": "Más apostado: {label} {pct}%",
-  "home.noBets": "Aún sin apuestas — el premio de la casa será para quien acierte",
+  "home.noBets": "Sin apuestas aún: quienes acierten el rango se reparten lo apostado en los demás",
   "home.left": "quedan {t}",
   "home.resultAt": "resultado ~{ts}",
   "home.distTitle": "Cómo se reparte el dinero entre los rangos",
