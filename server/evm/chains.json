@@ -1,11 +1,15 @@
 {
-  "_doc": "EVM deployments of SharePot. `pot` is the SharePot contract, `deployBlock` where event indexing starts. Stocks list the issuer's official stock tokens on that chain (Robinhood Stock Tokens: 18 decimals, ERC-8056 multiplier for dividends and splits); thresholdsBps are the four-bucket cut-offs like stock-templates.json (25th / 50th / 75th percentile of the last 60 sessions' close-to-close moves), `seed` the opening prize in shares on a test network.",
+  "_doc": "EVM deployments of SharePot. `pot` is the SharePot contract, `deployBlock` where event indexing starts. Stocks list the issuer's official stock tokens on that chain (Robinhood Stock Tokens: 18 decimals, ERC-8056 multiplier for dividends and splits); thresholdsBps are the four-bucket cut-offs like stock-templates.json (25th / 50th / 75th percentile of the last 60 sessions' close-to-close moves), `seed` the opening prize in shares on a test network. `topups`: the site's other wallets the resolver refills from the proposer's ETH when they drop below `belowEth` (the operator funds the proposer only).",
   "robinhood-testnet": {
     "name": "Robinhood Chain Testnet",
     "chainId": 46630,
     "rpc": "https://rpc.testnet.chain.robinhood.com",
     "explorer": "https://explorer.testnet.chain.robinhood.com",
     "faucet": "https://faucet.testnet.chain.robinhood.com",
+    "topups": [
+      { "label": "gas faucet", "address": "0xfBb01f0Cc0DB150d45D032789f751b0Bb42AE645", "belowEth": 0.005, "fillToEth": 0.05 },
+      { "label": "deployer", "address": "0x147FA6454aB1392af694c5641564d93DeB93B735", "belowEth": 0.01, "fillToEth": 0.03 }
+    ],
     "pot": "0x405d57163d4C7Fdb2b78086066802455968c1B43",
     "deployBlock": 123609862,
     "stocks": [

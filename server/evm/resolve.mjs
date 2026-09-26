@@ -187,7 +187,28 @@ async function settle(markets) {
 }
 
 const LOW_ETH = Number(process.env.PROPOSER_LOW_ETH ?? 0.005);
-if (wallet) { try { const b = Number(await publicClient.getBalance({ address: wallet.account.address })) / 1e18; if (b < LOW_ETH) notify("⛽ Robinhood proposer 快沒 ETH", `剩 ${b.toFixed(5)} ETH(${wallet.account.address})\n水龍頭:${chainCfg.faucet ?? "-"}`, "evm-proposer-low", 360); } catch {} }
+// the operator funds only the proposer; the site's other wallets (chains.json topups) are refilled from it, never
+// taking the proposer below a reserve of 4× its low mark so its own resolving never runs dry
+const RESERVE_ETH = LOW_ETH * 4;
+async function topUps() {
+  for (const t of chainCfg.topups ?? []) {
+    try {
+      const have = Number(await publicClient.getBalance({ address: t.address })) / 1e18;
+      if (have >= t.belowEth) continue;
+      const mine = Number(await publicClient.getBalance({ address: wallet.account.address })) / 1e18;
+      const amount = Math.min(t.fillToEth - have, mine - RESERVE_ETH);
+      if (amount < t.fillToEth / 10) { log(`top-up ${t.label}: skipped, proposer has ${mine.toFixed(5)} ETH (reserve ${RESERVE_ETH})`); continue; }
+      const hash = await wallet.client.sendTransaction({ to: t.address, value: BigInt(Math.floor(amount * 1e6)) * 10n ** 12n });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash, confirmations: 1, timeout: 120_000 });
+      if (receipt.status !== "success") throw new Error(`transfer reverted in ${hash}`);
+      log(`top-up ${t.label} ${t.address}: ${have.toFixed(5)} → +${amount.toFixed(5)} ETH ${explorerTx(hash)}`);
+    } catch (e) { log(`top-up ${t.label}: failed (next run retries): ${short(e)}`); }
+  }
+}
+if (wallet) {
+  await topUps();
+  try { const b = Number(await publicClient.getBalance({ address: wallet.account.address })) / 1e18; if (b < LOW_ETH) notify("⛽ Robinhood proposer 快沒 ETH", `剩 ${b.toFixed(5)} ETH(${wallet.account.address})\n它也負責補 gas 水龍頭和 deployer,請領水到這個地址\n水龍頭:${chainCfg.faucet ?? "-"}`, "evm-proposer-low", 360); } catch {}
+}
 const cfg = await readConfig(p);
 const markets = await allMarkets(p);
 const now = Number(process.env.NOW ?? Math.floor(Date.now() / 1000));   // NOW: test runs against a local chain with its clock moved
