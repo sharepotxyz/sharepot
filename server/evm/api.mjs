@@ -197,13 +197,22 @@ const FEEDBACK = path.join(DIR, "feedback.jsonl");
 // ---------- referrals (server/referrals.mjs): bindings keyed by lowercase EVM address, per chain ----------
 const REFERRALS_FILE = process.env.REFERRALS_FILE ?? path.join(DIR, "referrals.json"), REFERRAL_PAYOUTS = path.join(DIR, "referral-payouts.jsonl");
 const SITE_URL = process.env.SITE_URL ?? "https://robinhood.sharepot.xyz";
-const LOOKUP_IP_DAILY = Number(process.env.LOOKUP_IP_DAILY ?? 200);
-let lookupDay = "", seenLookup = new Map();
-function chargeLookup(ip) { const d = new Date().toISOString().slice(0, 10); if (d !== lookupDay) { lookupDay = d; seenLookup = new Map(); } if ((seenLookup.get(ip) ?? 0) >= LOOKUP_IP_DAILY) throw Object.assign(new Error("too many wallet lookups; try again later"), { status: 429 }); seenLookup.set(ip, (seenLookup.get(ip) ?? 0) + 1); }
+// Budgeted per network per day and, site-wide, per minute. A fresh lookup (POST /referral/code, unsigned, and /bind)
+// first indexes the newest blocks over the public RPC the resolver also uses, so strangers cycling through random
+// addresses could otherwise spend it at will; reads and writes have separate per-minute pools (as server/api.mjs), so
+// they cannot stop real bindings either.
+const LOOKUP_IP_DAILY = Number(process.env.LOOKUP_IP_DAILY ?? 200), LOOKUP_PER_MINUTE = Number(process.env.LOOKUP_PER_MINUTE ?? 30);
+let lookupDay = "", seenLookup = new Map(), lookupMinute = { at: 0, get: 0, post: 0 };
+function chargeLookup(ip, pool = "get") {
+  const d = new Date().toISOString().slice(0, 10); if (d !== lookupDay) { lookupDay = d; seenLookup = new Map(); }
+  const minute = Math.floor(Date.now() / 60_000); if (lookupMinute.at !== minute) lookupMinute = { at: minute, get: 0, post: 0 };
+  if (lookupMinute[pool] >= LOOKUP_PER_MINUTE || (seenLookup.get(ip) ?? 0) >= LOOKUP_IP_DAILY) throw Object.assign(new Error("too many wallet lookups; try again later"), { status: 429 });
+  lookupMinute[pool]++; seenLookup.set(ip, (seenLookup.get(ip) ?? 0) + 1);
+}
 /** Open positions come from the event index (no RPC), settled ones from this chain's settlement log. `fresh` first
  *  indexes the newest blocks, for the moment right after a first bet (the page binds then). */
-async function betHistory(wallet, fresh = false) {
-  if (fresh) { try { await sync(DATA); } catch {} }
+async function betHistory(wallet, fresh = false, ip = "?") {
+  if (fresh) { chargeLookup(ip, "post"); try { await sync(DATA); } catch {} }
   const w = wallet.toLowerCase(); let open = 0;
   for (const set of openPositions(DATA).values()) if (set.has(w)) open++;
   return { open, settled: readRows(SETTLEMENTS).filter((r) => String(r.owner).toLowerCase() === w).length };
@@ -305,10 +314,12 @@ const server = http.createServer(async (req, res) => {
       if (!isAddr(b.wallet)) return json(res, 400, { error: "wallet required" });
       const wallet = String(b.wallet).toLowerCase(), db = referrals.load(REFERRALS_FILE);
       if (!db.wallets[wallet]) {
-        const h = await betHistory(wallet, true);
+        const h = await betHistory(wallet, true, clientIp(req));
         if (h.open + h.settled === 0) return json(res, 403, { error: "place a bet first — the link unlocks with your first stake" });
-        referrals.ensureCode(db, wallet); referrals.save(REFERRALS_FILE, db);
-        console.log("referral code", wallet.slice(0, 8), db.wallets[wallet].code);
+        // re-read after the await: another request may have saved meanwhile, and load → save must not span an await
+        const cur = referrals.load(REFERRALS_FILE);
+        referrals.ensureCode(cur, wallet); referrals.save(REFERRALS_FILE, cur);
+        console.log("referral code", wallet.slice(0, 8), cur.wallets[wallet].code);
       }
       return json(res, 200, { ...referralView(wallet), eligible: true });
     }
@@ -327,12 +338,15 @@ const server = http.createServer(async (req, res) => {
       const db = referrals.load(REFERRALS_FILE);
       if (db.bindings[wallet]) return json(res, db.bindings[wallet].code === code ? 200 : 409, db.bindings[wallet].code === code ? { ok: true, already: true } : { error: "this wallet is already bound to another code", permanent: true });
       if (!referrals.referrerOf(db, code)) return json(res, 404, { error: "unknown referral code", permanent: true });
-      const h = await betHistory(wallet, true);
+      const h = await betHistory(wallet, true, clientIp(req));
       if (h.open === 0 && h.settled === 0) return json(res, 409, { error: "place your first bet, then the link binds" });
       if (h.settled > 0) return json(res, 409, { error: "a referral link only counts on a wallet's first bet", permanent: true });
-      const r = referrals.bind(db, { wallet, code, cluster: CHAIN_KEY });
+      // re-read after the await (see /referral/code): load → bind → save runs without yielding
+      const cur = referrals.load(REFERRALS_FILE);
+      if (cur.bindings[wallet]) return json(res, cur.bindings[wallet].code === code ? 200 : 409, cur.bindings[wallet].code === code ? { ok: true, already: true } : { error: "this wallet is already bound to another code", permanent: true });
+      const r = referrals.bind(cur, { wallet, code, cluster: CHAIN_KEY });
       if (r.error) return json(res, 409, { error: r.error, permanent: true });
-      referrals.save(REFERRALS_FILE, db);
+      referrals.save(REFERRALS_FILE, cur);
       console.log("referral bind", wallet.slice(0, 8), "→", code);
       return json(res, 200, { ok: true });
     }
