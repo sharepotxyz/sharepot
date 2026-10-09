@@ -65,8 +65,8 @@ const question = (ev, tr) => tr.t(ev.kind === "day" ? "q.onUtc" : "q.on", { sym:
 /** Home: the default view (betting open, closing soon; all stocks or the ?stock= tab) as event cards + the summary line.
  *  Other filters in the URL are left to the browser. A stock tab hides the hero, as main.ts does. */
 export function homeHtml(data, html, url, tr) {
-  const stock = url?.searchParams.get("stock") || "all", cat = url?.searchParams.get("cat") || "stocks";   // the page lands on Stocks (web/src/main.ts DEFAULTS)
-  if (stock !== "all" || cat !== "stocks") html = html.replace(`<section class="hero">`, `<section class="hero" hidden>`);
+  const stock = url?.searchParams.get("stock") || "all", cat = url?.searchParams.get("cat") || "all";   // the page lands on every open pool (web/src/main.ts DEFAULTS)
+  if (stock !== "all" || cat !== "all") html = html.replace(`<section class="hero">`, `<section class="hero" hidden>`);
   if (["issuer", "status", "sort", "q"].some((k) => url?.searchParams.get(k))) return html;
   const c = context(data); if (!c.markets.length) return html;
   const evs = buildEvents(c).filter((e) => e.status === "open" && (stock === "all" || e.symbol === stock) && (cat === "all" || e.category === cat)).sort((a, b) => a.closeTs - b.closeTs || a.symbol.localeCompare(b.symbol));

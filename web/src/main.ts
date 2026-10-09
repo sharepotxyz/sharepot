@@ -7,8 +7,9 @@ import { t, tn } from "./i18n";
 import { bucketColor, esc, fmtTs, mountTopbar, renderCatnav, tickerBadge, timeLeft, trackStocks } from "./ui";
 
 const qs = new URLSearchParams(location.search);
-const state = { cat: qs.get("cat") ?? "stocks", stock: qs.get("stock") ?? "all", issuer: qs.get("issuer") ?? "all", status: qs.get("status") ?? "open", sort: qs.get("sort") ?? "closing", q: qs.get("q") ?? "" };
-const DEFAULTS: Record<string, string> = { cat: "stocks", stock: "all", issuer: "all", status: "open", sort: "closing", q: "" };
+const state = { cat: qs.get("cat") ?? "all", stock: qs.get("stock") ?? "all", issuer: qs.get("issuer") ?? "all", status: qs.get("status") ?? "open", sort: qs.get("sort") ?? "closing", q: qs.get("q") ?? "" };
+// The page lands on every open pool (2026-10-09: the owner chose All over Stocks; the open-only status filter keeps the list short).
+const DEFAULTS: Record<string, string> = { cat: "all", stock: "all", issuer: "all", status: "open", sort: "closing", q: "" };
 let events: EventView[] = [];
 const grid = document.getElementById("events")!, filters = document.getElementById("filters")!, summary = document.getElementById("summary")!;
 // the tabs under the top bar switch category; a stock within it is picked in the filter row

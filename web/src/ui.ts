@@ -129,7 +129,7 @@ export function renderCatnav(active: string) {
   const known = Object.values(STOCK_META), items: [string, string][] = [["all", t("nav.all")], ...CATEGORIES.filter(([k]) => !known.length || known.some((m) => m.category === k))];
   el.innerHTML = items.map(([k, label]) => topOpts.onStock
     ? `<button data-s="${esc(k)}" class="${active === k ? "on" : ""}">${esc(label)}</button>`
-    : `<a href="/${k === "stocks" ? "" : "?cat=" + encodeURIComponent(k)}" class="${active === k ? "on" : ""}">${esc(label)}</a>`).join("");
+    : `<a href="/${k === "all" ? "" : "?cat=" + encodeURIComponent(k)}" class="${active === k ? "on" : ""}">${esc(label)}</a>`).join("");
   if (topOpts.onStock) el.querySelectorAll<HTMLButtonElement>("button[data-s]").forEach((b) => (b.onclick = () => topOpts.onStock!(b.dataset.s!)));
 }
 
