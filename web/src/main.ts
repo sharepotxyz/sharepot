@@ -9,6 +9,7 @@ import { bucketColor, esc, fmtTs, mountTopbar, renderCatnav, tickerBadge, timeLe
 const qs = new URLSearchParams(location.search);
 const state = { cat: qs.get("cat") ?? "all", stock: qs.get("stock") ?? "all", issuer: qs.get("issuer") ?? "all", status: qs.get("status") ?? "open", sort: qs.get("sort") ?? "closing", q: qs.get("q") ?? "" };
 // The page lands on every open pool (2026-10-09: the owner chose All over Stocks; the open-only status filter keeps the list short).
+const CATEGORY_RANK: Record<string, number> = { stocks: 0, preipo: 1, memes: 2 };   // the tab order, used to group the All tab
 const DEFAULTS: Record<string, string> = { cat: "all", stock: "all", issuer: "all", status: "open", sort: "closing", q: "" };
 let events: EventView[] = [];
 const grid = document.getElementById("events")!, filters = document.getElementById("filters")!, summary = document.getElementById("summary")!;
@@ -60,7 +61,10 @@ function update() {
     (state.status === "all" || (state.status === "open" && e.status === "open") || (state.status === "live" && (e.status === "trading" || e.status === "proposed")) || (state.status === "resolved" && e.status === "resolved")) &&
     (!q || `${e.symbol} ${e.name} ${e.markets.map((m) => tokenSymbol(m) + " " + issuerOf(m)).join(" ")}`.toLowerCase().includes(q)));
   const by = { closing: (a: EventView, b: EventView) => (state.status === "resolved" ? b.closeTs - a.closeTs : a.closeTs - b.closeTs), pot: (a: EventView, b: EventView) => (b.potUsd ?? 0) - (a.potUsd ?? 0), bettors: (a: EventView, b: EventView) => b.bettors - a.bettors }[state.sort as "closing" | "pot" | "bettors"] ?? (() => 0);
-  list = list.sort((a, b) => by(a, b) || a.symbol.localeCompare(b.symbol));
+  // On the All tab the groups keep the tab order (stocks, pre-IPO, memes) and the chosen sort orders within a group:
+  // by closing time alone the memes, which lock at 12:00 UTC, would always sit above the stocks (owner, 2026-10-09).
+  const rank = (e: EventView) => CATEGORY_RANK[e.category] ?? 9;
+  list = list.sort((a, b) => (state.cat === "all" ? rank(a) - rank(b) : 0) || by(a, b) || a.symbol.localeCompare(b.symbol));
   const pools = list.reduce((a, e) => a + e.markets.length, 0), pot = list.reduce((a, e) => a + (e.potUsd ?? 0), 0);
   summary.textContent = list.length ? `${tn("markets", list.length)} · ${tn("pools", pools)}${pot ? ` · ${t("home.inPlay", { usd: fmtUsd(pot) })}` : ""}` : "";
   grid.innerHTML = list.length ? list.map(card).join("") : `<div class="empty-state">${t("home.empty")}</div>`;

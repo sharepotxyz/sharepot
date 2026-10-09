@@ -64,12 +64,13 @@ const question = (ev, tr) => tr.t(ev.kind === "day" ? "q.onUtc" : "q.on", { sym:
 
 /** Home: the default view (betting open, closing soon; all stocks or the ?stock= tab) as event cards + the summary line.
  *  Other filters in the URL are left to the browser. A stock tab hides the hero, as main.ts does. */
+const CATEGORY_RANK = { stocks: 0, preipo: 1, memes: 2 };   // the All tab groups by tab order, as web/src/main.ts does
 export function homeHtml(data, html, url, tr) {
   const stock = url?.searchParams.get("stock") || "all", cat = url?.searchParams.get("cat") || "all";   // the page lands on every open pool (web/src/main.ts DEFAULTS)
   if (stock !== "all" || cat !== "all") html = html.replace(`<section class="hero">`, `<section class="hero" hidden>`);
   if (["issuer", "status", "sort", "q"].some((k) => url?.searchParams.get(k))) return html;
   const c = context(data); if (!c.markets.length) return html;
-  const evs = buildEvents(c).filter((e) => e.status === "open" && (stock === "all" || e.symbol === stock) && (cat === "all" || e.category === cat)).sort((a, b) => a.closeTs - b.closeTs || a.symbol.localeCompare(b.symbol));
+  const evs = buildEvents(c).filter((e) => e.status === "open" && (stock === "all" || e.symbol === stock) && (cat === "all" || e.category === cat)).sort((a, b) => (cat === "all" ? (CATEGORY_RANK[a.category] ?? 9) - (CATEGORY_RANK[b.category] ?? 9) : 0) || a.closeTs - b.closeTs || a.symbol.localeCompare(b.symbol));
   if (!evs.length) return html;
   const cards = evs.map((ev) => {
     const m0 = ev.markets[0], backed = ev.dist.some((x) => x > 0), label = (i) => bucketName(m0, i, ev.category, tr) || bucketLabel(m0, i, tr);
