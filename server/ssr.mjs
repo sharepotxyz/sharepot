@@ -65,8 +65,8 @@ const question = (ev, tr) => tr.t(ev.kind === "day" ? "q.onUtc" : "q.on", { sym:
 /** Home: the default view (betting open, closing soon; all stocks or the ?stock= tab) as event cards + the summary line.
  *  Other filters in the URL are left to the browser. A stock tab hides the hero, as main.ts does. */
 export function homeHtml(data, html, url, tr) {
-  const stock = url?.searchParams.get("stock") || "all", cat = url?.searchParams.get("cat") || "all";
-  if (stock !== "all" || cat !== "all") html = html.replace(`<section class="hero">`, `<section class="hero" hidden>`);
+  const stock = url?.searchParams.get("stock") || "all", cat = url?.searchParams.get("cat") || "stocks";   // the page lands on Stocks (web/src/main.ts DEFAULTS)
+  if (stock !== "all" || cat !== "stocks") html = html.replace(`<section class="hero">`, `<section class="hero" hidden>`);
   if (["issuer", "status", "sort", "q"].some((k) => url?.searchParams.get(k))) return html;
   const c = context(data); if (!c.markets.length) return html;
   const evs = buildEvents(c).filter((e) => e.status === "open" && (stock === "all" || e.symbol === stock) && (cat === "all" || e.category === cat)).sort((a, b) => a.closeTs - b.closeTs || a.symbol.localeCompare(b.symbol));
@@ -75,7 +75,7 @@ export function homeHtml(data, html, url, tr) {
     const m0 = ev.markets[0], backed = ev.dist.some((x) => x > 0), label = (i) => bucketName(m0, i, ev.category, tr) || bucketLabel(m0, i, tr);
     const bar = backed ? ev.dist.map((f, i) => `<i style="width:${(f * 100).toFixed(1)}%;background:${bucketColor(m0, i)}"></i>`).join("") : `<i class="empty"></i>`;
     const i = ev.dist.indexOf(Math.max(...ev.dist));
-    const lead = backed ? tr.t("home.mostBacked", { label: `<b>${esc(label(i))}</b>`, pct: Math.round(ev.dist[i] * 100) }) : `<span class="note">${tr.t("home.noBets")}</span>`;
+    const lead = backed ? tr.t("home.mostBacked", { label: `<b>${esc(label(i))}</b>`, pct: Math.round(ev.dist[i] * 100) }) : `<span class="note">${tr.t(ev.markets.some((m) => m.seed > 0) ? "home.noBets" : "home.noBetsNoSeed")}</span>`;
     return `<a class="ev" href="/market.html?e=${encodeURIComponent(ev.key)}">
     <div class="ev-head">${tickerBadge(ev.symbol)}<span class="pill open">${tr.t("status.openShort")}</span></div>
     <div class="ev-top"><div><div class="ev-q">${esc(question(ev, tr))}</div><div class="ev-s">${esc(c.names[ev.symbol] ?? ev.symbol)} · ${ev.markets.map((m) => esc(c.tok(m).token)).join(" · ")}</div></div></div>

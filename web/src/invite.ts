@@ -44,5 +44,5 @@ async function render() {
   } catch (e: any) { el.innerHTML = `<div class="fcard"><div class="msg err">${esc(e?.message ?? e)}</div></div>`; }
 }
 const fmt = (v: number | null) => (v == null ? "—" : v.toLocaleString("en-US", { maximumFractionDigits: 6 }));
-onSession((s) => { wallet = s ? s.publicKey.toBase58() : null; render(); });
+onSession((s) => { wallet = s ? s.address : null; render(); });
 document.addEventListener("sharepot:referral-bound", () => render());

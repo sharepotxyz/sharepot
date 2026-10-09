@@ -3,10 +3,10 @@
 import { API_BASE } from "./config";
 import { esc } from "./ui";
 import { t } from "./i18n";
-import type { Session } from "./wallet";
+import { encodeSig } from "@wallet";
+import type { Session } from "./chain-core";
 
 const KEY = "sharepot.ref";
-const bs58 = (b: Uint8Array) => { const A = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"; let n = 0n; for (const x of b) n = n * 256n + BigInt(x); let s = ""; while (n > 0n) { s = A[Number(n % 58n)] + s; n /= 58n; } for (const x of b) { if (x) break; s = "1" + s; } return s; };
 export const pendingReferral = () => { try { return localStorage.getItem(KEY); } catch { return null; } };
 const clear = () => { try { localStorage.removeItem(KEY); } catch {} };
 
@@ -31,7 +31,7 @@ export function captureReferral() {
 export async function bindIfPending(s: Session): Promise<void> {
   const code = pendingReferral(); if (!code) return;
   try {
-    const j = await (await fetch(`${API_BASE}/referral/${s.publicKey.toBase58()}`)).json();
+    const j = await (await fetch(`${API_BASE}/referral/${s.address}`)).json();
     if (j.bound) { clear(); document.getElementById("refbar")?.remove(); return; }
     if (j.firstBet) await bindReferralAfterBet(s);
   } catch {}
@@ -40,18 +40,18 @@ export async function bindIfPending(s: Session): Promise<void> {
 /** After a confirmed bet: bind the wallet to the pending code. Returns a short note for the UI, or null. */
 export async function bindReferralAfterBet(s: Session): Promise<string | null> {
   const code = pendingReferral(); if (!code) return null;
-  const wallet = s.publicKey.toBase58();
+  const wallet = s.address;
   try {
     // Sign-In-With-Solana where the wallet offers it: the wallet checks the domain is this page, so no other site can
     // collect a binding for sharepot. Otherwise a plain message naming the site and the time (valid 10 minutes).
     let body: Record<string, unknown>;
     if (s.signIn) {
       const { signedMessage, signature } = await s.signIn({ domain: location.host, address: wallet, statement: `Apply SharePot referral code ${code} to this wallet's first bet.`, uri: location.origin + "/", version: "1", nonce: `${code}${Math.random().toString(36).slice(2, 10)}`, issuedAt: new Date().toISOString() });
-      body = { wallet, code, signedMessage: bs58(signedMessage), signature: bs58(signature) };
+      body = { wallet, code, signedMessage: encodeSig(signedMessage), signature: encodeSig(signature) };
     } else {
       const ts = Math.floor(Date.now() / 1000);
       const sig = await s.signMessage(new TextEncoder().encode(`sharepot-referral v2\ndomain=${location.host}\nwallet=${wallet}\ncode=${code}\nts=${ts}`));
-      body = { wallet, code, ts, signature: bs58(sig) };
+      body = { wallet, code, ts, signature: encodeSig(sig) };
     }
     const r = await fetch(`${API_BASE}/referral/bind`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     const j = await r.json();

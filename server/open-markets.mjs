@@ -75,7 +75,9 @@ const existing = new Map((await withRetry(() => program.account.market.all([{ da
 // A parimutuel does not need house money — players are each other's counterparty, and a market nobody takes the other
 // side of refunds everyone in full (compute_payout: win_pool == 0 → refund). Seeding there would just be us paying
 // players out of the treasury. SEED_MARKETS=1 overrides, for a deliberate promotion funded from fee income.
-const SEED_ON = process.env.SEED_MARKETS === "1" || (process.env.SEED_MARKETS !== "0" && CLUSTER !== "mainnet");
+// No house prize on any network unless SEED_MARKETS=1 asks for one: mainnet never has it, and a test network that
+// seeds shows a behaviour mainnet will not have.
+const SEED_ON = process.env.SEED_MARKETS === "1";
 const seedShares = (t) => (SEED_ON ? t.seed ?? 0 : 0);
 const seedIx = (market, vault, mint, tokenProgram, amount) => program.methods.seedMarket(new BN(amount))
   .accounts({ market, vault, mint, funderToken: getAssociatedTokenAddressSync(mint, signer, false, tokenProgram), funder: signer, tokenProgram });

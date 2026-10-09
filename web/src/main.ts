@@ -1,14 +1,14 @@
 // Home: events (one stock × one session) as compact cards, with stock tabs, status / issuer filters, sorting and search.
 // Detail — the four ranges, odds, pools — lives on the event page only.
-import { fetchMarkets } from "./chain";
+import { fetchMarkets } from "@chain";
 import { STATUS_LABEL, buildEvents, type EventView } from "./events";
 import { STOCK_META, STOCK_NAMES, STOCK_ORDER, bucketLabel, bucketName, fmtMove, fmtUsd, issuerOf, loadPrices, loadStocks, question, tokenSymbol } from "./stocks";
 import { t, tn } from "./i18n";
 import { bucketColor, esc, fmtTs, mountTopbar, renderCatnav, tickerBadge, timeLeft, trackStocks } from "./ui";
 
 const qs = new URLSearchParams(location.search);
-const state = { cat: qs.get("cat") ?? "all", stock: qs.get("stock") ?? "all", issuer: qs.get("issuer") ?? "all", status: qs.get("status") ?? "open", sort: qs.get("sort") ?? "closing", q: qs.get("q") ?? "" };
-const DEFAULTS: Record<string, string> = { cat: "all", stock: "all", issuer: "all", status: "open", sort: "closing", q: "" };
+const state = { cat: qs.get("cat") ?? "stocks", stock: qs.get("stock") ?? "all", issuer: qs.get("issuer") ?? "all", status: qs.get("status") ?? "open", sort: qs.get("sort") ?? "closing", q: qs.get("q") ?? "" };
+const DEFAULTS: Record<string, string> = { cat: "stocks", stock: "all", issuer: "all", status: "open", sort: "closing", q: "" };
 let events: EventView[] = [];
 const grid = document.getElementById("events")!, filters = document.getElementById("filters")!, summary = document.getElementById("summary")!;
 // the tabs under the top bar switch category; a stock within it is picked in the filter row
@@ -22,7 +22,7 @@ function card(ev: EventView) {
   if (ev.outcome != null) lead = `${t("home.result", { label: `<b>${esc(label(ev, ev.outcome))}</b>` })}${ev.moveValue != null ? ` · ${fmtMove(ev.moveValue)}` : ""}`;
   else if (ev.proposed != null) lead = `${t("home.proposed", { label: `<b>${esc(label(ev, ev.proposed))}</b>` })}${ev.moveValue != null ? ` · ${fmtMove(ev.moveValue)}` : ""}`;
   else if (backed) { const i = ev.dist.indexOf(Math.max(...ev.dist)); lead = t("home.mostBacked", { label: `<b>${esc(label(ev, i))}</b>`, pct: Math.round(ev.dist[i] * 100) }); }
-  else lead = `<span class="note">${t("home.noBets")}</span>`;
+  else lead = `<span class="note">${t(ev.markets.some((m) => m.seed > 0) ? "home.noBets" : "home.noBetsNoSeed")}</span>`;
   const when = ev.status === "open" ? t("home.left", { t: timeLeft(ev.closeTs) }) : ev.status === "trading" ? t("home.resultAt", { ts: fmtTs(ev.resolveAfterTs) }) : "";
   return `<a class="ev" href="/market.html?e=${encodeURIComponent(ev.key)}">
     <div class="ev-head">${tickerBadge(ev.symbol)}<span class="pill ${ev.status}">${ev.status === "open" ? t("status.openShort") : STATUS_LABEL[ev.status]}</span></div>
@@ -63,7 +63,7 @@ function update() {
   grid.innerHTML = list.length ? list.map(card).join("") : `<div class="empty-state">${t("home.empty")}</div>`;
   renderFilters(); renderCatnav(state.cat);
   // the pitch is for the front page; a category tab or a stock filter goes straight to those markets
-  const hero = document.querySelector<HTMLElement>(".hero"); if (hero) hero.hidden = state.cat !== "all" || state.stock !== "all";
+  const hero = document.querySelector<HTMLElement>(".hero"); if (hero) hero.hidden = state.cat !== DEFAULTS.cat || state.stock !== "all";
   const p = new URLSearchParams(); for (const [k, v] of Object.entries(state)) if (v && v !== DEFAULTS[k]) p.set(k, v);
   history.replaceState(null, "", p.toString() ? "?" + p : location.pathname);
 }

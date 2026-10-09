@@ -1,0 +1,15 @@
+# SharePot on Robinhood Chain testnet — lines to add to the `sharepot` user's crontab next to deploy/crontab.txt.
+# Both scripts are idempotent and find session times from the NYSE calendar themselves. They sign with the EVM
+# proposer key only (~/secrets/evm/proposer.key: a hex private key; it may create markets, propose results and crank
+# payouts). The contract's admin key is not on this machine.
+#   EVM_CHAIN picks the deployment in server/evm/chains.json (pot address, RPC, tokens).
+
+# keep one market per listed Robinhood stock token open for betting
+*/30 * * * * cd $S/apps/sharepot && EVM_CHAIN=robinhood-testnet DATA_DIR=$S/data EVM_PROPOSER_KEY_FILE=$S/secrets/evm/proposer.key SEED_MARKETS=0 flock -n $S/locks/evm-open-markets.lock node server/evm/open-markets.mjs >> $S/logs/evm-open-markets.log 2>&1
+
+# propose results after the close, finalize after the dispute window, pay out and sweep (indexes positions first)
+*/10 * * * * cd $S/apps/sharepot && EVM_CHAIN=robinhood-testnet DATA_DIR=$S/data EVM_PROPOSER_KEY_FILE=$S/secrets/evm/proposer.key flock -n $S/locks/evm-resolve.lock node server/evm/resolve.mjs >> $S/logs/evm-resolve.log 2>&1
+
+# memes: sample their mainnet quotes every minute (the closing hour's median is the day's close); 11:00 UTC pick tomorrow's
+* * * * * cd $S/apps/sharepot && EVM_CHAIN=robinhood-testnet DATA_DIR=$S/data flock -n $S/locks/evm-sample-prices.lock node server/evm/sample-prices.mjs >> $S/logs/evm-sample-prices.log 2>&1
+0 11 * * * cd $S/apps/sharepot && EVM_CHAIN=robinhood-testnet DATA_DIR=$S/data flock -n $S/locks/evm-select-chain.lock node server/evm/select-chain.mjs >> $S/logs/evm-select-chain.log 2>&1

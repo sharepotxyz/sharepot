@@ -70,4 +70,4 @@ async function load() {
 
 renderWindows();
 load();
-onSession((s) => { me = s ? s.publicKey.toBase58() : null; load(); });
+onSession((s) => { me = s ? s.address : null; load(); });

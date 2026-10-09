@@ -1,7 +1,7 @@
 // An event is one stock × one New York session ("Where does SPCX close on Tue, Sep 15?"). Every issuer's token of that
 // stock has its own pool (an on-chain market); they share the thresholds and the result. The home page shows events;
 // the event page lets you pick the token and see its pool.
-import { NO_OUTCOME, totalPool, type MarketView } from "./chain";
+import { NO_OUTCOME, totalPool, type MarketView } from "./chain-core";
 import { t } from "./i18n";
 import { STOCK_NAMES, categoryOf, parseMetric, priceOf, tokenSymbol, tokensOf, uiAmount, type Category } from "./stocks";
 

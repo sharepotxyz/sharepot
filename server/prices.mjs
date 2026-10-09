@@ -289,7 +289,10 @@ export const bucketOf = (thresholds, value) => thresholds.filter((t) => value >=
  * different prices, and a gap between them cannot say which one is off, so that quote is recorded in the evidence for
  * anyone comparing and never decides or holds anything.
  */
-export function chainMove(dataDir, mint, symbol, date, now = Math.floor(Date.now() / 1000), thresholds = null) {
+/** Names of the two sampled quote sources, for the evidence text: Solana samples Jupiter (p) and DexScreener (p2);
+ *  an EVM deployment passes its own pair (server/evm/sample-prices.mjs). */
+export const CHAIN_SOURCES = { primary: "jupiter-price-v3", primaryNote: "lite-api.jup.ag/price/v3", secondary: "dexscreener", secondaryNote: "api.dexscreener.com" };
+export function chainMove(dataDir, mint, symbol, date, now = Math.floor(Date.now() / 1000), thresholds = null, names = CHAIN_SOURCES) {
   if (now < utcMidnight(date) + 24 * 3600) return { ok: false, reason: `${date} has not ended yet (UTC)` };
   const prevDate = addDays(date, -1);
   const b = chainClose(dataDir, mint, prevDate);
@@ -302,11 +305,11 @@ export function chainMove(dataDir, mint, symbol, date, now = Math.floor(Date.now
   if (b2.ok && c2.ok) {
     const ppm2 = movePpm(b2.close, c2.close);
     const agreed = thresholds ? bucketOf(thresholds, ppm) === bucketOf(thresholds, ppm2) : null;
-    crossCheck = { source: "dexscreener", role: "reference only, does not settle", baseline: b2.close, close: c2.close, movePpm: ppm2, prevSamples: b2.samples, samples: c2.samples, agreed };
-  } else crossCheck = { source: "dexscreener", agreed: null, note: `second source short of samples (${prevDate}: ${b2.samples ?? 0}, ${date}: ${c2.samples ?? 0} of ${MIN_CLOSE_SAMPLES}); primary used alone` };
+    crossCheck = { source: names.secondary, role: "reference only, does not settle", baseline: b2.close, close: c2.close, movePpm: ppm2, prevSamples: b2.samples, samples: c2.samples, agreed };
+  } else crossCheck = { source: names.secondary, agreed: null, note: `second source short of samples (${prevDate}: ${b2.samples ?? 0}, ${date}: ${c2.samples ?? 0} of ${MIN_CLOSE_SAMPLES}); primary used alone` };
   return {
     ok: true, value: ppm,
-    detail: { symbol, source: "jupiter-price-v3", mint, prevDate, baseline: b.close, prevSamples: b.samples, date, close: c.close, samples: c.samples, window: "23:00–24:00 UTC of each day, one quote per minute, median", crossCheck },
-    evidence: { source: `sampled quotes ${prevDate} and ${date}, 23:00–24:00 UTC (lite-api.jup.ag/price/v3 as p, api.dexscreener.com as p2, one per minute)`, response: b.raw + c.raw },
+    detail: { symbol, source: names.primary, mint, prevDate, baseline: b.close, prevSamples: b.samples, date, close: c.close, samples: c.samples, window: "23:00–24:00 UTC of each day, one quote per minute, median", crossCheck },
+    evidence: { source: `sampled quotes ${prevDate} and ${date}, 23:00–24:00 UTC (${names.primaryNote} as p, ${names.secondaryNote} as p2, one per minute)`, response: b.raw + c.raw },
   };
 }

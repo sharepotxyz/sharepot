@@ -1,1 +1,3 @@
-{ "compilerOptions": { "target": "ES2020", "module": "ESNext", "moduleResolution": "Bundler", "strict": true, "skipLibCheck": true, "resolveJsonModule": true, "esModuleInterop": true, "lib": ["ES2020", "DOM", "DOM.Iterable"], "noEmit": true, "types": ["vite/client", "node"] }, "include": ["src", "../idl/*.ts"] }
+{ "compilerOptions": { "target": "ES2020", "module": "ESNext", "moduleResolution": "Bundler", "strict": true, "skipLibCheck": true, "resolveJsonModule": true, "esModuleInterop": true, "lib": ["ES2020", "DOM", "DOM.Iterable"], "noEmit": true, "types": ["vite/client", "node"],
+  "baseUrl": ".", "paths": { "@chain": ["src/chain-solana.ts"], "@wallet": ["src/wallet-solana.ts"] } },
+  "include": ["src", "../idl/*.ts"] }

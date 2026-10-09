@@ -1,0 +1,23 @@
+{
+ "_doc": "Words the EVM site says differently from the Solana one (elements marked data-t / data-t-attr in the static pages). Per language; English is the fallback. Keep zh-TW punctuation full-width.",
+ "en": {
+  "meta.index": "Daily prediction pools on US stocks, staked and paid in Robinhood Stock Tokens on Robinhood Chain.",
+  "hero.p": "Daily pools on where US stocks close. Stake the Robinhood Stock Tokens you already hold — TSLA, AMZN, PLTR, NFLX, AMD — and winners are paid in that same token. Nothing gets sold. The same pools run on Solana with xStocks, Backpack and Ondo tokens.",
+  "foot.issuer": "<b>Issuer controls.</b> Stock Tokens are issued by Robinhood, which can pause a token, block any address from sending or receiving it (these pools included) and burn tokens from any address. Tokenized stocks are not offered to US persons.",
+  "fc.intro": "SharePot on <b>Robinhood Chain Testnet</b> uses the issuer's own test Stock Tokens — Tesla, Amazon, Palantir, Netflix and AMD — which Robinhood hands out for free on its faucet. There is no faucet on this site.",
+  "fc.s1": "Open the <a href=\"https://faucet.testnet.chain.robinhood.com\" target=\"_blank\" rel=\"noopener\">Robinhood Chain testnet faucet</a>, paste your wallet address and claim: 0.05 test ETH for fees plus 5 of each Stock Token, once every 24 hours.",
+  "fc.s2": "In your wallet, switch to <b>Robinhood Chain Testnet</b> (the site adds the network when you connect).",
+  "fc.s3": "<a href=\"/\">Pick a market</a> and stake some shares before the opening bell.",
+  "fc.connectFirst": "Connect an EVM wallet first — MetaMask, Rabby or Robinhood Wallet on Robinhood Chain Testnet."
+ },
+ "zh-TW": {
+  "meta.index": "美股每日預測彩池，用 Robinhood Chain 上的 Robinhood 股票代幣下注、也用它領獎。",
+  "hero.p": "每天押美股收盤落在哪個區間。拿你手上已有的 Robinhood 股票代幣（TSLA、AMZN、PLTR、NFLX、AMD）下注，贏家領到的也是同一種代幣，什麼都不用賣。同樣的彩池也在 Solana 上跑，用 xStocks、Backpack、Ondo 的代幣。",
+  "foot.issuer": "<b>發行方權限。</b>股票代幣由 Robinhood 發行；Robinhood 可以暫停某個代幣、封鎖任何地址的收發（包括這些彩池），也可以銷毀任何地址上的代幣。代幣化股票不對美國人提供。",
+  "fc.intro": "<b>Robinhood Chain 測試網</b>上的 SharePot 用的是發行方自己的測試股票代幣（Tesla、Amazon、Palantir、Netflix、AMD），由 Robinhood 的水龍頭免費發放。本站沒有自己的水龍頭。",
+  "fc.s1": "打開 <a href=\"https://faucet.testnet.chain.robinhood.com\" target=\"_blank\" rel=\"noopener\">Robinhood Chain 測試網水龍頭</a>，貼上你的錢包地址領取：0.05 測試 ETH（付手續費）加每種股票代幣 5 股，每 24 小時一次。",
+  "fc.s2": "在錢包裡切到 <b>Robinhood Chain Testnet</b>（連線時網站會自動幫你加這條鏈）。",
+  "fc.s3": "<a href=\"/\">挑一個盤</a>，在開盤鐘響前押幾股。",
+  "fc.connectFirst": "先連 EVM 錢包（MetaMask、Rabby 或 Robinhood Wallet，切到 Robinhood Chain Testnet）。"
+ }
+}
