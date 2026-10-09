@@ -70,6 +70,28 @@ const IDL = JSON.parse(fs.readFileSync(new URL("../idl/sharepot.json", import.me
 const ro = new anchor.Program(IDL, new anchor.AnchorProvider(conn, new anchor.Wallet(Keypair.generate()), { commitment: "confirmed" }));
 const [configPda] = PublicKey.findProgramAddressSync([Buffer.from("config")], ro.programId);
 const parseLine = (l) => { try { return JSON.parse(l); } catch { return null; } };   // display-only readers skip a torn line
+// Rows of an append-only jsonl file, re-parsed only when its size or mtime changed (the same stamp the leaderboard
+// uses); settlements are also indexed by owner, so a wallet's history is one map lookup, not a parse of the whole log.
+// Callers must not mutate what they get back.
+const rowsCache = new Map();   // file -> { stamp, rows, byOwner }
+function rowsCached(file, byOwner = false) {
+  let stamp = "-"; try { const st = fs.statSync(file); stamp = `${st.size}:${st.mtimeMs}`; } catch {}
+  const hit = rowsCache.get(file); if (hit && hit.stamp === stamp && (!byOwner || hit.byOwner)) return hit;
+  const rows = stamp === "-" ? [] : fs.readFileSync(file, "utf8").split("\n").filter(Boolean).map(parseLine).filter(Boolean);
+  const v = { stamp, rows, byOwner: null };
+  if (byOwner) { v.byOwner = new Map(); for (const r of rows) { const k = String(r.owner ?? ""); const a = v.byOwner.get(k); if (a) a.push(r); else v.byOwner.set(k, [r]); } }
+  rowsCache.set(file, v); return v;
+}
+// Public lists (a wallet's history, a market's disputes) are answered from that cache, so one request costs a map
+// lookup; this budget only keeps a single address from using the site as its own load generator. It is separate from
+// the referral lookup budget on purpose: that one is small and global, and page views must never be able to drain it.
+const LIST_IP_PER_MINUTE = Number(process.env.LIST_IP_PER_MINUTE ?? 60);
+const seenList = new Map(); let listMinute = 0;
+function chargeList(ip) {
+  const minute = Math.floor(Date.now() / 60_000); if (minute !== listMinute || seenList.size > 50_000) { listMinute = minute; seenList.clear(); }
+  const n = (seenList.get(ip) ?? 0) + 1; seenList.set(ip, n);
+  if (n > LIST_IP_PER_MINUTE) throw Object.assign(new Error("too many requests from this address; try again in a minute"), { status: 429 });
+}
 const tagOf = (b) => Buffer.from(b).toString("utf8").replace(/\0+$/, "");
 const num = (x) => (x?.toNumber ? x.toNumber() : Number(x));
 // token program, decimals and current ScaledUiAmount multiplier (dividends / splits) of each mint; re-read every 10 min
@@ -192,7 +214,7 @@ const REFERRALS_FILE = process.env.REFERRALS_FILE ?? path.join(DATA, "referrals.
 const REFERRAL_PAYOUTS = path.join(DATA, "referral-payouts.jsonl");
 const SITE_URL = process.env.SITE_URL ?? (CLUSTER === "mainnet" ? "https://sharepot.xyz" : "https://devnet.sharepot.xyz");
 const isPubkey = (s) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(String(s ?? ""));
-const settledRowsOf = (wallet) => readSettlements(DATA).filter((r) => r.owner === wallet);
+const settledRowsOf = (wallet) => rowsCached(path.join(DATA, "settlements.jsonl"), true).byOwner.get(wallet) ?? [];
 // Open positions of a wallet straight from the chain (they close on payout, so settled history is checked separately).
 const openPositionsOf = async (wallet) => (await ro.account.position.all([{ dataSize: ro.account.position.size }, { memcmp: { offset: 40, bytes: wallet } }])).length;
 const betCache = new Map();   // wallet → { at, open, settled }
@@ -313,9 +335,9 @@ const server = http.createServer(async (req, res) => {
     }
     const po = p.match(/^\/positions\/([1-9A-HJ-NP-Za-km-z]{32,44})$/);
     if (po) {
-      const f = path.join(DATA, "settlements.jsonl");
-      const rows = fs.existsSync(f) ? fs.readFileSync(f, "utf8").split("\n").filter(Boolean).map(parseLine).filter((r) => r && r.owner === po[1]) : [];
-      return json(res, 200, { owner: po[1], settled: rows.reverse() }, { "cache-control": "no-store" });
+      chargeList(clientIp(req));
+      const rows = rowsCached(path.join(DATA, "settlements.jsonl"), true).byOwner.get(po[1]) ?? [];
+      return json(res, 200, { owner: po[1], settled: rows.slice().reverse() }, { "cache-control": "no-store" });
     }
     // Leaderboard: points = shares staked × the official close the market settled on (points.mjs).
     // ?window=7d|30d|all, ?limit=n. Recomputed only when the settlement log has grown.
@@ -449,8 +471,9 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true, id: rec.id });
     }
     if (p === "/disputes") {
+      chargeList(clientIp(req));
       const m = url.searchParams.get("market");
-      const rows = fs.existsSync(DISPUTES) ? fs.readFileSync(DISPUTES, "utf8").split("\n").filter(Boolean).map(parseLine).filter(Boolean) : [];
+      const rows = rowsCached(DISPUTES).rows;
       return json(res, 200, { disputes: rows.filter((d) => !m || d.market === m).map(({ id, at, market, wallet, reason, claimedValue, status }) => ({ id, at, market, wallet: wallet.slice(0, 4) + "…" + wallet.slice(-4), reason, claimedValue, status })) });
     }
     if (p === "/faucet" && req.method === "POST") {

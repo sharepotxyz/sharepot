@@ -32,6 +32,29 @@ const STATIC = path.resolve(process.env.STATIC_DIR ?? new URL("../../web/dist-ev
 fs.mkdirSync(DIR, { recursive: true });
 const parseLine = (l) => { try { return JSON.parse(l); } catch { return null; } };
 const readRows = (f) => (fs.existsSync(f) ? fs.readFileSync(f, "utf8").split("\n").filter(Boolean).map(parseLine).filter(Boolean) : []);
+// Rows of an append-only jsonl file, re-parsed only when its size or mtime changed (the same stamp the leaderboard
+// uses); settlements are also indexed by owner
+// (lower-cased, as this chain compares addresses), so a wallet's history is one map lookup, not a parse of the whole log.
+// Callers must not mutate what they get back.
+const rowsCache = new Map();   // file -> { stamp, rows, byOwner }
+function rowsCached(file, byOwner = false) {
+  let stamp = "-"; try { const st = fs.statSync(file); stamp = `${st.size}:${st.mtimeMs}`; } catch {}
+  const hit = rowsCache.get(file); if (hit && hit.stamp === stamp && (!byOwner || hit.byOwner)) return hit;
+  const rows = stamp === "-" ? [] : fs.readFileSync(file, "utf8").split("\n").filter(Boolean).map(parseLine).filter(Boolean);
+  const v = { stamp, rows, byOwner: null };
+  if (byOwner) { v.byOwner = new Map(); for (const r of rows) { const k = String(r.owner ?? "").toLowerCase(); const a = v.byOwner.get(k); if (a) a.push(r); else v.byOwner.set(k, [r]); } }
+  rowsCache.set(file, v); return v;
+}
+// Public lists (a wallet's history, a market's disputes) are answered from that cache, so one request costs a map
+// lookup; this budget only keeps a single address from using the site as its own load generator. It is separate from
+// the referral lookup budget on purpose: that one is small and global, and page views must never be able to drain it.
+const LIST_IP_PER_MINUTE = Number(process.env.LIST_IP_PER_MINUTE ?? 60);
+const seenList = new Map(); let listMinute = 0;
+function chargeList(ip) {
+  const minute = Math.floor(Date.now() / 60_000); if (minute !== listMinute || seenList.size > 50_000) { listMinute = minute; seenList.clear(); }
+  const n = (seenList.get(ip) ?? 0) + 1; seenList.set(ip, n);
+  if (n > LIST_IP_PER_MINUTE) throw Object.assign(new Error("too many requests from this address; try again in a minute"), { status: 429 });
+}
 
 // ---------- listing ----------
 // One token per stock on this chain, named by its ticker (the issuer's token symbol is the ticker itself), plus the
@@ -215,7 +238,7 @@ async function betHistory(wallet, fresh = false, ip = "?") {
   if (fresh) { chargeLookup(ip, "post"); try { await sync(DATA); } catch {} }
   const w = wallet.toLowerCase(); let open = 0;
   for (const set of openPositions(DATA).values()) if (set.has(w)) open++;
-  return { open, settled: readRows(SETTLEMENTS).filter((r) => String(r.owner).toLowerCase() === w).length };
+  return { open, settled: (rowsCached(SETTLEMENTS, true).byOwner.get(w) ?? []).length };
 }
 const referralPoints = () => new Map(leaderboardCached("all", 0).entries.map((e) => [e.wallet, e.points]));
 function referralView(wallet) {
@@ -262,10 +285,11 @@ const server = http.createServer(async (req, res) => {
     }
     const po = p.match(/^\/positions\/(0x[0-9a-fA-F]{40})$/);
     if (po) {
+      chargeList(clientIp(req));
       const owner = po[1].toLowerCase(), open = [];
       for (const [id, set] of openPositions(DATA)) if (set.has(owner)) open.push({ id });
-      const settled = readRows(SETTLEMENTS).filter((r) => String(r.owner).toLowerCase() === owner);
-      return json(res, 200, { owner: po[1], open, settled: settled.reverse() }, { "cache-control": "no-store" });
+      const settled = rowsCached(SETTLEMENTS, true).byOwner.get(owner) ?? [];
+      return json(res, 200, { owner: po[1], open, settled: settled.slice().reverse() }, { "cache-control": "no-store" });
     }
     if (p === "/leaderboard") {
       const w0 = url.searchParams.get("window"), win = w0 === "7d" || w0 === "30d" ? w0 : "all";
