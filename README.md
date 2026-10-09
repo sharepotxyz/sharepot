@@ -224,9 +224,12 @@ What the EVM changes, and what it does not:
   bet), one after that.
 * **Positions live in a mapping,** so who holds one comes from the contract's events: the server keeps an index
   ([`server/evm/index-events.mjs`](server/evm/index-events.mjs)) that the crank and the "My bets" page read.
-* **Not on this chain yet:** dispute filing, invite links and the site's own faucet (they verify Solana wallet
-  signatures). The testnet site sends you to Robinhood's faucet instead: 0.05 test ETH and five of each Stock Token
-  a day.
+* **Invite links work here too:** a first-time bettor is bound to the code it arrived with by an EIP-191 signature,
+  and the referrer's rebate is paid from the same ledger as on Solana. The testnet site hands out a little gas and
+  mints the day's meme tokens itself; Stock Tokens come from Robinhood's faucet: 0.05 test ETH and five of each a day.
+* **Not on this chain yet:** filing a dispute from the site, and the second machine that re-derives every result
+  (both are built on Solana wallet signatures and the Solana admin key). A proposed result stands for one hour, in
+  which the admin can re-propose or void it; questions go to hello@sharepot.xyz. The site's footer and Docs say so.
 
 The contract has the program's functions under the same names (`createMarket`, `seedMarket`, `placeBet`,
 `proposeResolution`, `finalizeResolution`, `voidMarket`, `voidStaleMarket`, `settlePosition`, `forfeitPosition`,
