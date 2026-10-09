@@ -14,7 +14,7 @@
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
-import { CHAIN_KEY, chainCfg, allMarkets, readConfig, publicClient, erc20Abi, walletFor } from "./chain.mjs";
+import { CHAIN_KEY, chainCfg, readConfig, publicClient, erc20Abi, walletFor, pot, normalizeMarket, Status } from "./chain.mjs";
 import { sync, openPositions, evmDir } from "./index-events.mjs";
 import { readRegistry, asStock, REGISTRY_FILE } from "../chain-tokens.mjs";
 import { utcDate, addDays, chainClose } from "../prices.mjs";
@@ -89,16 +89,51 @@ async function multiplierOf(token) {
 const serializeMarket = (m, multiplier) => ({ pubkey: `${chainCfg.pot}#${m.id}`, id: m.id, mint: m.token.toLowerCase(), tokenProgram: "", decimals: stockByToken.get(m.token.toLowerCase())?.tokens[0].decimals ?? 18, multiplier, metric: m.metric, nBuckets: m.nBuckets, thresholds: m.thresholds, openTs: m.openTs, closeTs: m.closeTs, resolveAfterTs: m.resolveAfterTs, baseline: m.baseline,
   pools: m.pools.map(Number), seed: Number(m.seedAmount), status: m.status - 1, outcome: m.outcome, proposedOutcome: m.proposedOutcome, proposedValue: m.proposedValue, proposedAt: m.proposedAt, positions: m.positions, positionsOpen: m.positionsOpen, feeCollected: Number(m.feeCollected), snapshotHash: String(m.snapshotHash).replace(/^0x/, "") });
 const serializeConfig = (c, marketCount) => ({ admin: c.admin, proposer: c.proposer, treasuryOwner: c.treasury, feeBps: c.feeBps, earlyBirdDiscountBps: c.earlyBirdDiscountBps, earlyBirdSecs: c.earlyBirdSecs, disputeWindowSecs: c.disputeWindowSecs, minBet: Number(c.minBet), marketCount, paused: c.paused });
-let chainCache = { at: 0, markets: null, config: null, pending: null };
+// A market the contract has swept never changes again: it is read once and kept (on disk across restarts, keyed by the
+// pot address), so a refresh reads only the live markets, a few dozen of 200+, in one RPC batch instead of five (about
+// 7 s per refresh before, every 15 s, 2026-10-09).
+const SWEPT_FILE = path.join(DIR, `swept-markets.${String(chainCfg.pot).toLowerCase()}.json`);
+const swept = new Map();   // id -> normalized market
+try { for (const [id, m] of JSON.parse(fs.readFileSync(SWEPT_FILE, "utf8"))) swept.set(Number(id), m); } catch {}
+async function liveMarkets() {
+  const p = pot(), count = Number(await p.read.marketCount());
+  const ids = []; for (let id = 0; id < count; id++) if (!swept.has(id)) ids.push(id);
+  const fresh = new Map(); let newlySwept = 0;
+  for (let i = 0; i < ids.length; i += 50) {
+    const slice = ids.slice(i, i + 50), got = await Promise.all(slice.map((id) => p.read.getMarket([BigInt(id)])));
+    slice.forEach((id, j) => { const m = normalizeMarket(id, got[j]); fresh.set(id, m); if (m.status === Status.Swept) { swept.set(id, m); newlySwept++; } });
+  }
+  if (newlySwept) { try { fs.writeFileSync(SWEPT_FILE + ".tmp", JSON.stringify([...swept])); fs.renameSync(SWEPT_FILE + ".tmp", SWEPT_FILE); } catch (e) { console.error("swept cache write failed:", String(e?.message ?? e).slice(0, 100)); } }
+  const all = []; for (let id = 0; id < count; id++) { const m = fresh.get(id) ?? swept.get(id); if (m) all.push(m); }
+  return all;
+}
+// The last good read is kept on disk and served straight after a restart (stale by the downtime only) while the first
+// refresh runs in the background; before this the first page views after a deploy waited on a full chain read or got a
+// 503 (2026-10-09). Written only when the markets or the config changed.
+const SNAPSHOT = path.join(DIR, "chain-cache.json");
+let snapshotLast = "";
+function saveSnapshot() {
+  try {
+    const body = JSON.stringify({ markets: chainCache.markets, config: chainCache.config }); if (body === snapshotLast) return;
+    fs.writeFileSync(SNAPSHOT + ".tmp", JSON.stringify({ at: chainCache.at, markets: chainCache.markets, config: chainCache.config })); fs.renameSync(SNAPSHOT + ".tmp", SNAPSHOT); snapshotLast = body;
+  } catch (e) { console.error("chain snapshot write failed:", String(e?.message ?? e).slice(0, 100)); }
+}
+function loadSnapshot() {
+  try { const s = JSON.parse(fs.readFileSync(SNAPSHOT, "utf8")); if (Array.isArray(s.markets) && s.config) { console.log(`chain snapshot: ${s.markets.length} markets from ${new Date(s.at).toISOString()}`); return { at: Number(s.at) || 0, markets: s.markets, config: s.config, pending: null }; } } catch {}
+  return { at: 0, markets: null, config: null, pending: null };
+}
+let chainCache = loadSnapshot();
 const CHAIN_TTL_MS = Number(process.env.CHAIN_CACHE_MS ?? 15000);
 function chainState() {
   if (chainCache.markets && Date.now() - chainCache.at < CHAIN_TTL_MS) return Promise.resolve(chainCache);
   if (chainCache.pending) return chainCache.markets ? Promise.resolve(chainCache) : chainCache.pending;   // stale-while-revalidate
   const stale = chainCache.markets ? chainCache : null;
   chainCache.pending = (async () => {
-    const [all, cfg] = await Promise.all([allMarkets(), readConfig()]);
+    const t0 = Date.now(), [all, cfg] = await Promise.all([liveMarkets(), readConfig()]);
     const markets = await Promise.all(all.map(async (m) => serializeMarket(m, await multiplierOf(m.token))));
     chainCache = { at: Date.now(), markets: markets.sort((a, b) => b.id - a.id), config: serializeConfig(cfg, all.length), pending: null };
+    const ms = Date.now() - t0; if (!stale || ms > 3000) console.log(`chain refresh: ${all.length} markets (${swept.size} swept, from cache) in ${ms} ms`);
+    saveSnapshot();
     return chainCache;
   })().catch((e) => { chainCache.pending = null; throw e; });
   if (stale) { chainCache.pending.catch((e) => console.error("chain refresh failed:", String(e?.message ?? e).slice(0, 120))); return Promise.resolve(stale); }

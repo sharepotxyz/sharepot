@@ -126,18 +126,35 @@ function archivedMarkets() {
   }
   return archive.rows;
 }
-let chainCache = { at: 0, markets: null, config: null, pending: null };
+// The last good read is kept on disk and served straight after a restart (stale by the downtime only) while the first
+// refresh runs in the background; before this the first page views after a deploy waited on a full chain read or got a
+// 503 (2026-10-09). Written only when the markets or the config changed.
+const SNAPSHOT = path.join(DATA, "chain-cache.json");
+let snapshotLast = "";
+function saveSnapshot() {
+  try {
+    const body = JSON.stringify({ markets: chainCache.markets, config: chainCache.config }); if (body === snapshotLast) return;
+    fs.writeFileSync(SNAPSHOT + ".tmp", JSON.stringify({ at: chainCache.at, markets: chainCache.markets, config: chainCache.config })); fs.renameSync(SNAPSHOT + ".tmp", SNAPSHOT); snapshotLast = body;
+  } catch (e) { console.error("chain snapshot write failed:", String(e?.message ?? e).slice(0, 100)); }
+}
+function loadSnapshot() {
+  try { const s = JSON.parse(fs.readFileSync(SNAPSHOT, "utf8")); if (Array.isArray(s.markets) && s.config) { console.log(`chain snapshot: ${s.markets.length} markets from ${new Date(s.at).toISOString()}`); return { at: Number(s.at) || 0, markets: s.markets, config: s.config, pending: null }; } } catch {}
+  return { at: 0, markets: null, config: null, pending: null };
+}
+let chainCache = loadSnapshot();
 const CHAIN_TTL_MS = Number(process.env.CHAIN_CACHE_MS ?? 15000);
 function chainState() {
   if (chainCache.markets && Date.now() - chainCache.at < CHAIN_TTL_MS) return Promise.resolve(chainCache);
   if (chainCache.pending) return chainCache.markets ? Promise.resolve(chainCache) : chainCache.pending;   // stale-while-revalidate
   const stale = chainCache.markets ? chainCache : null;
   chainCache.pending = (async () => {
-    const [all, cfg] = await Promise.all([ro.account.market.all([{ dataSize: ro.account.market.size }]), ro.account.config.fetch(configPda)]);
+    const t0 = Date.now(), [all, cfg] = await Promise.all([ro.account.market.all([{ dataSize: ro.account.market.size }]), ro.account.config.fetch(configPda)]);
     const markets = await Promise.all(all.map(async (x) => serializeMarket(x.publicKey, x.account, await mintInfo(x.account.mint))));
     const live = new Set(markets.map((m) => m.id));
     for (const a of archivedMarkets()) if (!live.has(a.id)) markets.push(a);
     chainCache = { at: Date.now(), markets: markets.sort((a, b) => b.id - a.id), config: serializeConfig(cfg), pending: null };
+    const ms = Date.now() - t0; if (!stale || ms > 3000) console.log(`chain refresh: ${all.length} markets in ${ms} ms`);
+    saveSnapshot();
     return chainCache;
   })().catch((e) => { chainCache.pending = null; throw e; });
   // While serving stale data nobody awaits the refresh; without a handler its failure (RPC down) would kill the process.
