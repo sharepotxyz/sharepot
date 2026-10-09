@@ -63,6 +63,11 @@ const FAUCET_LOW_SOL = Number(process.env.FAUCET_LOW_SOL ?? 0.5);   // ≈ 15 mo
 const faucetKeyFile = process.env.FAUCET_KEYPAIR ?? path.join(SECRETS, "faucet.json");
 const faucet = FAUCET_ENABLED && fs.existsSync(faucetKeyFile) ? Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(faucetKeyFile, "utf8")))) : null;
 const conn = new Connection(RPC, "confirmed");
+// The faucet sends a burst of transactions per claim, which the public RPC's connection limit refuses (429 on a dozen
+// claims on 2026-10-09, the black-box tester's among them): with FAUCET_RPC set (the provider endpoint the crons use) it
+// goes through that one; the 15 s state polling stays on the public RPC, which costs no credits.
+const FAUCET_RPC = process.env.FAUCET_RPC ?? RPC;
+const faucetConn = FAUCET_RPC === RPC ? conn : new Connection(FAUCET_RPC, "confirmed");
 fs.mkdirSync(DATA, { recursive: true });
 
 // ---------- cached program state ----------
@@ -488,7 +493,7 @@ const server = http.createServer(async (req, res) => {
       if (faucetToday >= FAUCET_DAILY_GLOBAL) return json(res, 429, { error: "faucet is empty for today, try tomorrow" });
       seenAddr.set(k, true); seenIp.set(ip, (seenIp.get(ip) ?? 0) + 1); faucetToday++;
       try {
-        const giveSol = (await conn.getBalance(address)) < FAUCET_SOL * LAMPORTS_PER_SOL;
+        const giveSol = (await faucetConn.getBalance(address)) < FAUCET_SOL * LAMPORTS_PER_SOL;
         // Every token needs an account-create + a transfer; three tokens per transaction stay well under the size limit.
         const sigs = [], give = tokens.filter((t) => t.active);
         for (let i = 0; i < give.length; i += 3) {
@@ -503,11 +508,12 @@ const server = http.createServer(async (req, res) => {
           // A busy public RPC sometimes hands out a blockhash its simulator has not seen yet; the transaction is then
           // rejected before it lands, so a fresh blockhash and one more try cannot double-send.
           for (let tries = 1; ; tries++) {
-            try { sigs.push(await sendAndConfirmTransaction(conn, tx, [faucet])); break; }
-            catch (e) { if (tries >= 3 || !/Blockhash not found/i.test(String(e?.message ?? e))) throw e; await new Promise((r) => setTimeout(r, 1500 * tries)); }
+            try { sigs.push(await sendAndConfirmTransaction(faucetConn, tx, [faucet])); break; }
+            // A connection-limit 429 is retried the same way: it comes back from the send itself, before anything was accepted.
+            catch (e) { if (tries >= 3 || !/Blockhash not found|429|Too Many Requests|rate limit/i.test(String(e?.message ?? e))) throw e; await new Promise((r) => setTimeout(r, 1500 * tries)); }
           }
         }
-        conn.getBalance(faucet.publicKey).then((b) => { if (b < FAUCET_LOW_SOL * LAMPORTS_PER_SOL) notify("💧 水龍頭快沒 SOL", `剩 ${(b / LAMPORTS_PER_SOL).toFixed(2)} SOL(每次領水約 0.03)\n補:solana transfer ${faucet.publicKey.toBase58()} 2 -u devnet,或 solana airdrop`, "faucet-low", 360); }).catch(() => {});
+        faucetConn.getBalance(faucet.publicKey).then((b) => { if (b < FAUCET_LOW_SOL * LAMPORTS_PER_SOL) notify("💧 水龍頭快沒 SOL", `剩 ${(b / LAMPORTS_PER_SOL).toFixed(2)} SOL(每次領水約 0.03)\n補:solana transfer ${faucet.publicKey.toBase58()} 2 -u devnet,或 solana airdrop`, "faucet-low", 360); }).catch(() => {});
         return json(res, 200, { ok: true, address: k, sent: `test tokens of ${give.length} pools${giveSol ? ` + ${FAUCET_SOL} SOL` : ""}`, signatures: sigs });
       } catch (e) {
         seenAddr.delete(k); faucetToday--; console.error("faucet failed", e?.message);
@@ -522,4 +528,4 @@ const server = http.createServer(async (req, res) => {
   }
 });
 server.headersTimeout = 15_000; server.requestTimeout = 60_000; server.keepAliveTimeout = 10_000;
-server.listen(PORT, "127.0.0.1", () => console.log(`sharepot api+site on 127.0.0.1:${PORT} cluster=${CLUSTER} faucet=${!!faucet} tokens=${tokens.length} static=${STATIC} rpc=${RPC.replace(/api-key=[^&\s]*/, "api-key=…")}`));
+server.listen(PORT, "127.0.0.1", () => console.log(`sharepot api+site on 127.0.0.1:${PORT} cluster=${CLUSTER} faucet=${!!faucet} faucetRpc=${FAUCET_RPC === RPC ? "same" : new URL(FAUCET_RPC).host} tokens=${tokens.length} static=${STATIC} rpc=${RPC.replace(/api-key=[^&\s]*/, "api-key=…")}`));

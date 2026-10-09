@@ -30,7 +30,9 @@ const log = (...a) => console.log(new Date().toISOString(), ...a);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // GeckoTerminal allows ~30 requests a minute: one call every 3 s, and a 429 waits 20 s before one more try.
 const getJson = async (url, attempt = 1) => {
-  const r = await fetch(url, { headers: { "user-agent": "Mozilla/5.0 (SharePot)" }, signal: AbortSignal.timeout(20_000) });
+  let r;   // a timeout or a dropped connection is retried like a 429 (the EVM twin lost a whole run to one on 2026-10-09)
+  try { r = await fetch(url, { headers: { "user-agent": "Mozilla/5.0 (SharePot)" }, signal: AbortSignal.timeout(20_000) }); }
+  catch (e) { if (attempt >= 3) throw e; console.log(new Date().toISOString(), `retrying ${url.split("?")[0]}: ${String(e?.message ?? e).slice(0, 80)}`); await sleep(15_000); return getJson(url, attempt + 1); }
   if (r.status === 429 && attempt < 3) { await sleep(20_000); return getJson(url, attempt + 1); }
   if (!r.ok) throw new Error(`${r.status} ${url.split("?")[0]}`); return r.json();
 };

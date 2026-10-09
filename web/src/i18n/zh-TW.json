@@ -204,6 +204,7 @@
   "det.resolvesAfter": "最早結算時間",
   "trade.balance": "餘額 {amt}",
   "trade.seeOpen": "前往開放中的 {sym} 市場 →",
+  "trade.seeAll": "前往 {sym} 的全部市場 →",
   "trade.closedTrading": "下注已於 {close} 截止；結果在 {after} 之後出爐，約 {final} 定案。",
   "trade.closedProposed": "結果正在爭議期內，至 {ts} 為止（剩 {left}）；之後自動派彩。",
   "trade.closedSettled": "這個市場已結算，派彩已發送。",

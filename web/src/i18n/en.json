@@ -204,6 +204,7 @@
   "det.resolvesAfter": "Resolves after",
   "trade.balance": "Balance {amt}",
   "trade.seeOpen": "See the open {sym} market →",
+  "trade.seeAll": "See all {sym} markets →",
   "trade.closedTrading": "Bets closed {close}; the result comes after {after} and is final about {final}.",
   "trade.closedProposed": "The result is in its dispute window until {ts} ({left} left); payouts follow automatically.",
   "trade.closedSettled": "This market is settled. Payouts have been sent.",

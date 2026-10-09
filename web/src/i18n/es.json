@@ -204,6 +204,7 @@
   "det.resolvesAfter": "Se resuelve después de",
   "trade.balance": "Saldo {amt}",
   "trade.seeOpen": "Ver el mercado abierto de {sym} →",
+  "trade.seeAll": "Ver todos los mercados de {sym} →",
   "trade.closedTrading": "Las apuestas cerraron el {close}; el resultado llega después del {after} y será definitivo hacia el {final}.",
   "trade.closedProposed": "El resultado está en su período de disputa hasta el {ts} (quedan {left}); después los pagos se envían automáticamente.",
   "trade.closedSettled": "Este mercado está liquidado. Los pagos ya se enviaron.",

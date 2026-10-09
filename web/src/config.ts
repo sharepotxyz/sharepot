@@ -30,7 +30,7 @@ export const IS_TEST = IS_EVM ? EVM.test : CLUSTER !== "mainnet";
 export const NETWORK_NAME = IS_EVM ? (EVM.test ? "Testnet" : "Mainnet") : CLUSTER === "devnet" ? "Devnet" : CLUSTER;
 /** The gas token: what the wallet button shows next to the address and what a low balance warns about. */
 export const NATIVE = IS_EVM ? "ETH" : "SOL";
-export const NATIVE_LOW = IS_EVM ? 0.0005 : 0.002;
+export const NATIVE_LOW = IS_EVM ? 0.00002 : 0.002;   // EVM: the gas faucet hands out 0.0001 and a bet costs about 0.000002, so this is ten bets (0.0005 warned every faucet user, 2026-10-09)
 /** The same product on the other chain, for the switch in the top bar (empty = no switch). */
 export const OTHER_CHAIN = { name: (import.meta.env.VITE_OTHER_CHAIN_NAME as string | undefined) ?? "", url: (import.meta.env.VITE_OTHER_CHAIN_URL as string | undefined) ?? "" };
 export const THIS_CHAIN_NAME = IS_EVM ? "Robinhood" : "Solana";

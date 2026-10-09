@@ -204,6 +204,7 @@
   "det.resolvesAfter": "結果判定（以降）",
   "trade.balance": "残高 {amt}",
   "trade.seeOpen": "受付中の {sym} マーケットを見る →",
+  "trade.seeAll": "{sym} のマーケットをすべて見る →",
   "trade.closedTrading": "ベットは {close} に締め切りました。結果は {after} 以降に出て、{final} ごろ確定します。",
   "trade.closedProposed": "結果は {ts} まで異議申立期間中です（残り{left}）。その後、払い戻しが自動で行われます。",
   "trade.closedSettled": "このマーケットは決済済みです。払い戻しは送付されました。",

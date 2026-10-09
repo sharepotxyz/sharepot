@@ -204,6 +204,7 @@
   "det.resolvesAfter": "最早结算时间",
   "trade.balance": "余额 {amt}",
   "trade.seeOpen": "查看开放中的 {sym} 市场 →",
+  "trade.seeAll": "查看 {sym} 的全部市场 →",
   "trade.closedTrading": "下注已于 {close} 截止；结果在 {after} 之后公布，约 {final} 最终确定。",
   "trade.closedProposed": "结果处于争议期，截止 {ts}（剩余 {left}）；之后自动派彩。",
   "trade.closedSettled": "该市场已结算，派彩已发放。",

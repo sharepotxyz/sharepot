@@ -1,23 +1,81 @@
 {
- "_doc": "Words the EVM site says differently from the Solana one (elements marked data-t / data-t-attr in the static pages). Per language; English is the fallback. Keep zh-TW punctuation full-width.",
- "en": {
-  "meta.index": "Daily prediction pools on US stocks, staked and paid in Robinhood Stock Tokens on Robinhood Chain.",
-  "hero.p": "Daily pools on where US stocks close. Stake the Robinhood Stock Tokens you already hold — TSLA, AMZN, PLTR, NFLX, AMD — and winners are paid in that same token. Nothing gets sold. The same pools run on Solana with xStocks, Backpack and Ondo tokens.",
-  "foot.issuer": "<b>Issuer controls.</b> Stock Tokens are issued by Robinhood, which can pause a token, block any address from sending or receiving it (these pools included) and burn tokens from any address. Tokenized stocks are not offered to US persons.",
-  "fc.intro": "SharePot on <b>Robinhood Chain Testnet</b> uses the issuer's own test Stock Tokens — Tesla, Amazon, Palantir, Netflix and AMD — which Robinhood hands out for free on its faucet. There is no faucet on this site.",
-  "fc.s1": "Open the <a href=\"https://faucet.testnet.chain.robinhood.com\" target=\"_blank\" rel=\"noopener\">Robinhood Chain testnet faucet</a>, paste your wallet address and claim: 0.05 test ETH for fees plus 5 of each Stock Token, once every 24 hours.",
-  "fc.s2": "In your wallet, switch to <b>Robinhood Chain Testnet</b> (the site adds the network when you connect).",
-  "fc.s3": "<a href=\"/\">Pick a market</a> and stake some shares before the opening bell.",
-  "fc.connectFirst": "Connect an EVM wallet first — MetaMask, Rabby or Robinhood Wallet on Robinhood Chain Testnet."
- },
- "zh-TW": {
-  "meta.index": "美股每日預測彩池，用 Robinhood Chain 上的 Robinhood 股票代幣下注、也用它領獎。",
-  "hero.p": "每天押美股收盤落在哪個區間。拿你手上已有的 Robinhood 股票代幣（TSLA、AMZN、PLTR、NFLX、AMD）下注，贏家領到的也是同一種代幣，什麼都不用賣。同樣的彩池也在 Solana 上跑，用 xStocks、Backpack、Ondo 的代幣。",
-  "foot.issuer": "<b>發行方權限。</b>股票代幣由 Robinhood 發行；Robinhood 可以暫停某個代幣、封鎖任何地址的收發（包括這些彩池），也可以銷毀任何地址上的代幣。代幣化股票不對美國人提供。",
-  "fc.intro": "<b>Robinhood Chain 測試網</b>上的 SharePot 用的是發行方自己的測試股票代幣（Tesla、Amazon、Palantir、Netflix、AMD），由 Robinhood 的水龍頭免費發放。本站沒有自己的水龍頭。",
-  "fc.s1": "打開 <a href=\"https://faucet.testnet.chain.robinhood.com\" target=\"_blank\" rel=\"noopener\">Robinhood Chain 測試網水龍頭</a>，貼上你的錢包地址領取：0.05 測試 ETH（付手續費）加每種股票代幣 5 股，每 24 小時一次。",
-  "fc.s2": "在錢包裡切到 <b>Robinhood Chain Testnet</b>（連線時網站會自動幫你加這條鏈）。",
-  "fc.s3": "<a href=\"/\">挑一個盤</a>，在開盤鐘響前押幾股。",
-  "fc.connectFirst": "先連 EVM 錢包（MetaMask、Rabby 或 Robinhood Wallet，切到 Robinhood Chain Testnet）。"
- }
+  "_doc": "Words the EVM site says differently from the Solana one (elements marked data-t / data-t-attr in the static pages). Per language; English is the fallback. Keep zh-TW punctuation full-width. 2026-10-09: zh-CN/ja/ko/es added, and foot.pool / docs.settle.5 / docs.trust.1 say how this chain settles (one-hour window, no on-site disputes, no second machine yet).",
+  "en": {
+    "meta.index": "Daily prediction pools on US stocks, staked and paid in Robinhood Stock Tokens on Robinhood Chain.",
+    "hero.p": "Daily pools on where US stocks close. Stake the Robinhood Stock Tokens you already hold — TSLA, AMZN, PLTR, NFLX, AMD — and winners are paid in that same token. Nothing gets sold. The same pools run on Solana with xStocks, Backpack and Ondo tokens.",
+    "foot.issuer": "<b>Issuer controls.</b> Stock Tokens are issued by Robinhood, which can pause a token, block any address from sending or receiving it (these pools included) and burn tokens from any address. Tokenized stocks are not offered to US persons.",
+    "fc.intro": "SharePot on <b>Robinhood Chain Testnet</b> uses the issuer's own test Stock Tokens — Tesla, Amazon, Palantir, Netflix and AMD — which Robinhood hands out for free on its faucet. There is no faucet on this site.",
+    "fc.s1": "Open the <a href=\"https://faucet.testnet.chain.robinhood.com\" target=\"_blank\" rel=\"noopener\">Robinhood Chain testnet faucet</a>, paste your wallet address and claim: 0.05 test ETH for fees plus 5 of each Stock Token, once every 24 hours.",
+    "fc.s2": "In your wallet, switch to <b>Robinhood Chain Testnet</b> (the site adds the network when you connect).",
+    "fc.s3": "<a href=\"/\">Pick a market</a> and stake some shares before the opening bell.",
+    "fc.connectFirst": "Connect an EVM wallet first — MetaMask, Rabby or Robinhood Wallet on Robinhood Chain Testnet.",
+    "foot.pool": "SharePot is a parimutuel pool, not an order book: payouts depend on the final pool sizes. Fee 3% of winnings (2% early), never on your stake. A result stands for <span id=\"dwin\">1 hour</span> before it is paid out automatically; on this chain, questions about a result go to hello@sharepot.xyz within that hour.",
+    "docs.settle.5": "<b>One-hour dispute window.</b> On Robinhood Chain a proposed result stands for one hour before anyone can finalize it; in that hour the admin can re-propose or void it. Filing a dispute from the site is Solana-only for now: write to hello@sharepot.xyz within the hour.",
+    "docs.trust.1": "<b>The proposer key can propose any number.</b> The checks above run off-chain, in the same process that holds the key. A compromised resolver could propose a wrong move; what stops it on this chain is the one-hour window, in which the admin can void the proposal — a full refund, never a different winner. The second machine that re-reads the prices and voids any proposal it cannot reproduce runs for the Solana pools only, for now."
+  },
+  "zh-TW": {
+    "meta.index": "美股每日預測彩池，用 Robinhood Chain 上的 Robinhood 股票代幣下注、也用它領獎。",
+    "hero.p": "每天押美股收盤落在哪個區間。拿你手上已有的 Robinhood 股票代幣（TSLA、AMZN、PLTR、NFLX、AMD）下注，贏家領到的也是同一種代幣，什麼都不用賣。同樣的彩池也在 Solana 上跑，用 xStocks、Backpack、Ondo 的代幣。",
+    "foot.issuer": "<b>發行方權限。</b>股票代幣由 Robinhood 發行；Robinhood 可以暫停某個代幣、封鎖任何地址的收發（包括這些彩池），也可以銷毀任何地址上的代幣。代幣化股票不對美國人提供。",
+    "fc.intro": "<b>Robinhood Chain 測試網</b>上的 SharePot 用的是發行方自己的測試股票代幣（Tesla、Amazon、Palantir、Netflix、AMD），由 Robinhood 的水龍頭免費發放。本站沒有自己的水龍頭。",
+    "fc.s1": "打開 <a href=\"https://faucet.testnet.chain.robinhood.com\" target=\"_blank\" rel=\"noopener\">Robinhood Chain 測試網水龍頭</a>，貼上你的錢包地址領取：0.05 測試 ETH（付手續費）加每種股票代幣 5 股，每 24 小時一次。",
+    "fc.s2": "在錢包裡切到 <b>Robinhood Chain Testnet</b>（連線時網站會自動幫你加這條鏈）。",
+    "fc.s3": "<a href=\"/\">挑一個盤</a>，在開盤鐘響前押幾股。",
+    "fc.connectFirst": "先連 EVM 錢包（MetaMask、Rabby 或 Robinhood Wallet，切到 Robinhood Chain Testnet）。",
+    "foot.pool": "SharePot 是彩池制（同注分彩），不是訂單簿：派彩取決於最終的彩池大小。手續費為贏得金額的 3%（早鳥 2%），絕不從你的押注中收取。結果會先放<span id=\"dwin\">一小時</span>再自動派彩；在這條鏈上，對結果有疑問請在這一小時內寫信到 hello@sharepot.xyz。",
+    "docs.settle.5": "<b>一小時爭議期。</b>在 Robinhood Chain 上，提出的結果會先放一小時，之後任何人都可以讓它定案；這一小時內管理員可以重新提出結果或將市場作廢。從網站提出爭議目前只有 Solana 版有：請在一小時內寫信到 hello@sharepot.xyz。",
+    "docs.trust.1": "<b>提案金鑰可以提出任何數字。</b>上述檢查是在鏈下、在持有金鑰的同一個行程裡執行的。結算器若被入侵，就可能提出錯誤的漲跌幅；在這條鏈上擋住它的是一小時的爭議期，期間管理員可以把提案作廢——結果是全額退款，絕不會變成另一個贏家。會自行抓價、把無法重現的提案作廢的第二台機器，目前只服務 Solana 的彩池。"
+  },
+  "zh-CN": {
+    "meta.index": "美股每日预测彩池，用 Robinhood Chain 上的 Robinhood 股票代币下注、也用它领奖。",
+    "hero.p": "每天押美股收盘落在哪个区间。拿你手上已有的 Robinhood 股票代币（TSLA、AMZN、PLTR、NFLX、AMD）下注，赢家领到的也是同一种代币，什么都不用卖。同样的彩池也在 Solana 上跑，用 xStocks、Backpack、Ondo 的代币。",
+    "foot.issuer": "<b>发行方权限。</b>股票代币由 Robinhood 发行；Robinhood 可以暂停某个代币、封锁任何地址的收发（包括这些彩池），也可以销毁任何地址上的代币。代币化股票不对美国人提供。",
+    "fc.intro": "<b>Robinhood Chain 测试网</b>上的 SharePot 用的是发行方自己的测试股票代币（Tesla、Amazon、Palantir、Netflix、AMD），由 Robinhood 的水龙头免费发放。本站没有自己的水龙头。",
+    "fc.s1": "打开 <a href=\"https://faucet.testnet.chain.robinhood.com\" target=\"_blank\" rel=\"noopener\">Robinhood Chain 测试网水龙头</a>，贴上你的钱包地址领取：0.05 测试 ETH（付手续费）加每种股票代币 5 股，每 24 小时一次。",
+    "fc.s2": "在钱包里切到 <b>Robinhood Chain Testnet</b>（连接时网站会自动帮你加这条链）。",
+    "fc.s3": "<a href=\"/\">挑一个盘</a>，在开盘钟响前押几股。",
+    "fc.connectFirst": "先连 EVM 钱包（MetaMask、Rabby 或 Robinhood Wallet，切到 Robinhood Chain Testnet）。",
+    "foot.pool": "SharePot 是彩池制（同注分彩），不是订单簿：派彩取决于最终的彩池大小。手续费为赢得金额的 3%（早鸟 2%），绝不从你的押注中收取。结果会先放<span id=\"dwin\">一小时</span>再自动派彩；在这条链上，对结果有疑问请在这一小时内写信到 hello@sharepot.xyz。",
+    "docs.settle.5": "<b>一小时争议期。</b>在 Robinhood Chain 上，提出的结果会先放一小时，之后任何人都可以让它定案；这一小时内管理员可以重新提出结果或将市场作废。从网站提出争议目前只有 Solana 版有：请在一小时内写信到 hello@sharepot.xyz。",
+    "docs.trust.1": "<b>提案密钥可以提出任何数字。</b>上述检查是在链下、在持有密钥的同一个进程里执行的。结算器若被入侵，就可能提出错误的涨跌幅；在这条链上挡住它的是一小时的争议期，期间管理员可以把提案作废——结果是全额退款，绝不会变成另一个赢家。会自行抓价、把无法重现的提案作废的第二台机器，目前只服务 Solana 的彩池。"
+  },
+  "ja": {
+    "meta.index": "米国株の日次予測プール。Robinhood Chain 上の Robinhood Stock Token でステークし、同じトークンで受け取ります。",
+    "hero.p": "米国株の終値がどのレンジに入るかを毎日予想。手持ちの Robinhood Stock Token（TSLA、AMZN、PLTR、NFLX、AMD）をステークし、勝者は同じトークンで受け取ります。何も売りません。同じプールは Solana 上でも xStocks、Backpack、Ondo のトークンで動いています。",
+    "foot.issuer": "<b>発行体の権限。</b>Stock Token の発行体は Robinhood です。Robinhood はトークンを一時停止したり、任意のアドレスの送受信（これらのプールを含む）をブロックしたり、任意のアドレスのトークンをバーンしたりできます。トークン化株式は米国人には提供されません。",
+    "fc.intro": "<b>Robinhood Chain テストネット</b>の SharePot は、発行体自身のテスト用 Stock Token（Tesla、Amazon、Palantir、Netflix、AMD）を使います。Robinhood のフォーセットが無料で配布しています。このサイトにフォーセットはありません。",
+    "fc.s1": "<a href=\"https://faucet.testnet.chain.robinhood.com\" target=\"_blank\" rel=\"noopener\">Robinhood Chain テストネットのフォーセット</a>を開き、ウォレットアドレスを貼り付けて受け取ります。手数料用のテスト ETH 0.05 と各 Stock Token 5 株、24 時間に 1 回です。",
+    "fc.s2": "ウォレットで <b>Robinhood Chain Testnet</b> に切り替えます（接続時にサイトがネットワークを追加します）。",
+    "fc.s3": "<a href=\"/\">マーケットを選び</a>、寄り付きの鐘が鳴る前に株をステークします。",
+    "fc.connectFirst": "まず EVM ウォレットを接続してください。MetaMask、Rabby、または Robinhood Chain Testnet 上の Robinhood Wallet です。",
+    "foot.pool": "SharePot はパリミュチュエル方式のプールで、オーダーブックではありません。配当は最終的なプールの大きさで決まります。手数料は勝ち分の 3%（早期は 2%）で、ステークからは取りません。結果は<span id=\"dwin\">1 時間</span>置いてから自動的に支払われます。このチェーンでは、結果への疑問はその 1 時間以内に hello@sharepot.xyz までお知らせください。",
+    "docs.settle.5": "<b>1 時間の異議申し立て期間。</b>Robinhood Chain では、提案された結果は 1 時間置かれ、その後は誰でも確定できます。その 1 時間に管理者は再提案または無効化ができます。サイトからの異議申し立ては今のところ Solana のみです。1 時間以内に hello@sharepot.xyz までご連絡ください。",
+    "docs.trust.1": "<b>提案キーはどんな数字でも提案できます。</b>上記のチェックはオフチェーンで、キーを持つ同じプロセスの中で実行されます。リゾルバーが侵害されれば誤った変動率を提案し得ます。このチェーンでそれを止めるのは 1 時間の期間で、その間に管理者が提案を無効化できます。結果は全額返金であり、別の勝者になることはありません。価格を自ら読み直し、再現できない提案を無効化する 2 台目のマシンは、今のところ Solana のプールだけで動いています。"
+  },
+  "ko": {
+    "meta.index": "미국 주식 일일 예측 풀. Robinhood Chain의 Robinhood Stock Token으로 베팅하고 같은 토큰으로 받습니다.",
+    "hero.p": "미국 주식 종가가 어느 구간에 들어갈지 매일 예측합니다. 이미 가진 Robinhood Stock Token(TSLA, AMZN, PLTR, NFLX, AMD)을 스테이크하면 승자는 같은 토큰으로 받습니다. 아무것도 팔지 않습니다. 같은 풀이 Solana에서도 xStocks, Backpack, Ondo 토큰으로 운영됩니다.",
+    "foot.issuer": "<b>발행사 권한.</b> Stock Token은 Robinhood가 발행합니다. Robinhood는 토큰을 일시 중지하거나, 어떤 주소든 송수신을 차단하거나(이 풀들 포함), 어떤 주소의 토큰이든 소각할 수 있습니다. 토큰화 주식은 미국인에게 제공되지 않습니다.",
+    "fc.intro": "<b>Robinhood Chain 테스트넷</b>의 SharePot은 발행사가 직접 만든 테스트용 Stock Token(Tesla, Amazon, Palantir, Netflix, AMD)을 사용합니다. Robinhood 포싯이 무료로 나눠 줍니다. 이 사이트에는 포싯이 없습니다.",
+    "fc.s1": "<a href=\"https://faucet.testnet.chain.robinhood.com\" target=\"_blank\" rel=\"noopener\">Robinhood Chain 테스트넷 포싯</a>을 열고 지갑 주소를 붙여 넣어 받으세요. 수수료용 테스트 ETH 0.05와 각 Stock Token 5주, 24시간에 한 번입니다.",
+    "fc.s2": "지갑에서 <b>Robinhood Chain Testnet</b>으로 전환하세요(연결할 때 사이트가 네트워크를 추가합니다).",
+    "fc.s3": "<a href=\"/\">마켓을 고르고</a> 개장 종이 울리기 전에 주식을 스테이크하세요.",
+    "fc.connectFirst": "먼저 EVM 지갑을 연결하세요. Robinhood Chain Testnet의 MetaMask, Rabby 또는 Robinhood Wallet입니다.",
+    "foot.pool": "SharePot은 패리뮤추얼 풀이지 오더북이 아닙니다. 지급액은 최종 풀 크기에 따라 정해집니다. 수수료는 상금의 3%(초기 2%)이며 스테이크에서는 절대 떼지 않습니다. 결과는 <span id=\"dwin\">1시간</span> 동안 보류된 뒤 자동으로 지급됩니다. 이 체인에서는 결과에 의문이 있으면 그 1시간 안에 hello@sharepot.xyz로 알려 주세요.",
+    "docs.settle.5": "<b>1시간 이의 제기 기간.</b> Robinhood Chain에서는 제안된 결과가 1시간 동안 보류된 뒤 누구나 확정할 수 있습니다. 그 1시간 동안 관리자는 다시 제안하거나 무효화할 수 있습니다. 사이트에서 이의를 제기하는 기능은 아직 Solana에만 있습니다. 1시간 안에 hello@sharepot.xyz로 보내 주세요.",
+    "docs.trust.1": "<b>제안 키는 어떤 숫자든 제안할 수 있습니다.</b> 위의 검사는 오프체인에서, 키를 가진 같은 프로세스 안에서 실행됩니다. 리졸버가 침해되면 잘못된 변동률을 제안할 수 있습니다. 이 체인에서 그것을 막는 것은 1시간의 기간이며, 그동안 관리자가 제안을 무효화할 수 있습니다. 결과는 전액 환불이지 다른 승자가 되는 일은 없습니다. 가격을 직접 다시 읽고 재현할 수 없는 제안을 무효화하는 두 번째 머신은 아직 Solana 풀에서만 돌아갑니다."
+  },
+  "es": {
+    "meta.index": "Pozos diarios de predicción sobre acciones de EE. UU., apostados y pagados en Robinhood Stock Tokens en Robinhood Chain.",
+    "hero.p": "Pozos diarios sobre dónde cierran las acciones de EE. UU. Apuesta los Robinhood Stock Tokens que ya tienes — TSLA, AMZN, PLTR, NFLX, AMD — y los ganadores cobran en ese mismo token. No se vende nada. Los mismos pozos funcionan en Solana con tokens de xStocks, Backpack y Ondo.",
+    "foot.issuer": "<b>Controles del emisor.</b> Los Stock Tokens los emite Robinhood, que puede pausar un token, bloquear a cualquier dirección para enviarlo o recibirlo (estos pozos incluidos) y quemar tokens de cualquier dirección. Las acciones tokenizadas no se ofrecen a personas de EE. UU.",
+    "fc.intro": "SharePot en la <b>testnet de Robinhood Chain</b> usa los Stock Tokens de prueba del propio emisor — Tesla, Amazon, Palantir, Netflix y AMD — que Robinhood reparte gratis en su faucet. En este sitio no hay faucet.",
+    "fc.s1": "Abre el <a href=\"https://faucet.testnet.chain.robinhood.com\" target=\"_blank\" rel=\"noopener\">faucet de la testnet de Robinhood Chain</a>, pega la dirección de tu billetera y reclama: 0,05 ETH de prueba para comisiones más 5 de cada Stock Token, una vez cada 24 horas.",
+    "fc.s2": "En tu billetera, cambia a <b>Robinhood Chain Testnet</b> (el sitio añade la red al conectar).",
+    "fc.s3": "<a href=\"/\">Elige un mercado</a> y apuesta algunas acciones antes de la campana de apertura.",
+    "fc.connectFirst": "Conecta primero una billetera EVM: MetaMask, Rabby o Robinhood Wallet en Robinhood Chain Testnet.",
+    "foot.pool": "SharePot es un pozo parimutuel, no un libro de órdenes: los pagos dependen del tamaño final de los pozos. Comisión del 3% de las ganancias (2% al principio), nunca sobre tu apuesta. Un resultado espera <span id=\"dwin\">1 hora</span> antes de pagarse automáticamente; en esta cadena, las dudas sobre un resultado van a hello@sharepot.xyz dentro de esa hora.",
+    "docs.settle.5": "<b>Ventana de disputa de una hora.</b> En Robinhood Chain un resultado propuesto espera una hora antes de que cualquiera pueda finalizarlo; en esa hora el administrador puede volver a proponer o anular. Presentar una disputa desde el sitio es solo para Solana por ahora: escribe a hello@sharepot.xyz dentro de esa hora.",
+    "docs.trust.1": "<b>La clave proponente puede proponer cualquier número.</b> Las comprobaciones anteriores corren fuera de la cadena, en el mismo proceso que guarda la clave. Un resolutor comprometido podría proponer un movimiento erróneo; lo que lo frena en esta cadena es la ventana de una hora, en la que el administrador puede anular la propuesta — reembolso total, nunca otro ganador. La segunda máquina que relee los precios y anula toda propuesta que no pueda reproducir funciona, por ahora, solo para los pozos de Solana."
+  }
 }

@@ -14,7 +14,7 @@ const MIN_BET_USD = 1;
 
 const qs = new URLSearchParams(location.search);
 const root = document.getElementById("event")!;
-let ev: EventView | undefined, m: MarketView, cfg: ConfigView, bucket = -1, tab: "rules" | "resolution" | "details" = "rules";
+let ev: EventView | undefined, openEv: EventView | undefined, m: MarketView, cfg: ConfigView, bucket = -1, tab: "rules" | "resolution" | "details" = "rules";
 const name = (i: number) => bucketName(m, i) || bucketLabel(m, i);
 const full = (i: number) => (bucketName(m, i) ? `${bucketName(m, i)} (${bucketLabel(m, i)})` : bucketLabel(m, i));
 
@@ -23,7 +23,8 @@ async function load(fresh = false) {
   cfg = c;
   const byId = qs.get("id") ? ms.find((x) => x.id === Number(qs.get("id"))) : undefined;
   const key = qs.get("e") ?? (byId ? eventKey(byId) : "");
-  ev = buildEvents(ms).find((e) => e.key === key);
+  const events = buildEvents(ms); ev = events.find((e) => e.key === key);
+  openEv = ev ? events.find((e) => e.symbol === ev!.symbol && e.status === "open" && e.key !== ev!.key) : undefined;   // the next pool of this stock, if one is taking bets
   if (!ev) { mountTopbar({}); root.innerHTML = `<div class="empty-state" style="margin-top:30px">${t("mkt.missing")}</div>`; return; }
   mountTopbar({ active: ev.category });
   const want = qs.get("t") ?? (byId ? tokenSymbol(byId) : null);
@@ -133,7 +134,10 @@ function renderTrade() {
   const box = document.getElementById("trade")!;
   const s = getSession(), st = statusOf(m), tok = esc(tokenSymbol(m)), held = shareBalance(m), fee = currentFeeBps(cfg, m), tot = totalPool(m);
   if (st !== "open") {
-    const next = `<a href="/?cat=${ev!.category}&stock=${encodeURIComponent(ev!.symbol)}">${t("trade.seeOpen", { sym: esc(ev!.symbol) })}</a>`;
+    // "See the open market" only when one exists; otherwise every pool of the stock, whatever its state (the default list
+    // shows open ones only, which read as an empty page, 2026-10-09 black-box round).
+    const next = openEv ? `<a href="/market.html?e=${encodeURIComponent(openEv.key)}">${t("trade.seeOpen", { sym: esc(ev!.symbol) })}</a>`
+      : `<a href="/?cat=${ev!.category}&stock=${encodeURIComponent(ev!.symbol)}&status=all">${t("trade.seeAll", { sym: esc(ev!.symbol) })}</a>`;
     box.innerHTML = `<div class="tcard"><div class="thead"><b>${STATUS_LABEL[st]}</b></div><p class="note" style="margin:0">${st === "trading" ? t("trade.closedTrading", { close: fmtTs(m.closeTs), after: fmtTs(m.resolveAfterTs), final: fmtTs(m.resolveAfterTs + cfg.disputeWindowSecs) }) : st === "proposed" ? t("trade.closedProposed", { ts: fmtTs(m.proposedAt + cfg.disputeWindowSecs), left: timeLeft(m.proposedAt + cfg.disputeWindowSecs) }) : t("trade.closedSettled")}</p>${next}</div><div id="pos">${posHtml()}</div>`;
     showPosition(); return;
   }

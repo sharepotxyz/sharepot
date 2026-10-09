@@ -204,6 +204,7 @@
   "det.resolvesAfter": "결과 확정 가능 시점",
   "trade.balance": "잔액 {amt}",
   "trade.seeOpen": "진행 중인 {sym} 마켓 보기 →",
+  "trade.seeAll": "{sym} 마켓 전체 보기 →",
   "trade.closedTrading": "베팅은 {close}에 마감되었습니다. 결과는 {after} 이후에 나오며 {final}경 확정됩니다.",
   "trade.closedProposed": "결과는 {ts}까지 이의 제기 기간입니다({left} 남음). 이후 자동으로 지급됩니다.",
   "trade.closedSettled": "정산이 끝난 마켓입니다. 지급이 완료되었습니다.",
