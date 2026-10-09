@@ -24,7 +24,9 @@ function card(ev: EventView) {
   else if (backed) { const i = ev.dist.indexOf(Math.max(...ev.dist)); lead = t("home.mostBacked", { label: `<b>${esc(label(ev, i))}</b>`, pct: Math.round(ev.dist[i] * 100) }); }
   else lead = `<span class="note">${t(ev.markets.some((m) => m.seed > 0) ? "home.noBets" : "home.noBetsNoSeed")}</span>`;
   const when = ev.status === "open" ? t("home.left", { t: timeLeft(ev.closeTs) }) : ev.status === "trading" ? t("home.resultAt", { ts: fmtTs(ev.resolveAfterTs) }) : "";
-  return `<a class="ev" href="/market.html?e=${encodeURIComponent(ev.key)}">
+  // With an issuer filter on, the card opens that issuer's pool instead of the first one (the page takes ?t=<token symbol>).
+  const mine = state.issuer !== "all" ? ev.markets.find((x) => issuerOf(x) === state.issuer) : undefined;
+  return `<a class="ev" href="/market.html?e=${encodeURIComponent(ev.key)}${mine ? `&t=${encodeURIComponent(tokenSymbol(mine))}` : ""}">
     <div class="ev-head">${tickerBadge(ev.symbol)}<span class="pill ${ev.status}">${ev.status === "open" ? t("status.openShort") : STATUS_LABEL[ev.status]}</span></div>
     <div class="ev-top"><div><div class="ev-q">${esc(question(m0))}</div><div class="ev-s">${esc(ev.name)} · ${ev.markets.map((m) => esc(tokenSymbol(m))).join(" · ")}</div></div></div>
     <div class="dist" title="${esc(t("home.distTitle"))}">${bar}</div>

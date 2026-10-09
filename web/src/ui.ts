@@ -65,7 +65,8 @@ export function mountTopbar(opts: TopbarOpts = {}) {
  *  with the page it was written on, plus the wallet address when one happens to be connected. */
 function mountFeedback() {
   if (!API_BASE || document.getElementById("fbbtn")) return;
-  const btn = document.createElement("button"); btn.id = "fbbtn"; btn.className = "fbbtn"; btn.textContent = t("fb.button");
+  const btn = document.createElement("button"); btn.id = "fbbtn"; btn.className = "fbbtn"; btn.setAttribute("aria-label", t("fb.button"));
+  btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v11H8l-4 4z"/></svg><span>${esc(t("fb.button"))}</span>`;
   document.body.appendChild(btn);
   btn.onclick = () => {
     if (document.getElementById("fbbox")) return;

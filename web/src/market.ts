@@ -92,11 +92,13 @@ function timeline() {
 
 // ---------- tabs ----------
 const atBell = (ts: number) => new Date(ts * 1000).toLocaleTimeString("en-GB", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit" }) === "09:30";
+// Issuers whose token takes a cut of every transfer: named in the rules and under the payout estimate (which is before it).
+const issuerFeeOf = (x: typeof m) => { const i = issuerOf(x); return i === "Tessera" ? "0.2%" : i === "PreStocks" ? "0.5%" : null; };
 function renderTab() {
   const el = document.getElementById("tabpanel")!, tok = esc(tokenSymbol(m)), sym = esc(ev!.symbol);
   if (tab === "rules" && ev!.kind === "day") {
     const top = Math.abs(m.thresholds[m.nBuckets - 2] ?? 0) / 10000, pct = top ? top.toFixed(top % 1 ? 1 : 0) + "%" : "";
-    const iss = issuerOf(m), issuerFee = iss === "Tessera" ? "0.2%" : iss === "PreStocks" ? "0.5%" : null;
+    const iss = issuerOf(m), issuerFee = issuerFeeOf(m);
     const payouts = t("rules.payouts", { tok, early: (cfg.feeBps - cfg.earlyBirdDiscountBps) / 100, until: fmtTs(earlyBirdUntil(cfg, m)), fee: cfg.feeBps / 100 });
     el.innerHTML = `<ul>
       <li>${t("rules.day.q", { sym, ts: esc(fmtTs(dayEnd(ev!.date))), n: m.nBuckets })}</li>
@@ -167,8 +169,8 @@ function renderTrade() {
     if (bucket < 0) { quote.innerHTML = `<span class="note">${t("trade.pickAbove")}</span>`; return; }
     if (!a) { quote.innerHTML = `<div class="r"><span>${t("trade.paysIfRight")}</span><b>${payoutMultiple(m, bucket, fee)?.toFixed(2) ?? t("mkt.wholePot")}${payoutMultiple(m, bucket, fee) ? "×" : ""}</b></div>`; return; }
     if (a < minRaw) { quote.innerHTML = `<span class="note">${t("trade.minIs", { amt: `${minTxt} ${tok}` })}</span>`; return; }
-    const q = impliedPayout(m, bucket, a, fee);
-    quote.innerHTML = `<div class="r"><span>${t("trade.payoutIf", { label: esc(name(bucket)) })}</span><b class="big">${fmtAmt(m, q.total)} ${tok}</b></div><div class="r note"><span>${usdOf(m, q.total)}</span><span>${(q.total / a).toFixed(2)}× · +${fmtAmt(m, q.total - a)} ${tok}</span></div><div class="note">${t("trade.otherRange", { amt: `${fmtAmt(m, a)} ${tok}` })}</div>`;
+    const q = impliedPayout(m, bucket, a, fee), ifee = issuerFeeOf(m);
+    quote.innerHTML = `<div class="r"><span>${t("trade.payoutIf", { label: esc(name(bucket)) })}</span><b class="big">${fmtAmt(m, q.total)} ${tok}</b></div><div class="r note"><span>${usdOf(m, q.total)}</span><span>${(q.total / a).toFixed(2)}× · +${fmtAmt(m, q.total - a)} ${tok}</span></div><div class="note">${t("trade.otherRange", { amt: `${fmtAmt(m, a)} ${tok}` })}</div>${ifee ? `<div class="note">${t("trade.issuerFeeNote", { iss: esc(issuerOf(m)), fee: ifee })}</div>` : ""}`;
   };
   amtEl.oninput = upd; upd();
   // Stakes are whole numbers of the unit: what was typed is rounded down to one on leaving the box (never to zero:
