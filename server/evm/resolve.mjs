@@ -14,6 +14,7 @@ import { keccak256, stringToBytes } from "viem";
 import { closeMove, chainMove, parseMetric, nasdaqMarketInfo, nyToUnix } from "../prices.mjs";
 import { readRegistry } from "../chain-tokens.mjs";
 import { notify } from "../notify.mjs";
+import { guardProcess } from "../retry.mjs";
 import { CHAIN_KEY, chainCfg, walletFor, pot, allMarkets, readMarket, readConfig, readPosition, send, Status, stockByToken, explorerTx, publicClient, erc20Abi } from "./chain.mjs";
 import { sync, openPositions, evmDir } from "./index-events.mjs";
 
@@ -27,6 +28,7 @@ const DIR = evmDir(DATA);
 fs.mkdirSync(path.join(DIR, "evidence"), { recursive: true });
 const SETTLEMENTS = path.join(DIR, "settlements.jsonl"), ARCHIVE = path.join(DIR, "markets-archive.jsonl");
 const log = (...a) => console.log(new Date().toISOString(), ...a);
+guardProcess(log);   // 2026-10-10: 10 crash dumps in 16 days (torn RPC batches); reads retry in chain.mjs, the rest ends in one line
 const FORFEITED_TOPIC = keccak256(stringToBytes("PositionForfeited(uint256,address,uint256)"));
 const short = (e) => String(e?.shortMessage ?? e?.message ?? e).split("\n")[0].slice(0, 200);
 

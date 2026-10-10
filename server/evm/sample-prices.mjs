@@ -7,6 +7,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { readRegistry } from "../chain-tokens.mjs";
 import { utcDate, addDays } from "../prices.mjs";
+import { withRetry, guardProcess } from "../retry.mjs";
+guardProcess();
 import { evmDir } from "./index-events.mjs";
 
 const DATA = process.env.DATA_DIR ?? path.join(process.cwd(), "data");
@@ -17,18 +19,24 @@ const ids = Object.entries(reg.tokens).filter(([, t]) => [addDays(today, -1), to
 if (!ids.length) { console.log(new Date().toISOString(), "nothing to sample"); process.exit(0); }
 
 const prices = {};
+// Primary source, retried on transient failures; a minute it still cannot reach is logged, not fatal (see server/sample-prices.mjs)
+try {
 for (let i = 0; i < ids.length; i += 30) {
   const chunk = ids.slice(i, i + 30);
-  const r = await fetch(`https://api.dexscreener.com/tokens/v1/robinhood/${chunk.join(",")}`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
-  if (!r.ok) throw new Error(`dexscreener ${r.status}`);
+  const pairs = await withRetry(async () => {
+    const r = await fetch(`https://api.dexscreener.com/tokens/v1/robinhood/${chunk.join(",")}`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
+    if (!r.ok) throw new Error(`dexscreener ${r.status}`);
+    return r.json();
+  }, 3, "dexscreener");
   const best = new Map();
-  for (const pair of await r.json()) {
+  for (const pair of pairs) {
     const m = String(pair?.baseToken?.address ?? "").toLowerCase(), px = Number(pair?.priceUsd), liq = Number(pair?.liquidity?.usd ?? 0);
     if (!chunk.includes(m) || !(px > 0)) continue;
     if (!best.has(m) || liq > best.get(m).liq) best.set(m, { px, liq });
   }
   for (const [m, v] of best) prices[m] = v.px;
 }
+} catch (e) { console.error(new Date().toISOString(), "primary source:", String(e?.message ?? e).slice(0, 100)); }
 const prices2 = {};
 try {
   for (let i = 0; i < ids.length; i += 30) {
@@ -41,5 +49,5 @@ try {
 fs.mkdirSync(path.join(DIR, "ticks"), { recursive: true });
 const line = JSON.stringify({ t: now, p: prices, p2: prices2 });
 fs.appendFileSync(path.join(DIR, "ticks", `${today}.jsonl`), line + "\n");
-fs.writeFileSync(path.join(DIR, "ticks", "latest.json.tmp"), line); fs.renameSync(path.join(DIR, "ticks", "latest.json.tmp"), path.join(DIR, "ticks", "latest.json"));
+if (Object.keys(prices).length) { fs.writeFileSync(path.join(DIR, "ticks", "latest.json.tmp"), line); fs.renameSync(path.join(DIR, "ticks", "latest.json.tmp"), path.join(DIR, "ticks", "latest.json")); }
 console.log(new Date().toISOString(), `sampled ${Object.keys(prices).length}/${ids.length} (second source ${Object.keys(prices2).length})`);

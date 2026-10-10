@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parseUnits } from "viem";
 import { sessions, nyDate, addDays, nextSessionLive, utcDate, utcMidnight, chainClose } from "../prices.mjs";
+import { withRetry, guardProcess } from "../retry.mjs";
 import { readRegistry, writeRegistry, selectedFor } from "../chain-tokens.mjs";
 import { CHAIN_KEY, chainCfg, walletFor, pot, potAddress, allMarkets, ensureAllowance, send, metricToBytes32, questionHash, Status, publicClient, erc20Abi, explorerTx } from "./chain.mjs";
 import { evmDir } from "./index-events.mjs";
@@ -19,14 +20,7 @@ const tpl = JSON.parse(fs.readFileSync(process.env.STOCKS ?? new URL("../stock-t
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 const iso = (ts) => new Date(ts * 1000).toISOString();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-async function withRetry(fn, tries = 4) {
-  for (let i = 1; ; i++) {
-    try { return await fn(); } catch (e) {
-      if (i >= tries || !/429|Too Many|fetch failed|timed? ?out|ECONNRESET|503|502|nonce too low|replacement/i.test(String(e?.message ?? e))) throw e;
-      await sleep(1000 * 2 ** (i - 1));
-    }
-  }
-}
+guardProcess(log);   // an uncaught error (e.g. a torn RPC batch while listing markets) ends the run in one line, not a stack dump
 fs.mkdirSync(path.join(DATA, "evm", CHAIN_KEY), { recursive: true });
 
 const wallet = DRY ? null : walletFor();

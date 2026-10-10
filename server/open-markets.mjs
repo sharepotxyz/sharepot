@@ -15,6 +15,7 @@ import { getAssociatedTokenAddressSync, createAssociatedTokenAccountIdempotentIn
 import { createInitializeInstruction as createInitializeMetadataInstruction, pack as packMetadata } from "@solana/spl-token-metadata";
 import { Keypair, Transaction } from "@solana/web3.js";
 import { sessions, nyDate, addDays, nextSessionLive, chainClose, utcDate, utcMidnight } from "./prices.mjs";
+import { withRetry, guardProcess } from "./retry.mjs";
 import { readRegistry, writeRegistry, selectedFor, asStock } from "./chain-tokens.mjs";
 
 const { BN } = anchor;
@@ -41,14 +42,7 @@ const tag = (b) => Buffer.from(b).toString("utf8").replace(/\0+$/, "");
 const iso = (ts) => new Date(ts * 1000).toISOString();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Public RPCs rate-limit bursts; retry transient failures with backoff, surface everything else.
-async function withRetry(fn, tries = 5) {
-  for (let i = 1; ; i++) {
-    try { return await fn(); } catch (e) {
-      if (i >= tries || !/429|Too Many|fetch failed|timed? ?out|ECONNRESET|503|502|Blockhash not found/i.test(String(e?.message ?? e))) throw e;
-      await sleep(1000 * 2 ** (i - 1));
-    }
-  }
-}
+guardProcess(log);   // an uncaught error ends the run in one line, not a stack dump; the next tick retries
 fs.mkdirSync(DATA, { recursive: true });
 
 const now = Math.floor(Date.now() / 1000);

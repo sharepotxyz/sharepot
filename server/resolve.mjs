@@ -17,6 +17,7 @@ import idlJson from "../idl/sharepot.json" with { type: "json" };
 import { closeMove, chainMove, parseMetric, nasdaqMarketInfo, nyToUnix } from "./prices.mjs";
 import { readRegistry } from "./chain-tokens.mjs";
 import { notify, notifyFlush } from "./notify.mjs";
+import { withRetry, guardProcess } from "./retry.mjs";
 import { sendSigned } from "./tx.mjs";
 // A market still unproposed this long after resolve_after_ts is overdue: one Telegram alert per market per 6 h.
 const OVERDUE_SECS = Number(process.env.OVERDUE_SECS ?? 7200);
@@ -65,6 +66,7 @@ const [configPda] = PublicKey.findProgramAddressSync([Buffer.from("config")], pr
 const vaultPda = (m) => PublicKey.findProgramAddressSync([Buffer.from("vault"), m.toBuffer()], programId)[0];
 const tag = (b) => Buffer.from(b).toString("utf8").replace(/\0+$/, "");
 const log = (...a) => console.log(new Date().toISOString(), ...a);
+guardProcess(log);   // 2026-10-10: 19 crash dumps on "fetch failed / ECONNRESET" from the RPC; reads below retry, the rest ends in one line
 // web3.js confirms transactions with racing promises; when the public RPC answers 429 to one of them the loser rejects
 // with nobody awaiting it, and Node 22 would exit on that. The awaited path retries on its own; just log the stray one.
 process.on("unhandledRejection", (e) => log(`unhandled rejection (ignored): ${String(e?.message ?? e).slice(0, 160)}`));
@@ -234,13 +236,13 @@ async function settle(markets, cfg) {
     const close = officialClose(m.id.toNumber());
     if (m.positionsOpen > 0) {
       // positions of this market: memcmp on the market pubkey (offset 8 = after discriminator)
-      const positions = await program.account.position.all([{ memcmp: { offset: 8, bytes: publicKey.toBase58() } }]);
+      const positions = await withRetry(() => program.account.position.all([{ memcmp: { offset: 8, bytes: publicKey.toBase58() } }]), 4, "positions");
       log(`market #${m.id}: settling ${positions.length} positions`);
       const now = Math.floor(Date.now() / 1000); let deferred = 0;
       for (const { publicKey: ppk, account: p } of positions) {
         if (DRY) continue;
         try {
-          const fresh = await program.account.market.fetch(publicKey);
+          const fresh = await withRetry(() => program.account.market.fetch(publicKey), 4, "market");
           const { payout, fee, kind } = payoutFor(fresh, p);
           // Where can the payout go? The owner's associated token account: as it is (usable), missing (closed by the
           // owner) or frozen (by the issuer). Only a usable one is paid into.
@@ -302,7 +304,7 @@ async function settle(markets, cfg) {
       }
       if (deferred) log(`market #${m.id}: ${deferred} position(s) deferred (owner's account closed or frozen); the market sweeps once they are paid or forfeited`);
     }
-    const fresh = await program.account.market.fetch(publicKey);
+    const fresh = await withRetry(() => program.account.market.fetch(publicKey), 4, "market");
     if (fresh.positionsOpen === 0 && fresh.status !== 4 && !DRY) {
       try {
         // The sweep closes the market account (rent back to the proposer), so its final state is archived first: the
@@ -327,14 +329,14 @@ async function settle(markets, cfg) {
 
 const PROPOSER_LOW_SOL = Number(process.env.PROPOSER_LOW_SOL ?? 0.3);
 try { const b = await conn.getBalance(proposer.publicKey); if (b < PROPOSER_LOW_SOL * 1e9) notify("⛽ proposer 快沒 SOL", `剩 ${(b / 1e9).toFixed(3)} SOL;開盤租金+結算手續費約 0.04/天,見底後不開盤也不結算\n補:solana transfer ${proposer.publicKey.toBase58()} 1 -u devnet`, "proposer-low", 360); } catch {}
-const cfg = await program.account.config.fetch(configPda);
+const cfg = await withRetry(() => program.account.config.fetch(configPda), 4, "config");
 const marketFilter = [{ dataSize: program.account.market.size }];
-const markets = await program.account.market.all(marketFilter);
+const markets = await withRetry(() => program.account.market.all(marketFilter), 4, "markets");
 const now = Math.floor(Date.now() / 1000);
 log(`cluster=${CLUSTER} markets=${markets.length} proposer=${proposer.publicKey.toBase58()} dry=${DRY} steps=${ONLY.join(",")}`);
 if (ONLY.includes("propose")) await propose(markets, now);
-if (ONLY.includes("finalize")) await finalize(await program.account.market.all(marketFilter), now, cfg);
-if (ONLY.includes("settle")) await settle(await program.account.market.all(marketFilter), cfg);
+if (ONLY.includes("finalize")) await finalize(await withRetry(() => program.account.market.all(marketFilter), 4, "markets"), now, cfg);
+if (ONLY.includes("settle")) await settle(await withRetry(() => program.account.market.all(marketFilter), 4, "markets"), cfg);
 log("done");
 // Exit explicitly: web3.js keeps its websocket open after the last confirmation and, when the RPC drops it
 // (ECONNRESET / 429), its reconnect loop keeps the event loop alive forever. 2026-10-10 one run hung 48 min

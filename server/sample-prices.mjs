@@ -8,6 +8,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { readRegistry } from "./chain-tokens.mjs";
 import { utcDate, addDays } from "./prices.mjs";
+import { withRetry, guardProcess } from "./retry.mjs";
+guardProcess();
 
 //        TOKENS_API=<site>/api/stocks — sample the site's listed on-chain tokens instead of the local templates and
 //        registry: for a second sampler on another host (the verifier's), which has no registry of its own.
@@ -32,13 +34,19 @@ if (!mints.size) { console.log(new Date().toISOString(), "nothing to sample"); p
 
 const ids = [...mints];
 const prices = {};
-for (let i = 0; i < ids.length; i += 50) {
-  const chunk = ids.slice(i, i + 50);
-  const r = await fetch(`https://lite-api.jup.ag/price/v3?ids=${chunk.join(",")}`, { signal: AbortSignal.timeout(15_000) });
-  if (!r.ok) throw new Error(`jupiter ${r.status}`);
-  const j = await r.json();
-  for (const m of chunk) if (typeof j[m]?.usdPrice === "number" && j[m].usdPrice > 0) prices[m] = j[m].usdPrice;
-}
+// Primary source, retried on transient failures. A minute it still cannot reach is logged and leaves `p` empty for that
+// tick (the second source below is still written; latest.json keeps the previous minute). It used to crash the run.
+try {
+  for (let i = 0; i < ids.length; i += 50) {
+    const chunk = ids.slice(i, i + 50);
+    const j = await withRetry(async () => {
+      const r = await fetch(`https://lite-api.jup.ag/price/v3?ids=${chunk.join(",")}`, { signal: AbortSignal.timeout(15_000) });
+      if (!r.ok) throw new Error(`jupiter ${r.status}`);
+      return r.json();
+    }, 3, "jupiter");
+    for (const m of chunk) if (typeof j[m]?.usdPrice === "number" && j[m].usdPrice > 0) prices[m] = j[m].usdPrice;
+  }
+} catch (e) { console.error(new Date().toISOString(), "primary source:", String(e?.message ?? e).slice(0, 100)); }
 // Second source, DexScreener (price of the token's deepest pair), kept beside Jupiter's in the same line as `p2`. A close
 // is only trusted when both sources put the day's move in the same range (prices.mjs chainMove); a source that is down
 // for a minute just leaves its key out of that line.
@@ -60,5 +68,5 @@ try {
 fs.mkdirSync(path.join(DATA, "ticks"), { recursive: true });
 const line = JSON.stringify({ t: now, p: prices, p2: prices2 });
 fs.appendFileSync(path.join(DATA, "ticks", `${today}.jsonl`), line + "\n");
-fs.writeFileSync(path.join(DATA, "ticks", "latest.json.tmp"), line); fs.renameSync(path.join(DATA, "ticks", "latest.json.tmp"), path.join(DATA, "ticks", "latest.json"));
+if (Object.keys(prices).length) { fs.writeFileSync(path.join(DATA, "ticks", "latest.json.tmp"), line); fs.renameSync(path.join(DATA, "ticks", "latest.json.tmp"), path.join(DATA, "ticks", "latest.json")); }
 console.log(new Date().toISOString(), `sampled ${Object.keys(prices).length}/${ids.length} (second source ${Object.keys(prices2).length})`);

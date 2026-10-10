@@ -2,6 +2,7 @@
 //   env: EVM_CHAIN=robinhood-testnet|robinhood (default robinhood-testnet), EVM_RPC (overrides chains.json),
 //        EVM_CHAINS=path (overrides chains.json), EVM_PROPOSER_KEY_FILE (a file holding the hex private key, for writes)
 import fs from "node:fs";
+import { withRetry } from "../retry.mjs";
 import { createPublicClient, createWalletClient, http, getContract, parseAbiItem, keccak256, stringToBytes, defineChain, hexToString, stringToHex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
@@ -52,14 +53,15 @@ export const NO_OUTCOME = 255;
 
 /** Every market on the contract, in id order, as plain objects with numbers where they fit. */
 export async function allMarkets(p = pot()) {
-  const count = Number(await p.read.marketCount());
+  const count = Number(await withRetry(() => p.read.marketCount(), 4, "marketCount"));
   if (count === 0) return [];
-  // one JSON-RPC batch per 50 markets (the http transport batches concurrent calls); no Multicall3 dependency
+  // one JSON-RPC batch per 50 markets (the http transport batches concurrent calls); no Multicall3 dependency.
+  // A torn batch (the RPC answering fewer items than asked → viem "unknown RPC error") is retried, not fatal.
   const rows = [];
-  for (let from = 0; from < count; from += 50) rows.push(...await Promise.all(Array.from({ length: Math.min(50, count - from) }, (_, i) => p.read.getMarket([BigInt(from + i)]))));
+  for (let from = 0; from < count; from += 50) rows.push(...await withRetry(() => Promise.all(Array.from({ length: Math.min(50, count - from) }, (_, i) => p.read.getMarket([BigInt(from + i)]))), 4, `getMarket #${from}…`));
   return rows.map((m, id) => normalizeMarket(id, m));
 }
-export async function readMarket(id, p = pot()) { return normalizeMarket(id, await p.read.getMarket([BigInt(id)])); }
+export async function readMarket(id, p = pot()) { return normalizeMarket(id, await withRetry(() => p.read.getMarket([BigInt(id)]), 4, `getMarket #${id}`)); }
 export function normalizeMarket(id, m) {
   const n = Number(m.nBuckets);
   return {
@@ -74,11 +76,11 @@ export function normalizeMarket(id, m) {
   };
 }
 export async function readConfig(p = pot()) {
-  const c = await p.read.config();
+  const c = await withRetry(() => p.read.config(), 4, "config");
   return { admin: c[0], proposer: c[1], treasury: c[2], feeBps: Number(c[3]), earlyBirdDiscountBps: Number(c[4]), earlyBirdSecs: Number(c[5]), disputeWindowSecs: Number(c[6]), minBet: c[7].toString(), paused: c[8] };
 }
 export async function readPosition(id, owner, p = pot()) {
-  const q = await p.read.getPosition([BigInt(id), owner]);
+  const q = await withRetry(() => p.read.getPosition([BigInt(id), owner]), 4, `getPosition #${id}`);
   return { amounts: q.amounts.map((x) => x.toString()), feeW: q.feeW.map((x) => x.toString()), open: q.open };
 }
 
