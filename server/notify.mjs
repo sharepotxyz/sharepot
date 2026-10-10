@@ -12,7 +12,17 @@ const STATE = process.env.NOTIFY_STATE ?? path.join(os.homedir(), ".sharepot-not
 // alert never throttles the mainnet one of the same name.
 const NET = process.env.CLUSTER ?? "devnet";
 const loadState = () => { try { return JSON.parse(fs.readFileSync(STATE, "utf8")); } catch { return {}; } };
-export async function notify(title, body, key = title, throttleMin = 30) {
+// Callers fire and forget (an alert must never slow or break the step that raised it), so a cron script that ends
+// with process.exit(0) has to let the sends in flight finish first: notifyFlush() below. Each send is bounded (the
+// fetch aborts after 10 s, the exec after 20 s), so flushing never waits longer than that.
+const inflight = new Set();
+export function notify(title, body, key = title, throttleMin = 30) {
+  const p = send(title, body, key, throttleMin);
+  inflight.add(p); p.then(() => inflight.delete(p), () => inflight.delete(p));
+  return p;
+}
+export const notifyFlush = () => Promise.allSettled([...inflight]);
+async function send(title, body, key, throttleMin) {
   try {
     if (!EXEC && !fs.existsSync(CFG)) return false;
     const now = Date.now(), st = loadState(); if (key) key = `${NET}:${key}`;

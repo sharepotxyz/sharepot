@@ -16,7 +16,7 @@ import { Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
 import idlJson from "../idl/sharepot.json" with { type: "json" };
 import { closeMove, chainMove, parseMetric, nasdaqMarketInfo, nyToUnix } from "./prices.mjs";
 import { readRegistry } from "./chain-tokens.mjs";
-import { notify } from "./notify.mjs";
+import { notify, notifyFlush } from "./notify.mjs";
 import { sendSigned } from "./tx.mjs";
 // A market still unproposed this long after resolve_after_ts is overdue: one Telegram alert per market per 6 h.
 const OVERDUE_SECS = Number(process.env.OVERDUE_SECS ?? 7200);
@@ -339,4 +339,6 @@ log("done");
 // Exit explicitly: web3.js keeps its websocket open after the last confirmation and, when the RPC drops it
 // (ECONNRESET / 429), its reconnect loop keeps the event loop alive forever. 2026-10-10 one run hung 48 min
 // after "done" holding resolve.lock, so every 10-minute tick was skipped by flock -n without a word in the log.
+// The alerts above are not awaited; they get to leave before the exit (bounded, see notify.mjs).
+await notifyFlush();
 process.exit(0);
