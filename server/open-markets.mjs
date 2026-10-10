@@ -222,3 +222,6 @@ for (const x of skipped) log("skipped", x);
   log(`on-chain price markets: opened ${copened.length}: ${copened.join(", ") || "-"}`);
   for (const x of cskipped) log("skipped", x);
 }
+// Exit explicitly (same reason as resolve.mjs): the Anchor provider's websocket may be mid-reconnect after the last
+// confirmation and would keep the process, and open-markets.lock, alive until someone notices.
+process.exit(0);

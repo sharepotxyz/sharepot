@@ -336,3 +336,7 @@ if (ONLY.includes("propose")) await propose(markets, now);
 if (ONLY.includes("finalize")) await finalize(await program.account.market.all(marketFilter), now, cfg);
 if (ONLY.includes("settle")) await settle(await program.account.market.all(marketFilter), cfg);
 log("done");
+// Exit explicitly: web3.js keeps its websocket open after the last confirmation and, when the RPC drops it
+// (ECONNRESET / 429), its reconnect loop keeps the event loop alive forever. 2026-10-10 one run hung 48 min
+// after "done" holding resolve.lock, so every 10-minute tick was skipped by flock -n without a word in the log.
+process.exit(0);
