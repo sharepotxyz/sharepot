@@ -35,14 +35,12 @@ const signer = provider.wallet.publicKey;
 const conn = provider.connection;
 const [configPda] = PublicKey.findProgramAddressSync([Buffer.from("config")], program.programId);
 const log = (...a) => console.log(new Date().toISOString(), ...a);
-// web3.js confirms transactions with racing promises; when the public RPC answers 429 to one of them the loser rejects
-// with nobody awaiting it, and Node 22 would exit on that. The awaited path retries on its own; just log the stray one.
-process.on("unhandledRejection", (e) => log(`unhandled rejection (ignored): ${String(e?.message ?? e).slice(0, 160)}`));
 const tag = (b) => Buffer.from(b).toString("utf8").replace(/\0+$/, "");
 const iso = (ts) => new Date(ts * 1000).toISOString();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Public RPCs rate-limit bursts; retry transient failures with backoff, surface everything else.
 guardProcess(log);   // an uncaught error ends the run in one line, not a stack dump; the next tick retries
+// (the 429 a web3.js confirmation race leaves with nobody awaiting it is only logged by guardProcess; the run goes on)
 fs.mkdirSync(DATA, { recursive: true });
 
 const now = Math.floor(Date.now() / 1000);

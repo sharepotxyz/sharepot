@@ -21,8 +21,13 @@ export async function withRetry(fn, tries = 4, label = "rpc", baseMs = 1000) {
   }
 }
 
-/** Last line of defence for a script run from cron: an exception nobody caught (a top-level await included) is logged
- *  as one line plus the first stack frames, and the process exits 1 — no stack dump, no silent half-run. */
+/** Last line of defence for a script run from cron: an exception nobody caught (a failed top-level await included —
+ *  Node 22 reports it as uncaughtException) is logged as one line plus the first stack frames, and the process exits 1
+ *  — no stack dump, no silent half-run.
+ *  A rejected promise nobody awaits is another matter: web3.js confirms transactions with racing requests, and when the
+ *  RPC answers 429/5xx to the one that lost, it rejects with nobody waiting; the awaited path has its own answer. Such
+ *  a transient stray is logged and the run goes on (exiting on it stopped a resolver mid-settle, where the per-position
+ *  failure count never sees it: audit 2026-10-12). Any other stray rejection is a bug and still ends the run. */
 export function guardProcess(log = (...a) => console.log(new Date().toISOString(), ...a)) {
   const die = (e) => {
     log(`FAILED (uncaught): ${firstLine(e)} — this run stops here; the next tick retries`);
@@ -30,6 +35,6 @@ export function guardProcess(log = (...a) => console.log(new Date().toISOString(
     if (frames) log(`  ${frames}`);
     process.exit(1);
   };
-  process.on("unhandledRejection", die);
+  process.on("unhandledRejection", (e) => (isTransient(e) ? log(`unhandled rejection (ignored): ${firstLine(e).slice(0, 160)}`) : die(e)));
   process.on("uncaughtException", die);
 }

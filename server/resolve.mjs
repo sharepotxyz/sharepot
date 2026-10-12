@@ -67,9 +67,7 @@ const vaultPda = (m) => PublicKey.findProgramAddressSync([Buffer.from("vault"), 
 const tag = (b) => Buffer.from(b).toString("utf8").replace(/\0+$/, "");
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 guardProcess(log);   // 2026-10-10: 19 crash dumps on "fetch failed / ECONNRESET" from the RPC; reads below retry, the rest ends in one line
-// web3.js confirms transactions with racing promises; when the public RPC answers 429 to one of them the loser rejects
-// with nobody awaiting it, and Node 22 would exit on that. The awaited path retries on its own; just log the stray one.
-process.on("unhandledRejection", (e) => log(`unhandled rejection (ignored): ${String(e?.message ?? e).slice(0, 160)}`));
+// (the 429 a web3.js confirmation race leaves with nobody awaiting it is only logged by guardProcess; the run goes on)
 fs.mkdirSync(path.join(DATA, "evidence"), { recursive: true });
 
 // Token program (classic SPL or Token-2022) owning each mint, looked up once.
