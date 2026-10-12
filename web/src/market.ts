@@ -17,6 +17,12 @@ const root = document.getElementById("event")!;
 let ev: EventView | undefined, openEv: EventView | undefined, m: MarketView, cfg: ConfigView, bucket = -1, tab: "rules" | "resolution" | "details" = "rules";
 const name = (i: number) => bucketName(m, i) || bucketLabel(m, i);
 const full = (i: number) => (bucketName(m, i) ? `${bucketName(m, i)} (${bucketLabel(m, i)})` : bucketLabel(m, i));
+// Still unproposed well past its proposal time: the resolver is holding the market (its price data cannot settle it, e.g.
+// a meme's feed delisted the token before the closing hour) and retries; STALE_VOID_SECS after the proposal time the
+// proposer voids it and every stake is refunded (the same constant in the Solana program and the EVM contract).
+// Proposals normally land within minutes for memes and about 90 minutes for stocks (the official close), hence the waits.
+const STALE_VOID_SECS = 86_400;
+const delayedVoidAt = () => (m.status === 0 && Date.now() / 1000 >= m.resolveAfterTs + (ev?.kind === "day" ? 3600 : 3 * 3600) ? m.resolveAfterTs + STALE_VOID_SECS : 0);
 
 async function load(fresh = false) {
   const [ms, c] = await Promise.all([fetchMarkets({ fresh }), fetchConfig({ fresh }), loadPrices(), loadStocks()]);
@@ -40,7 +46,7 @@ function selectMarket(id: number) {
 }
 function render() {
   if (!ev) return;
-  const st = statusOf(m), tok = tokenSymbol(m), fee = currentFeeBps(cfg, m), tot = totalPool(m);
+  const st = statusOf(m), tok = tokenSymbol(m), fee = currentFeeBps(cfg, m), tot = totalPool(m), voidAt = delayedVoidAt();
   document.title = `${question(m)} · SharePot`;
   const rows = m.pools.map((p, i) => {
     const pct = tot ? `${Math.round((p / tot) * 100)}%` : "—";
@@ -50,12 +56,12 @@ function render() {
     return `<div class="orow${bucket === i && st === "open" ? " sel" : ""}${won ? " win" : ""}" style="--c:${bucketColor(m, i)}"><span class="oname"><i></i><b>${esc(name(i))}</b>${bucketName(m, i) ? `<small>${esc(bucketLabel(m, i))}</small>` : ""}</span><span class="ochance">${pct}</span><span class="opays">${mult ? mult.toFixed(2) + "×" : st === "open" ? t("mkt.wholePot") : "—"}</span><span class="opool">${fmtAmt(m, p, 3)} ${esc(tok)}</span><span>${action}</span></div>`;
   }).join("");
   const res = m.status === 2 || m.status === 4 ? (m.outcome === NO_OUTCOME ? t("mkt.voided") : `${t("mkt.result", { label: `<b>${esc(full(m.outcome))}</b>`, move: fmtMove(m.proposedValue) })} · ${m.pools[m.outcome] === 0 ? t("mkt.resultRefund") : t("mkt.resultPaid")}`)
-    : m.status === 3 ? t("mkt.voided") : m.status === 1 ? `${t("mkt.proposedResult", { label: `<b>${esc(full(m.proposedOutcome))}</b>`, move: fmtMove(m.proposedValue), ts: fmtTs(m.proposedAt + cfg.disputeWindowSecs), left: timeLeft(m.proposedAt + cfg.disputeWindowSecs) })}${m.pools[m.proposedOutcome] === 0 ? " " + t("mkt.proposedRefund") : ""}` : "";
+    : m.status === 3 ? t("mkt.voided") : m.status === 1 ? `${t("mkt.proposedResult", { label: `<b>${esc(full(m.proposedOutcome))}</b>`, move: fmtMove(m.proposedValue), ts: fmtTs(m.proposedAt + cfg.disputeWindowSecs), left: timeLeft(m.proposedAt + cfg.disputeWindowSecs) })}${m.pools[m.proposedOutcome] === 0 ? " " + t("mkt.proposedRefund") : ""}` : voidAt ? t("mkt.delayed", { when: fmtTs(voidAt) }) : "";
   root.innerHTML = `<div class="evpage">
     <div class="evtop">
       <nav class="crumb"><a href="/">${t("mkt.crumb")}</a><span>›</span><a href="/?cat=${encodeURIComponent(ev.category)}">${esc(CATEGORY_NAME[ev.category] ?? ev.category)}</a><span>›</span><a href="/?cat=${encodeURIComponent(ev.category)}&stock=${encodeURIComponent(ev.symbol)}">${esc(ev.name)}</a><span>›</span><span>${esc(fmtDay(closeMoment(m)))}</span></nav>
-      <header class="evhdr"><div><div class="evhdr-top">${tickerBadge(ev.symbol, true)}<span class="pill ${st}">${STATUS_LABEL[st]}</span></div><h1>${esc(question(m))}</h1>
-        <div class="evmeta">${st === "open" ? `<span>${t("mkt.closeIn", { t: timeLeft(m.closeTs) })}</span>` : ""}${ev.potUsd != null ? `<span>${tn("mkt.potAcross", ev.markets.length, { usd: fmtUsd(ev.potUsd) })}</span>` : ""}<span>${tn("bettors", ev.bettors)}</span>${ev.kind === "day" && priceOf(m) ? `<span title="${esc(t("mkt.nowTitle"))}">${t("mkt.now", { px: fmtPx(priceOf(m)!) })}</span>` : ""}${ev.kind === "day" ? (() => { const pc = prevCloseOf(m); return pc && pc.date === new Date(Date.parse(ev.date + "T00:00:00Z") - 864e5).toISOString().slice(0, 10) ? `<span title="${esc(t("mkt.prevTitle", { ts: fmtTs(dayStart(ev.date)) }))}">${t("mkt.prev", { px: fmtPx(pc.close) })}</span>` : `<span class="note">${t("mkt.prevLater", { ts: esc(fmtTs(dayStart(ev.date))) })}</span>`; })() : ""}</div></div></header>
+      <header class="evhdr"><div><div class="evhdr-top">${tickerBadge(ev.symbol, true)}<span class="pill ${st}">${voidAt ? t("status.delayed") : STATUS_LABEL[st]}</span></div><h1>${esc(question(m))}</h1>
+        <div class="evmeta">${st === "open" ? `<span>${t("mkt.closeIn", { t: timeLeft(m.closeTs) })}</span>` : ""}${ev.potUsd != null ? `<span>${tn("mkt.potAcross", ev.markets.length, { usd: fmtUsd(ev.potUsd) })}</span>` : ""}<span>${tn("bettors", ev.bettors)}</span>${ev.kind === "day" && priceOf(m) ? `<span title="${esc(t(IS_EVM ? "mkt.nowTitleEvm" : "mkt.nowTitle"))}">${t("mkt.now", { px: fmtPx(priceOf(m)!) })}</span>` : ""}${ev.kind === "day" ? (() => { const pc = prevCloseOf(m); return pc && pc.date === new Date(Date.parse(ev.date + "T00:00:00Z") - 864e5).toISOString().slice(0, 10) ? `<span title="${esc(t("mkt.prevTitle", { ts: fmtTs(dayStart(ev.date)) }))}">${t("mkt.prev", { px: fmtPx(pc.close) })}</span>` : `<span class="note">${t("mkt.prevLater", { ts: esc(fmtTs(dayStart(ev.date))) })}</span>`; })() : ""}</div></div></header>
       ${timeline()}
       <div class="toks" role="tablist" aria-label="${esc(t("mkt.poolAria"))}">${ev.markets.map((x) => `<button role="tab" aria-selected="${x.id === m.id}" class="tok${x.id === m.id ? " on" : ""}" data-id="${x.id}"><b>${esc(tokenSymbol(x))}</b><span>${esc(issuerOf(x))}</span><em>${t("mkt.inPot", { amt: fmtAmt(x, totalPool(x) + x.seed, 3) })} ${usdOf(x, totalPool(x) + x.seed)}</em></button>`).join("")}</div>
       ${ev.markets.length > 1 ? `<p class="note">${t("mkt.multiPools", { n: ev.markets.length })}</p>` : ""}
@@ -104,10 +110,10 @@ function renderTab() {
     el.innerHTML = `<ul>
       <li>${t("rules.day.q", { sym, ts: esc(fmtTs(dayEnd(ev!.date))), n: m.nBuckets })}</li>
       <li>${t("rules.day.betting", { open: fmtTs(m.openTs), close: fmtTs(m.closeTs) })}</li>
-      <li>${t("rules.day.result", { range: esc(fmtHmRange(dayEnd(ev!.date) - 3600, dayEnd(ev!.date))), day: esc(fmtDay(dayEnd(ev!.date))), base: esc(fmtTs(dayStart(ev!.date))), after: fmtTs(m.resolveAfterTs), h: cfg.disputeWindowSecs / 3600 })}</li>
+      <li>${t(IS_EVM ? "rules.day.resultEvm" : "rules.day.result", { range: esc(fmtHmRange(dayEnd(ev!.date) - 3600, dayEnd(ev!.date))), day: esc(fmtDay(dayEnd(ev!.date))), base: esc(fmtTs(dayStart(ev!.date))), after: fmtTs(m.resolveAfterTs), h: cfg.disputeWindowSecs / 3600 })}</li>
       <li>${payouts}</li>
       ${issuerFee ? `<li>${t("rules.issuerFee", { iss: esc(iss), fee: issuerFee, tok })}</li>` : ""}
-      ${ev!.category === "memes" ? `<li>${t("rules.day.why", { time: esc(fmtHm(m.openTs)) })}</li>` : ""}
+      ${ev!.category === "memes" ? `<li>${t(IS_EVM ? "rules.day.whyEvm" : "rules.day.why", { time: esc(fmtHm(m.openTs)) })}</li>` : ""}
       <li>${pct ? t("rules.day.ranges", { pct }) : t("rules.day.rangesNoPct")}</li></ul>`;
   } else if (tab === "rules") {
     el.innerHTML = `<ul>
@@ -116,11 +122,11 @@ function renderTab() {
       <li>${t("rules.close.result", { after: fmtTs(m.resolveAfterTs), h: cfg.disputeWindowSecs / 3600 })}</li>
       <li>${t("rules.payouts", { tok, early: (cfg.feeBps - cfg.earlyBirdDiscountBps) / 100, until: fmtTs(earlyBirdUntil(cfg, m)), fee: cfg.feeBps / 100 })}</li>
       <li>${t("rules.close.divs")}</li>
-      <li>${t("rules.close.issuer", { iss: esc(issuerOf(m)) || t("rules.theIssuer"), tok })}</li>
+      <li>${t(IS_EVM ? "rules.close.issuerEvm" : "rules.close.issuer", { iss: esc(issuerOf(m)) || t("rules.theIssuer"), tok })}</li>
       <li>${t("rules.close.ranges", { sym })}</li></ul>`;
   } else if (tab === "resolution") {
     el.innerHTML = m.proposedAt ? `<div class="kv"><b>${t("res.proposed")}</b><span>${fmtTs(m.proposedAt)} · ${t("res.move", { move: `<span class="mono">${fmtMove(m.proposedValue)}</span>` })} → <b>${esc(full(m.proposedOutcome))}</b></span><b>${t("res.evidence")}</b><span id="evidence" class="note">${t("res.loading")}</span>${m.status === 1 && HAS_DISPUTES ? `<b>${t("res.disagree")}</b><span><button id="dbtn">${t("res.dispute")}</button> <span class="note">${t("res.disputeUntil", { ts: fmtTs(m.proposedAt + cfg.disputeWindowSecs) })}</span><div id="dlist" class="note"></div></span>` : ""}</div>`
-      : `<p class="note">${t("res.pending", { ts: fmtTs(m.resolveAfterTs) })}</p>`;
+      : `<p class="note">${delayedVoidAt() ? t("mkt.delayed", { when: fmtTs(delayedVoidAt()) }) : t("res.pending", { ts: fmtTs(m.resolveAfterTs) })}</p>`;
     loadEvidence(); mountDispute();
   } else {
     el.innerHTML = `<div class="kv"><b>${t("det.token")}</b><span class="hash">${tok} · ${esc(issuerOf(m))} · ${esc(m.mint)}${m.multiplier !== 1 ? ` · ${t("det.multiplier", { x: m.multiplier })}` : ""}</span><b>${t("det.account")}</b><span class="hash">${esc(m.address)} (#${m.id})</span><b>${t("det.openClose")}</b><span>${fmtTs(m.openTs)} → ${fmtTs(m.closeTs)}</span><b>${t("det.resolvesAfter")}</b><span>${fmtTs(m.resolveAfterTs)}</span></div>`;
@@ -138,7 +144,8 @@ function renderTrade() {
     // shows open ones only, which read as an empty page, 2026-10-09 black-box round).
     const next = openEv ? `<a href="/market.html?e=${encodeURIComponent(openEv.key)}">${t("trade.seeOpen", { sym: esc(ev!.symbol) })}</a>`
       : `<a href="/?cat=${ev!.category}&stock=${encodeURIComponent(ev!.symbol)}&status=all">${t("trade.seeAll", { sym: esc(ev!.symbol) })}</a>`;
-    box.innerHTML = `<div class="tcard"><div class="thead"><b>${STATUS_LABEL[st]}</b></div><p class="note" style="margin:0">${st === "trading" ? t("trade.closedTrading", { close: fmtTs(m.closeTs), after: fmtTs(m.resolveAfterTs), final: fmtTs(m.resolveAfterTs + cfg.disputeWindowSecs) }) : st === "proposed" ? t("trade.closedProposed", { ts: fmtTs(m.proposedAt + cfg.disputeWindowSecs), left: timeLeft(m.proposedAt + cfg.disputeWindowSecs) }) : t("trade.closedSettled")}</p>${next}</div><div id="pos">${posHtml()}</div>`;
+    const voidAt = delayedVoidAt();
+    box.innerHTML = `<div class="tcard"><div class="thead"><b>${voidAt ? t("status.delayed") : STATUS_LABEL[st]}</b></div><p class="note" style="margin:0">${voidAt ? t("trade.closedDelayed", { close: fmtTs(m.closeTs), when: fmtTs(voidAt) }) : st === "trading" ? t("trade.closedTrading", { close: fmtTs(m.closeTs), after: fmtTs(m.resolveAfterTs), final: fmtTs(m.resolveAfterTs + cfg.disputeWindowSecs) }) : st === "proposed" ? t("trade.closedProposed", { ts: fmtTs(m.proposedAt + cfg.disputeWindowSecs), left: timeLeft(m.proposedAt + cfg.disputeWindowSecs) }) : t("trade.closedSettled")}</p>${next}</div><div id="pos">${posHtml()}</div>`;
     showPosition(); return;
   }
   // The floor is shown as a round number of shares, a power of ten worth at least MIN_BET_USD, so nobody has to work it
