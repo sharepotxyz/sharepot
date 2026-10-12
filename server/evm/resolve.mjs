@@ -80,6 +80,7 @@ async function voidStale(m, why, now) {
   } catch (e) { log(`market #${m.id}: stale void failed: ${short(e)}`); return false; }
 }
 async function propose(markets, now) {
+  const doomed = [];   // markets that can only end voided, reported together after the loop
   for (const m of markets) {
     try {
       if (m.status !== Status.Open || now < m.resolveAfterTs) continue;
@@ -93,8 +94,8 @@ async function propose(markets, now) {
         const overdue = now >= m.resolveAfterTs + OVERDUE_SECS;
         log(`market #${m.id} (${m.metric}): cannot resolve yet — ${ev.reason}`);
         if (await voidStale(m, ev.reason, now)) continue;
-        if (ev.alert) notify("⚠️ 鏈上盤無法結算(Robinhood)", `#${m.id} ${m.metric}\n${ev.reason}\n結算時間過 24h 後會自動 void 退款`, `evm-hold:${m.id}`, 120);
-        else if (overdue) notify("⏳ 鏈上盤結算逾時(Robinhood)", `#${m.id} ${m.metric} 日結束後 ${Math.round((now - m.resolveAfterTs) / 3600)} 小時仍未提案\n${ev.reason}\n過 24h 會自動 void 退款`, `evm-overdue:${m.id}`, 360);
+        // that closing hour is over and its quotes cannot come back: void-bound
+        if (ev.alert || overdue) doomed.push({ id: m.id, line: `#${m.id} ${m.metric}:${ev.reason}` });
         continue;
       }
       if (!ev.ok) {
@@ -106,10 +107,10 @@ async function propose(markets, now) {
         } else if (prevTraded && prevTraded > spec.date) {
           log(`market #${m.id} (${m.metric}): ⚠ no close for ${spec.date} although ${prevTraded} has started — likely DID NOT TRADE`);
           if (await voidStale(m, `no close for ${spec.date}; session ${prevTraded} has since started`, now)) continue;
-          notify("⛔ 這天可能沒交易(Robinhood)", `#${m.id} ${m.metric}:${spec.date} 沒有收盤價但後面的交易日已開始;過 24h 後自動 void 退款`, `evm-void:${m.id}`, 360);
+          doomed.push({ id: m.id, line: `#${m.id} ${m.metric}:${spec.date} 沒有收盤價但後面的交易日已開始(這天可能沒交易)` });
         } else {
           log(`market #${m.id} (${m.metric}): cannot resolve yet — ${ev.reason}`);
-          if (ev.alert) notify("⚠️ 結算暫停,兩個價源不一致(Robinhood)", `#${m.id} ${m.metric}\n${ev.reason}`, `evm-hold:${m.id}`, 720);
+          if (ev.alert) notify("⚠️ 結算暫停,收盤價資料缺一個交易日(Robinhood)", `#${m.id} ${m.metric}\n${ev.reason}`, `evm-hold:${m.id}`, 720);
           else if (overdue) notify("⏳ 結算逾時(Robinhood)", `#${m.id} ${m.metric} 收盤後 ${Math.round((now - m.resolveAfterTs) / 3600)} 小時仍未提案\n${ev.reason}`, `evm-overdue:${m.id}`, 360);
         }
         continue;
@@ -129,6 +130,11 @@ async function propose(markets, now) {
       if (now >= m.resolveAfterTs + OVERDUE_SECS) notify("⏳ 結算逾時(提案失敗,Robinhood)", `#${m.id} ${m.metric}\n${short(e)}`, `evm-overdue:${m.id}`, 360);
     }
   }
+  // Markets that can only end voided get one message for all of them, sent once per set (the key is their ids) instead
+  // of a reminder per market every few hours (2026-10-12, #211: two alerts, then one every 6 h for a day). voidStale
+  // voids them STALE_VOID_SECS after their resolve time; the Tokyo dashboard shows them meanwhile, red only if the void
+  // itself does not happen.
+  if (doomed.length) notify("⏳ 這些盤會自動作廢退款(Robinhood)", `${doomed.map((d) => d.line).join("\n")}\n結算時間過 24 小時由 proposer 作廢、全額退款,不用處理。同一天很多盤一起出現,多半是價源或取樣器整體出問題(股票盤則可能是休市)。`, `evm-doomed:${doomed.map((d) => d.id).join(",")}`, (STALE_VOID_SECS + OVERDUE_SECS) / 60);
 }
 async function finalize(markets, now, cfg) {
   for (const m of markets) {

@@ -149,6 +149,7 @@ async function voidStale(publicKey, m, metric, why, now) {
   } catch (e) { log(`market #${m.id}: stale void failed: ${String(e?.message ?? e).split("\n")[0].slice(0, 160)}`); return false; }
 }
 async function propose(markets, now) {
+  const doomed = [];   // markets that can only end voided, reported together after the loop
   for (const { publicKey, account: m } of markets) {
    try {
     if (m.status !== 0 || now < m.resolveAfterTs.toNumber()) continue;
@@ -165,8 +166,8 @@ async function propose(markets, now) {
       const overdue = now >= m.resolveAfterTs.toNumber() + OVERDUE_SECS;
       log(`market #${m.id} (${metric}): cannot resolve yet — ${ev.reason}`);
       if (await voidStale(publicKey, m, metric, ev.reason, now)) continue;
-      if (ev.alert) notify("⚠️ 鏈上盤無法結算", `#${m.id} ${metric}\n${ev.reason}\n結算時間過 24h 後會自動 void 退款`, `hold:${m.id}`, 120);
-      else if (overdue) notify("⏳ 鏈上盤結算逾時", `#${m.id} ${metric} 日結束後 ${Math.round((now - m.resolveAfterTs.toNumber()) / 3600)} 小時仍未提案\n${ev.reason}\n過 24h 會自動 void 退款`, `overdue:${m.id}`, 360);
+      // that closing hour is over and its quotes cannot come back: void-bound
+      if (ev.alert || overdue) doomed.push({ id: String(m.id), line: `#${m.id} ${metric}:${ev.reason}` });
       continue;
     }
     if (!ev.ok) {
@@ -185,10 +186,10 @@ async function propose(markets, now) {
       } else if (prevTraded && prevTraded > spec.date) {
         log(`market #${m.id} (${metric}): ⚠ no close for ${spec.date} although a later session (${prevTraded}) has started — ${spec.date} likely DID NOT TRADE`);
         if (await voidStale(publicKey, m, metric, `no close for ${spec.date}; session ${prevTraded} has since started`, now)) continue;
-        notify("⛔ 這天可能沒交易", `#${m.id} ${metric}:${spec.date} 沒有收盤價但後面的交易日已開始;結算時間過 24h 後 proposer 會自動 void 退款(admin 可提前:node scripts/void-markets.mjs ${m.id})`, `void:${m.id}`, 360);
+        doomed.push({ id: String(m.id), line: `#${m.id} ${metric}:${spec.date} 沒有收盤價但後面的交易日已開始(這天可能沒交易)` });
       } else {
         log(`market #${m.id} (${metric}): cannot resolve yet — ${ev.reason}`);
-        if (ev.alert) notify("⚠️ 結算暫停,兩個價源不一致", `#${m.id} ${metric}\n${ev.reason}\n結算器每 10 分鐘會再試;下一個交易日開始後仍無解,過 24h 會自動作廢退款`, `hold:${m.id}`, 720);
+        if (ev.alert) notify("⚠️ 結算暫停,收盤價資料缺一個交易日", `#${m.id} ${metric}\n${ev.reason}\n結算器每 10 分鐘會再試;下一個交易日開始後仍無解,過 24h 會自動作廢退款`, `hold:${m.id}`, 720);
         else if (overdue) notify("⏳ 結算逾時", `#${m.id} ${metric} 收盤後 ${Math.round((now - m.resolveAfterTs.toNumber()) / 3600)} 小時仍未提案\n${ev.reason}`, `overdue:${m.id}`, 360);
       }
       continue;
@@ -211,6 +212,14 @@ async function propose(markets, now) {
     log(`market #${m.id}: propose failed: ${e?.message?.split("\n")[0]}`);
     if (now >= m.resolveAfterTs.toNumber() + OVERDUE_SECS) notify("⏳ 結算逾時(提案失敗)", `#${m.id} ${tag(m.metric)}\n${String(e?.message ?? e).split("\n")[0].slice(0, 300)}`, `overdue:${m.id}`, 360);
    }
+  }
+  // Markets that can only end voided get one message for all of them, sent once per set (the key is their ids) instead
+  // of a reminder per market every few hours (2026-10-12, Robinhood #211: two alerts, then one every 6 h for a day).
+  // voidStale voids them STALE_VOID_SECS after their resolve time; the Tokyo dashboard shows them meanwhile, red only if
+  // the void itself does not happen.
+  if (doomed.length) {
+    const ids = doomed.map((d) => d.id).join(",");
+    notify("⏳ 這些盤會自動作廢退款", `${doomed.map((d) => d.line).join("\n")}\n結算時間過 24 小時由 proposer 作廢、全額退款,不用處理(admin 可提前:node scripts/void-markets.mjs ${doomed.map((d) => d.id).join(" ")})。同一天很多盤一起出現,多半是價源或取樣器整體出問題(股票盤則可能是休市)。`, `doomed:${ids}`, (STALE_VOID_SECS + OVERDUE_SECS) / 60);
   }
 }
 async function finalize(markets, now, cfg) {
