@@ -37,7 +37,7 @@ const getJson = async (url, attempt = 1) => {
   if (!r.ok) throw new Error(`${r.status} ${url.split("?")[0]}`); return r.json();
 };
 
-const list = await getJson("https://lite-api.jup.ag/tokens/v2/toptraded/24h?limit=100");
+const list = await getJson("https://api.jup.ag/tokens/v2/toptraded/24h?limit=100");
 const rejected = [], picked = [];
 for (const x of list) {
   const tags = new Set(x.tags ?? []), a = x.audit ?? {}, st = x.stats24h ?? {};

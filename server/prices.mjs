@@ -239,7 +239,7 @@ export async function nextSessionLive(now = Math.floor(Date.now() / 1000)) {
 
 /** Live token prices (Jupiter) incl. the reference stock price and ScaledUiAmount multiplier. */
 export async function xstockPrices(mints) {
-  const { json } = await getJson(`https://lite-api.jup.ag/price/v3?ids=${mints.join(",")}`);
+  const { json } = await getJson(`https://api.jup.ag/price/v3?ids=${mints.join(",")}`);
   return Object.fromEntries(mints.map((m) => [m, json[m] ? { usd: json[m].usdPrice, stock: json[m].stockData?.price ?? null, multiplier: json[m].scaledUiConfig?.multiplier ?? 1 } : null]));
 }
 
@@ -291,7 +291,7 @@ export const bucketOf = (thresholds, value) => thresholds.filter((t) => value >=
  */
 /** Names of the two sampled quote sources, for the evidence text: Solana samples Jupiter (p) and DexScreener (p2);
  *  an EVM deployment passes its own pair (server/evm/sample-prices.mjs). */
-export const CHAIN_SOURCES = { primary: "jupiter-price-v3", primaryNote: "lite-api.jup.ag/price/v3", secondary: "dexscreener", secondaryNote: "api.dexscreener.com" };
+export const CHAIN_SOURCES = { primary: "jupiter-price-v3", primaryNote: "api.jup.ag/price/v3", secondary: "dexscreener", secondaryNote: "api.dexscreener.com" };
 export function chainMove(dataDir, mint, symbol, date, now = Math.floor(Date.now() / 1000), thresholds = null, names = CHAIN_SOURCES) {
   if (now < utcMidnight(date) + 24 * 3600) return { ok: false, reason: `${date} has not ended yet (UTC)` };
   const prevDate = addDays(date, -1);

@@ -36,11 +36,13 @@ const ids = [...mints];
 const prices = {};
 // Primary source, retried on transient failures. A minute it still cannot reach is logged and leaves `p` empty for that
 // tick (the second source below is still written; latest.json keeps the previous minute). It used to crash the run.
+// lite-api.jup.ag stopped answering on 2026-10-16 (TLS handshake refused); api.jup.ag serves the same price v3 without a
+// key at about 5 requests a minute per IP. This run makes one a minute and the site's price refresh one or two.
 try {
   for (let i = 0; i < ids.length; i += 50) {
     const chunk = ids.slice(i, i + 50);
     const j = await withRetry(async () => {
-      const r = await fetch(`https://lite-api.jup.ag/price/v3?ids=${chunk.join(",")}`, { signal: AbortSignal.timeout(15_000) });
+      const r = await fetch(`https://api.jup.ag/price/v3?ids=${chunk.join(",")}`, { signal: AbortSignal.timeout(15_000) });
       if (!r.ok) throw new Error(`jupiter ${r.status}`);
       return r.json();
     }, 3, "jupiter");

@@ -57,7 +57,7 @@ const ledger = (row) => { fs.mkdirSync(DATA, { recursive: true }); fs.appendFile
 // Jupiter's free tier rate-limits bursts (a plain-text "Rate limit" answer): back off and retry a few times.
 const jup = async (p, init) => {
   for (let attempt = 1; ; attempt++) {
-    const r = await fetch(`https://lite-api.jup.ag/swap/v1${p}`, { ...init, signal: AbortSignal.timeout(20_000) });
+    const r = await fetch(`https://api.jup.ag/swap/v1${p}`, { ...init, signal: AbortSignal.timeout(20_000) });
     const text = await r.text(); let j = null; try { j = JSON.parse(text); } catch {}
     if (r.ok && j && !j.error) return j;
     const transient = r.status === 429 || r.status >= 500 || /rate limit/i.test(text);
