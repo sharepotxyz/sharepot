@@ -18,9 +18,9 @@ export function disproof(row, receipt, pot) {
     if (String(l.address).toLowerCase() !== potL) continue;
     let ev; try { ev = decodeEventLog({ abi: [SETTLED], data: l.data, topics: l.topics }); } catch { continue; }
     if (ev.eventName !== "PositionSettled") continue;
-    if (Number(ev.args.id) === Number(row.id) && String(ev.args.user).toLowerCase() === ownerL && ev.args.fee.toString() === String(row.fee)) { matched = ev.args; break; }
+    if (Number(ev.args.id) === Number(row.id) && String(ev.args.user).toLowerCase() === ownerL && ev.args.fee.toString() === String(row.fee) && (row.payout == null || ev.args.payout.toString() === String(row.payout))) { matched = ev.args; break; }
   }
-  if (!matched) return "no PositionSettled event of this contract matches the row's market, owner and fee";
+  if (!matched) return "no PositionSettled event of this contract matches the row's market, owner, fee and payout";
   if (matched.payout > 0n && !receipt.logs.some((l) => String(l.address).toLowerCase() === mintL && l.topics[0] === TRANSFER_TOPIC)) return "the row's token did not move in this transaction";
   return null;
 }
@@ -32,10 +32,14 @@ export function disproof(row, receipt, pot) {
  */
 export async function provenRows(publicClient, pot, rows, { cacheFile, wanted, log = () => {}, pauseMs = 300 }) {
   let cache = {}; try { cache = JSON.parse(fs.readFileSync(cacheFile, "utf8")); } catch (e) { if (e?.code !== "ENOENT") throw e; }
-  const ok = [], rejected = [], unknown = [];
+  const ok = [], rejected = [], unknown = [], seen = new Set();
   for (const r of rows) {
     if (!wanted(r)) { ok.push(r); continue; }
     if (!r.tx) { rejected.push({ row: r, why: "row has no transaction hash" }); continue; }
+    // one settlement, one row (see ../settlement-proof.mjs): a second row with the same transaction and owner is a copy
+    const once = `${r.tx}:${String(r.owner).toLowerCase()}`;
+    if (seen.has(once)) { rejected.push({ row: r, why: "a copy: another row has this transaction and owner" }); log(`REJECTED settlement row ${r.tx}: a copy of another row`); continue; }
+    seen.add(once);
     const key = `${r.tx}:${r.owner}:${r.fee}:${r.mint}`;
     if (cache[key] === true) { ok.push(r); continue; }
     if (typeof cache[key] === "string") { rejected.push({ row: r, why: cache[key] }); continue; }

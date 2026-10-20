@@ -277,9 +277,11 @@ async function settle(markets, cfg) {
               log(`  forfeited ${p.owner.toBase58()} (${blocked} account) amount=${payout} ${fsig}`);
               continue;
             }
-            if (acct || (worthUsd != null && worthUsd < ATA_RENT_USD)) {
+            // A closed account is reopened at the cranker's expense only for a payout known to be worth the rent. With no
+            // price known the payout is deferred as well (it used to be paid: ~0.002 SOL of rent per unknown — audit 2026-10-20 L1).
+            if (acct || worthUsd == null || worthUsd < ATA_RENT_USD) {
               deferred++;
-              log(`  deferred ${p.owner.toBase58()}: token account ${acct ? (acct.isFrozen ? "frozen by the issuer" : "set by its owner to require memos") : `closed, payout ≈ $${worthUsd.toFixed(2)} < rent $${ATA_RENT_USD}`}; forfeits to the treasury after ${new Date((fresh.resolvedAt.toNumber() + FORFEIT_GRACE_SECS) * 1000).toISOString().slice(0, 10)} unless paid before`);
+              log(`  deferred ${p.owner.toBase58()}: token account ${acct ? (acct.isFrozen ? "frozen by the issuer" : "set by its owner to require memos") : worthUsd == null ? "closed, and no price is known to weigh the payout against the rent" : `closed, payout ≈ $${worthUsd.toFixed(2)} < rent $${ATA_RENT_USD}`}; forfeits to the treasury after ${new Date((fresh.resolvedAt.toNumber() + FORFEIT_GRACE_SECS) * 1000).toISOString().slice(0, 10)} unless paid before`);
               continue;
             }
           }

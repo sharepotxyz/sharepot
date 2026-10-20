@@ -26,9 +26,9 @@ export function disproof(row, tx) {
   for (const ev of parser.parseLogs(tx.meta?.logMessages ?? [])) {
     if (ev.name !== "PositionSettled" && ev.name !== "positionSettled") continue;
     const d = ev.data;
-    if (d.market.toBase58() === row.market && d.user.toBase58() === row.owner && d.fee.toString() === String(row.fee)) return null;
+    if (d.market.toBase58() === row.market && d.user.toBase58() === row.owner && d.fee.toString() === String(row.fee) && (row.payout == null || d.payout.toString() === String(row.payout))) return null;
   }
-  return "no PositionSettled event of this program matches the row's market, owner and fee";
+  return "no PositionSettled event of this program matches the row's market, owner, fee and payout";
 }
 
 /**
@@ -38,10 +38,15 @@ export function disproof(row, tx) {
  */
 export async function provenRows(conn, rows, { cacheFile, wanted, log = () => {}, pauseMs = 400 }) {
   let cache = {}; try { cache = JSON.parse(fs.readFileSync(cacheFile, "utf8")); } catch (e) { if (e?.code !== "ENOENT") throw e; }
-  const ok = [], rejected = [], unknown = [];
+  const ok = [], rejected = [], unknown = [], seen = new Set();
   for (const r of rows) {
     if (!wanted(r)) { ok.push(r); continue; }
     if (!r.signature) { rejected.push({ row: r, why: "row has no signature" }); continue; }
+    // One settlement, one row: a second row with the same transaction and owner is a copy. Each copy was proven by the
+    // same transaction and earned its own rebate until 2026-10-20 (audit M1).
+    const once = `${r.signature}:${r.owner}`;
+    if (seen.has(once)) { rejected.push({ row: r, why: "a copy: another row has this signature and owner" }); log(`REJECTED settlement row ${r.signature}: a copy of another row`); continue; }
+    seen.add(once);
     const key = `${r.signature}:${r.owner}:${r.fee}:${r.mint}`;
     if (cache[key] === true) { ok.push(r); continue; }
     if (typeof cache[key] === "string") { rejected.push({ row: r, why: cache[key] }); continue; }

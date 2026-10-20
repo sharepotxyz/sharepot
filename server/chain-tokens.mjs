@@ -26,7 +26,7 @@ export const selectedFor = (reg, date) => Object.entries(reg.tokens).filter(([, 
 export function asStock(mainnetMint, t, cluster) {
   return {
     symbol: t.symbol, name: t.name, category: "memes", kind: "day", thresholdsBps: t.thresholdsBps, icon: t.icon ?? null,
-    tokens: [{ token: t.symbol, issuer: t.issuer ?? "Solana meme", decimals: t.decimals, mainnetMint, mint: cluster === "mainnet" ? mainnetMint : t.mock ?? null, seed: t.seedUi ?? 0, faucetUi: t.faucetUi ?? 0, tokenProgram: t.tokenProgram ?? null }],
+    tokens: [{ token: t.symbol, issuer: t.issuer ?? "Solana meme", decimals: t.decimals, mainnetMint, mint: cluster === "mainnet" ? mainnetMint : t.mock ?? null, seed: t.seedUi ?? 0, faucetUi: t.faucetUi ?? 0, tokenProgram: t.tokenProgram ?? null, pool: t.pool ?? null }],   // pool: the one the EVM sampler quotes (select-chain.mjs), so the verifier's own sampler reads the same pool
   };
 }
 

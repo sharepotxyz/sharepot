@@ -14,9 +14,9 @@ import { keccak256, stringToBytes } from "viem";
 import { closeMove, chainMove, parseMetric, nasdaqMarketInfo, nyToUnix } from "../prices.mjs";
 import { readRegistry } from "../chain-tokens.mjs";
 import { notify } from "../notify.mjs";
-import { guardProcess } from "../retry.mjs";
+import { guardProcess, isTransient } from "../retry.mjs";
 import { CHAIN_KEY, chainCfg, walletFor, pot, allMarkets, readMarket, readConfig, readPosition, send, Status, stockByToken, explorerTx, publicClient, erc20Abi } from "./chain.mjs";
-import { sync, openPositions, evmDir } from "./index-events.mjs";
+import { sync, openPositions, readEvents, evmDir } from "./index-events.mjs";
 
 const OVERDUE_SECS = Number(process.env.OVERDUE_SECS ?? 7200);
 const STALE_VOID_SECS = 86_400;
@@ -44,6 +44,13 @@ for (const [addr, t] of Object.entries(readRegistry(DIR).tokens)) {
 const tokenMeta = (token) => stockByToken(token) ?? memeByToken.get(String(token).toLowerCase()) ?? null;
 const admin = process.env.ADMIN_FINALIZE === "1" && process.env.EVM_ADMIN_KEY_FILE ? walletFor(process.env.EVM_ADMIN_KEY_FILE) : null;
 const p = pot(wallet ?? undefined);
+
+/** The event that closed (id, owner) — PositionSettled or PositionForfeited — once the index has caught up; null if none. */
+async function settledEvent(id, owner) {
+  try { await sync(DATA); } catch {}
+  const w = String(owner).toLowerCase();
+  return readEvents(DATA).filter((r) => (r.event === "PositionSettled" || r.event === "PositionForfeited") && r.id === id && String(r.user).toLowerCase() === w).pop() ?? null;
+}
 
 let lastTraded;
 async function lastTradedDate() {
@@ -170,11 +177,33 @@ async function settle(markets) {
           let res;
           try { res = await send(wallet, "settlePosition", [BigInt(m.id), owner]); }
           catch (e) {
+            // A receipt that never came (timeout, torn RPC answer) is not a refusal: the payout may have landed. The
+            // position is read again — gone means paid — and the row, the only record of this payout for points and
+            // rebates, is written from the chain's event (audit 2026-10-20 L5). Still open: next run retries; nothing
+            // is forfeited over a lost receipt.
+            if (isTransient(e)) {
+              const again = await readPosition(m.id, owner, p).catch(() => null);
+              if (again && !again.open) {
+                const ev = await settledEvent(m.id, owner);
+                fs.appendFileSync(SETTLEMENTS, JSON.stringify({ ...row, kind, payout: payout.toString(), tx: ev?.tx ?? null, note: "receipt lost; row written from the event index" }) + "\n");
+                log(`  settled ${owner} ${kind} payout=${payout} (receipt lost${ev ? `; ${explorerTx(ev.tx)}` : ""})`); continue;
+              }
+              log(`  deferred ${owner}: ${short(e)} (transient; next run retries)`); continue;
+            }
             // the owner cannot receive the token (blocked by the issuer, or a contract that rejects it): forfeit once
             // the program allows it, otherwise wait — a paused token fails here too and just retries next run
             const graceOver = now >= m.resolvedAt + FORFEIT_GRACE_SECS;
             if (!graceOver) { log(`  deferred ${owner}: ${short(e)}; forfeits to the treasury after ${new Date((m.resolvedAt + FORFEIT_GRACE_SECS) * 1000).toISOString().slice(0, 10)} unless payable before`); continue; }
-            const f = await send(wallet, "forfeitPosition", [BigInt(m.id), owner]);
+            let f;
+            try { f = await send(wallet, "forfeitPosition", [BigInt(m.id), owner]); }
+            catch (fe) {
+              if (!isTransient(fe)) throw fe;
+              const again = await readPosition(m.id, owner, p).catch(() => null);
+              if (!(again && !again.open)) { log(`  deferred ${owner}: forfeit ${short(fe)} (transient; next run retries)`); continue; }
+              const ev = await settledEvent(m.id, owner), wasForfeit = ev?.event === "PositionForfeited";
+              fs.appendFileSync(SETTLEMENTS, JSON.stringify({ ...row, kind: wasForfeit ? "forfeited" : kind, payout: wasForfeit ? "0" : payout.toString(), forfeited: wasForfeit ? payout.toString() : undefined, tx: ev?.tx ?? null, note: "receipt lost; row written from the event index" }) + "\n");
+              log(`  ${wasForfeit ? "forfeited" : "settled"} ${owner} (receipt lost${ev ? `; ${explorerTx(ev.tx)}` : ""})`); continue;
+            }
             const forfeited = f.receipt.logs.some((l) => l.topics[0] === FORFEITED_TOPIC);
             fs.appendFileSync(SETTLEMENTS, JSON.stringify({ ...row, kind: forfeited ? "forfeited" : kind, payout: forfeited ? "0" : payout.toString(), forfeited: forfeited ? payout.toString() : undefined, tx: f.hash, note: forfeited ? "owner could not receive the token 30 days after resolution; payout forfeited to the treasury" : "paid via forfeitPosition (owner payable again)" }) + "\n");
             log(`  ${forfeited ? "forfeited" : "settled"} ${owner} amount=${payout} ${explorerTx(f.hash)}`);

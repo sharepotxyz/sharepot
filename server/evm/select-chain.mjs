@@ -7,7 +7,8 @@
 // screener is browser-only), but nearly every pool there quotes WETH or USDG, so GeckoTerminal's pool search for
 // those two words, a few pages each, lists the traded pools; volume is summed per base token across its pools.
 // Filters: not a stock token (Robinhood's own, by name), not a stable / wrapped / bridged asset by symbol, liquidity
-// ≥ MIN_LIQUIDITY_USD in its deepest pool, first pool ≥ MIN_AGE_DAYS old, price below $9,000 (picodollar range).
+// ≥ MIN_LIQUIDITY_USD in its deepest pool that is itself ≥ MIN_AGE_DAYS old (that pool is the one sampled), first pool
+// ≥ MIN_AGE_DAYS old, price below $9,000 (picodollar range).
 // Ranges: down / flat / up, cut at ± the median absolute daily move over the deepest pool's last 60 daily bars
 // (GeckoTerminal OHLCV; pools without history — Uniswap v4 ids — fall back to ±8 %), rounded to 0.5 %, [1 %, 25 %].
 import fs from "node:fs";
@@ -57,7 +58,11 @@ for (const q of ["WETH", "USDG"]) {
       const vol = Number(a.volume_usd?.h24 ?? 0), liq = Number(a.reserve_in_usd ?? 0), created = a.pool_created_at ? Date.parse(a.pool_created_at) / 1000 : null;
       const t = byToken.get(base) ?? { symbol: String(baseName ?? "").trim(), quote: String(quoteName ?? "").replace(/\s.*$/, ""), vol: 0, liq: 0, pool: null, poolLiq: -1, created: null, price: null };
       t.vol += vol;
-      if (liq > t.poolLiq) { t.poolLiq = liq; t.liq = liq; t.pool = p.id; t.price = Number(a.base_token_price_usd ?? 0) || t.price; }
+      // The pool recorded here is the one the sampler reads all day (sample-prices.mjs): the deepest one that is itself
+      // old enough to have a history. A pool stood up yesterday with a mountain of one-sided liquidity must not become
+      // the price source (audit 2026-10-20 H1).
+      const poolAgeDays = created ? (now - created) / 86400 : null;
+      if (liq > t.poolLiq && poolAgeDays != null && poolAgeDays >= MIN_AGE_DAYS) { t.poolLiq = liq; t.liq = liq; t.pool = p.id; t.price = Number(a.base_token_price_usd ?? 0) || t.price; }
       if (created && (t.created == null || created < t.created)) t.created = created;
       byToken.set(base, t);
     }

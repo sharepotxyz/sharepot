@@ -9,9 +9,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { parseUnits } from "viem";
 import { sessions, nyDate, addDays, nextSessionLive, utcDate, utcMidnight, chainClose } from "../prices.mjs";
-import { withRetry, guardProcess } from "../retry.mjs";
+import { withRetry, guardProcess, isTransient, firstLine } from "../retry.mjs";
 import { readRegistry, writeRegistry, selectedFor } from "../chain-tokens.mjs";
-import { CHAIN_KEY, chainCfg, walletFor, pot, potAddress, allMarkets, ensureAllowance, send, metricToBytes32, questionHash, Status, publicClient, erc20Abi, explorerTx } from "./chain.mjs";
+import { CHAIN_KEY, chainCfg, walletFor, pot, potAddress, allMarkets, readMarket, ensureAllowance, send, metricToBytes32, questionHash, Status, publicClient, erc20Abi, explorerTx } from "./chain.mjs";
 import { evmDir } from "./index-events.mjs";
 
 const DATA = process.env.DATA_DIR ?? path.join(process.cwd(), "data");
@@ -42,6 +42,18 @@ try {
 log(`${CHAIN_KEY}: next session ${S.date} opens ${iso(S.open)}; betting window ${iso(prev.open)} → ${iso(S.open)}; resolves after ${iso(S.close + tpl.resolveDelaySecs)}`);
 
 const existing = new Map((await allMarkets(p)).map((m) => [`${m.metric}|${m.token.toLowerCase()}`, m]));
+// A write whose receipt never came may still have landed; sent again, createMarket would open the market a second time
+// and seedMarket double the prize (audit 2026-10-20 L4). So a send that failed for a transient reason is tried again
+// only after the chain was asked whether the first one did its job: `done()` answers with the on-chain result when it did.
+async function sendOnce(label, doSend, done) {
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try { return await doSend(); } catch (e) { lastErr = e; if (!isTransient(e)) throw e; log(`${label}: ${firstLine(e)} — asking the chain before trying again`); }
+    for (let i = 0; i < 3; i++) { await sleep(10_000); const found = await done().catch(() => null); if (found) { log(`${label}: already on-chain`); return { hash: null, receipt: null, found }; } }
+  }
+  throw lastErr;
+}
+const findMarket = (metric, token) => async () => (await allMarkets(p)).find((x) => x.metric === metric && x.token.toLowerCase() === String(token).toLowerCase()) ?? null;
 // House prize per market: only on a test network (see server/open-markets.mjs for why mainnet has none).
 const SEED_ON = process.env.SEED_MARKETS === "1";   // no house prize unless asked for (see server/open-markets.mjs)
 const seedRaw = (s) => (SEED_ON && s.seed ? parseUnits(String(s.seed), s.decimals) : 0n);
@@ -49,8 +61,8 @@ async function seed(id, s, amount) {
   const have = await publicClient.readContract({ address: s.token, abi: erc20Abi, functionName: "balanceOf", args: [wallet.account.address] });
   if (have < amount) { log(`  no prize for #${id}: proposer holds ${have} raw ${s.symbol} < ${amount} (faucet: ${chainCfg.faucet ?? "-"})`); return false; }
   await ensureAllowance(wallet, s.token, potAddress(), amount);
-  const { hash } = await withRetry(() => send(wallet, "seedMarket", [BigInt(id), amount]));
-  log(`  seeded #${id} with ${s.seed} ${s.symbol} ${explorerTx(hash)}`);
+  const r = await sendOnce(`seedMarket #${id}`, () => send(wallet, "seedMarket", [BigInt(id), amount]), async () => ((await readMarket(id, p)).seedAmount !== "0" ? { id } : null));
+  log(`  seeded #${id} with ${s.seed} ${s.symbol} ${r.hash ? explorerTx(r.hash) : "(receipt lost; the prize is on-chain)"}`);
   return true;
 }
 
@@ -72,9 +84,9 @@ for (const s of chainCfg.stocks) {
       openTs: BigInt(prev.open), closeTs: BigInt(S.open), resolveAfterTs: BigInt(S.close + tpl.resolveDelaySecs), baseline: 0n };
     log(`${DRY ? "would open" : "opening"} ${metric} in ${s.symbol} thresholds ${s.thresholdsBps.join("/")} bps, seed ${SEED_ON ? s.seed ?? 0 : 0}`);
     if (DRY) { opened.push(metric); continue; }
-    const { hash, receipt } = await withRetry(() => send(wallet, "createMarket", [args]));
-    const id = Number(await p.read.marketCount()) - 1;
-    fs.appendFileSync(path.join(DATA, "evm", CHAIN_KEY, "markets-opened.jsonl"), JSON.stringify({ at: new Date().toISOString(), id, metric, symbol: s.symbol, token: s.token, issuer: s.issuer, session: S.date, question, thresholdsBps: s.thresholdsBps, openTs: prev.open, closeTs: S.open, resolveAfterTs: S.close + tpl.resolveDelaySecs, seed: SEED_ON ? s.seed ?? 0 : 0, tx: hash, block: Number(receipt.blockNumber) }) + "\n");
+    const r = await sendOnce(`createMarket ${metric}`, () => send(wallet, "createMarket", [args]), findMarket(metric, s.token));
+    const id = r.found ? r.found.id : Number(await p.read.marketCount()) - 1;
+    fs.appendFileSync(path.join(DATA, "evm", CHAIN_KEY, "markets-opened.jsonl"), JSON.stringify({ at: new Date().toISOString(), id, metric, symbol: s.symbol, token: s.token, issuer: s.issuer, session: S.date, question, thresholdsBps: s.thresholdsBps, openTs: prev.open, closeTs: S.open, resolveAfterTs: S.close + tpl.resolveDelaySecs, seed: SEED_ON ? s.seed ?? 0 : 0, tx: r.hash, block: r.receipt ? Number(r.receipt.blockNumber) : null }) + "\n");
     opened.push(`#${id} ${metric}`);
     if (amount > 0n && (await seed(id, s, amount))) seeded.push(`#${id} ${s.symbol}`);
   } catch (e) { skipped.push(`${metric}: failed: ${String(e?.shortMessage ?? e?.message ?? e).split("\n")[0].slice(0, 200)}`); }
@@ -118,9 +130,9 @@ for (const x of skipped) log("skipped", x);
         const prevClose = chainClose(DIR, t.mainnetMint, addDays(D, -1));
         log(`${DRY ? "would open" : "opening"} ${metric} in ${t.symbol} thresholds ${t.thresholdsBps.join("/")} bps, previous close ${prevClose.ok ? `$${prevClose.close}` : "not known yet"}`);
         if (DRY) { copened.push(metric); continue; }
-        const { hash, receipt } = await withRetry(() => send(wallet, "createMarket", [args]));
-        const id = Number(await p.read.marketCount()) - 1;
-        fs.appendFileSync(path.join(DATA, "evm", CHAIN_KEY, "markets-opened.jsonl"), JSON.stringify({ at: new Date().toISOString(), id, metric, symbol: t.symbol, category: "memes", token, mainnetToken: t.mainnetMint, issuer: t.issuer, day: D, question, thresholdsBps: t.thresholdsBps, openTs, closeTs: lock, resolveAfterTs: utcMidnight(D) + 86400 + 300, seed: 0, tx: hash, block: Number(receipt.blockNumber) }) + "\n");
+        const r = await sendOnce(`createMarket ${metric}`, () => send(wallet, "createMarket", [args]), findMarket(metric, token));
+        const id = r.found ? r.found.id : Number(await p.read.marketCount()) - 1;
+        fs.appendFileSync(path.join(DATA, "evm", CHAIN_KEY, "markets-opened.jsonl"), JSON.stringify({ at: new Date().toISOString(), id, metric, symbol: t.symbol, category: "memes", token, mainnetToken: t.mainnetMint, issuer: t.issuer, day: D, question, thresholdsBps: t.thresholdsBps, openTs, closeTs: lock, resolveAfterTs: utcMidnight(D) + 86400 + 300, seed: 0, tx: r.hash, block: r.receipt ? Number(r.receipt.blockNumber) : null }) + "\n");
         copened.push(`#${id} ${metric}`);
       } catch (e) { cskipped.push(`${metric}: failed: ${String(e?.shortMessage ?? e?.message ?? e).split("\n")[0].slice(0, 200)}`); }
     }

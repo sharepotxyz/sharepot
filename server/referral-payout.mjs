@@ -15,6 +15,7 @@ import * as referrals from "./referrals.mjs";
 import { notify } from "./notify.mjs";
 import { sendSigned, signatureStatus } from "./tx.mjs";
 import { provenRows } from "./settlement-proof.mjs";
+import { xstockPrices } from "./prices.mjs";
 
 const CLUSTER = process.env.CLUSTER ?? "devnet";
 const RPC = process.env.CLUSTER_RPC ?? "https://api.devnet.solana.com";
@@ -68,6 +69,22 @@ if (proof.unknown.length) log(`held back: ${proof.unknown.length} settlement row
 if (proof.rejected.length && !DRY) await notify("⛔ 推廣回饋:結算列對不上鏈上", `${CLUSTER}: ${proof.rejected.length} 筆結算列在鏈上找不到對應的派彩事件,已排除不付。\n${proof.rejected.slice(0, 5).map((x) => `${x.row.owner?.slice(0, 6)}… #${x.row.id}: ${x.why}`).join("\n")}\n若不是 RPC 問題,代表網站主機上的 settlements.jsonl 被改過。`, "referral-proof", 60);
 const pts = new Map(leaderboard(rows, { decimals: () => null, close: () => null }).entries.map((e) => [e.wallet, e.points]));
 const due = referrals.pending(referrals.earnings(rows, db, (w) => pts.get(w) ?? 0), payouts);
+// The dollar value the minimum, the account-opening threshold and the run cap are weighed against comes from this
+// host's own quote (Jupiter), not from the `close` the app host wrote into the row: a row with its price written down
+// slipped under the $2,000 cap (audit 2026-10-20 M1). Devnet rows name mock mints Jupiter does not quote; there the
+// row's value stands in. On mainnet a token Jupiter cannot quote waits (the "no dollar value" rule below).
+async function repriceWithOwnQuotes(list) {
+  const mints = [...new Set(list.map((d) => d.mint))], quotes = {};
+  for (let i = 0; i < mints.length; i += 50) { try { Object.assign(quotes, await xstockPrices(mints.slice(i, i + 50))); } catch (e) { log(`own quotes unavailable: ${String(e?.message ?? e).slice(0, 100)}`); } }
+  for (const d of list) {
+    const q = quotes[d.mint]; if (!q || d.decimals == null) { if (CLUSTER === "mainnet") d.usd = null; continue; }
+    // the larger of the two readings of the token's worth (scaled shares at the stock's price, or tokens at the token's
+    // price): a cap is weighed against the larger, a minimum errs toward paying
+    const units = Number(d.raw) / 10 ** d.decimals;
+    d.usd = Math.max(units * (q.multiplier || d.multiplier || 1) * (q.stock ?? q.usd), units * q.usd);
+  }
+}
+await repriceWithOwnQuotes(due);
 log(`cluster=${CLUSTER} payer=${payer.publicKey.toBase58()} pending=${due.length}${DRY ? " DRY RUN" : ""}`);
 
 // 3. pay

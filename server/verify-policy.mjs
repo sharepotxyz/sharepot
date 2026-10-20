@@ -22,7 +22,13 @@ export function comparisonAction({ proposedBucket, independentBucket, distToBoun
 
 export const REPORT_AFTER_SECS = 3600;   // an hour into the window
 export const VOID_MARGIN_SECS = 2700;    // 45 min before it closes: the job runs every 10 min and a run can take several
+// A short dispute window (the EVM deployment's is one hour) keeps the same shape at its own scale: the void margin is
+// at most a quarter of the window and the report point at most half of it. With the constants alone a one-hour window
+// would have voided an unverified proposal 15 minutes after it was made, before a second look (2026-10-20).
+export const voidMarginFor = (windowSecs) => Math.min(VOID_MARGIN_SECS, Math.floor(windowSecs / 4));
+export const reportAfterFor = (windowSecs) => Math.min(REPORT_AFTER_SECS, Math.floor(windowSecs / 2));
 export function unverifiedAction({ now, proposedAt, windowEnd, voidUnverified }) {
-  if (voidUnverified && windowEnd - now <= VOID_MARGIN_SECS) return "void";
-  return now - proposedAt > REPORT_AFTER_SECS ? "report" : "wait";
+  const windowSecs = windowEnd - proposedAt;
+  if (voidUnverified && windowEnd - now <= voidMarginFor(windowSecs)) return "void";
+  return now - proposedAt > reportAfterFor(windowSecs) ? "report" : "wait";
 }

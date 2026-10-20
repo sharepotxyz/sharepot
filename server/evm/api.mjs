@@ -203,6 +203,13 @@ function applyOverlay(html, lang) {
 }
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".ico": "image/x-icon", ".json": "application/json", ".map": "application/json", ".mp4": "video/mp4", ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8" };
 const htmlCache = new Map(), renderCache = new Map(), RENDER_TTL_MS = 5000, RENDER_CACHE_MAX = 100;
+// the pre-render cache is keyed by the parameters ssr.mjs reads, not the whole query string (audit 2026-10-20 M3; as server/api.mjs)
+function ssrKey(rel, url) {
+  const q = url.searchParams;
+  if (rel === "/market.html") return ["id", "e", "t"].map((k) => `${k}=${q.get(k) ?? ""}`).join("&");
+  if (["issuer", "status", "sort", "q"].some((k) => q.get(k))) return "filtered";
+  return ["stock", "cat"].map((k) => `${k}=${q.get(k) ?? ""}`).join("&");
+}
 function pageHtml(file) {
   const mtime = fs.statSync(file).mtimeMs, hit = htmlCache.get(file);
   if (hit && hit.mtime === mtime) return hit.html;
@@ -223,7 +230,7 @@ function serveStatic(res, url, req) {
     const { lang, fromQuery } = resolveLang(req, url);
     res.writeHead(200, { "content-type": TYPES[".html"], "cache-control": "no-cache", "vary": "accept-language, cookie", "content-language": lang, "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY",
       ...(fromQuery ? { "set-cookie": `sp_lang=${lang}; Path=/; Max-Age=31536000; SameSite=Lax` } : {}) });
-    const key = lang + "|" + rel + url.search, hit = renderCache.get(key);
+    const key = lang + "|" + rel + "|" + ssrKey(rel, url), hit = renderCache.get(key);
     if (hit && Date.now() - hit.at < RENDER_TTL_MS) return res.end(hit.html);
     let html = pageHtml(file).replace("</head>", () => bootScript() + "</head>");
     const data = { markets: chainCache.markets, config: chainCache.config, stocks, prices: priceCache.at ? priceCache.prices : null };
@@ -260,24 +267,28 @@ const SITE_URL = process.env.SITE_URL ?? "https://robinhood.sharepot.xyz";
 // addresses could otherwise spend it at will; reads and writes have separate per-minute pools (as server/api.mjs), so
 // they cannot stop real bindings either.
 const LOOKUP_IP_DAILY = Number(process.env.LOOKUP_IP_DAILY ?? 200), LOOKUP_PER_MINUTE = Number(process.env.LOOKUP_PER_MINUTE ?? 30);
-let lookupDay = "", seenLookup = new Map(), lookupMinute = { at: 0, get: 0, post: 0 };
+// reads, code requests (unsigned) and bindings (signed) each have a pool: an unsigned code request used to share the
+// bindings' pool and could hold real bindings at 429 (audit 2026-10-20 L3, as server/api.mjs)
+const LOOKUP_POOLS = ["get", "code", "bind"];
+let lookupDay = "", seenLookup = new Map(), lookupMinute = { at: 0, get: 0, code: 0, bind: 0 };
 function chargeLookup(ip, pool = "get") {
+  if (!LOOKUP_POOLS.includes(pool)) throw new Error(`unknown lookup pool ${pool}`);
   const d = new Date().toISOString().slice(0, 10); if (d !== lookupDay) { lookupDay = d; seenLookup = new Map(); }
-  const minute = Math.floor(Date.now() / 60_000); if (lookupMinute.at !== minute) lookupMinute = { at: minute, get: 0, post: 0 };
+  const minute = Math.floor(Date.now() / 60_000); if (lookupMinute.at !== minute) lookupMinute = { at: minute, get: 0, code: 0, bind: 0 };
   if (lookupMinute[pool] >= LOOKUP_PER_MINUTE || (seenLookup.get(ip) ?? 0) >= LOOKUP_IP_DAILY) throw Object.assign(new Error("too many wallet lookups; try again later"), { status: 429 });
   lookupMinute[pool]++; seenLookup.set(ip, (seenLookup.get(ip) ?? 0) + 1);
 }
 /** Open positions come from the event index (no RPC), settled ones from this chain's settlement log. `fresh` first
  *  indexes the newest blocks, for the moment right after a first bet (the page binds then). */
-async function betHistory(wallet, fresh = false, ip = "?") {
-  if (fresh) { chargeLookup(ip, "post"); try { await sync(DATA); } catch {} }
+async function betHistory(wallet, pool = null, ip = "?") {
+  if (pool) { chargeLookup(ip, pool); try { await sync(DATA); } catch {} }
   const w = wallet.toLowerCase(); let open = 0;
   for (const set of openPositions(DATA).values()) if (set.has(w)) open++;
   return { open, settled: (rowsCached(SETTLEMENTS, true).byOwner.get(w) ?? []).length };
 }
 const referralPoints = () => new Map(leaderboardCached("all", 0).entries.map((e) => [e.wallet, e.points]));
 function referralView(wallet) {
-  const db = referrals.load(REFERRALS_FILE), rows = readRows(SETTLEMENTS), pts = referralPoints();
+  const db = referrals.load(REFERRALS_FILE), rows = rowsCached(SETTLEMENTS).rows, pts = referralPoints();   // the cached rows: re-read only when the log grows (audit 2026-10-20 M3)
   const earn = referrals.earnings(rows, db, (w) => pts.get(w) ?? 0), payouts = referrals.effectivePayouts(referrals.readPayouts(REFERRAL_PAYOUTS));
   const e = earn.byWallet.get(wallet), own = db.wallets[wallet], b = db.bindings[wallet] ?? null, points = pts.get(wallet) ?? 0;
   const ui = (raw, m) => (m.decimals == null ? null : (Number(raw) / 10 ** m.decimals) * (m.multiplier || 1));
@@ -373,7 +384,7 @@ const server = http.createServer(async (req, res) => {
       if (!isAddr(b.wallet)) return json(res, 400, { error: "wallet required" });
       const wallet = String(b.wallet).toLowerCase(), db = referrals.load(REFERRALS_FILE);
       if (!db.wallets[wallet]) {
-        const h = await betHistory(wallet, true, clientIp(req));
+        const h = await betHistory(wallet, "code", clientIp(req));
         if (h.open + h.settled === 0) return json(res, 403, { error: "place a bet first — the link unlocks with your first stake" });
         // re-read after the await: another request may have saved meanwhile, and load → save must not span an await
         const cur = referrals.load(REFERRALS_FILE);
@@ -397,7 +408,7 @@ const server = http.createServer(async (req, res) => {
       const db = referrals.load(REFERRALS_FILE);
       if (db.bindings[wallet]) return json(res, db.bindings[wallet].code === code ? 200 : 409, db.bindings[wallet].code === code ? { ok: true, already: true } : { error: "this wallet is already bound to another code", permanent: true });
       if (!referrals.referrerOf(db, code)) return json(res, 404, { error: "unknown referral code", permanent: true });
-      const h = await betHistory(wallet, true, clientIp(req));
+      const h = await betHistory(wallet, "bind", clientIp(req));
       if (h.open === 0 && h.settled === 0) return json(res, 409, { error: "place your first bet, then the link binds" });
       if (h.settled > 0) return json(res, 409, { error: "a referral link only counts on a wallet's first bet", permanent: true });
       // re-read after the await (see /referral/code): load → bind → save runs without yielding

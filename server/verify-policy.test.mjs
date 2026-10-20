@@ -22,4 +22,20 @@ test("window about to close: void", () => {
   assert.equal(unverifiedAction({ now: end + 60, proposedAt: P, windowEnd: end, voidUnverified: true }), "void");
 });
 test("switched off (devnet): never voids for lack of a source", () => assert.equal(unverifiedAction({ now: end - 60, proposedAt: P, windowEnd: end, voidUnverified: false }), "report"));
-test("a window shorter than the margin voids at once rather than never", () => assert.equal(unverifiedAction({ now: P + 1, proposedAt: P, windowEnd: P + 1800, voidUnverified: true }), "void"));
+test("a window shorter than the margin still voids before it closes (its last quarter), never slips through", () => {
+  assert.equal(unverifiedAction({ now: P + 1, proposedAt: P, windowEnd: P + 1800, voidUnverified: true }), "wait");
+  assert.equal(unverifiedAction({ now: P + 1800 - 450, proposedAt: P, windowEnd: P + 1800, voidUnverified: true }), "void");
+  assert.equal(unverifiedAction({ now: P + 1799, proposedAt: P, windowEnd: P + 1800, voidUnverified: true }), "void");
+});
+
+import { unverifiedAction as unverified2, voidMarginFor, reportAfterFor } from "./verify-policy.mjs";
+test("a one-hour window (the EVM deployment) voids an unverified proposal in its last quarter and reports at its half; the six-hour window keeps 45 min and 1 h", () => {
+  assert.equal(voidMarginFor(3600), 900); assert.equal(reportAfterFor(3600), 1800);
+  assert.equal(voidMarginFor(21600), 2700); assert.equal(reportAfterFor(21600), 3600);
+  const at = 1_800_000_000, end = at + 3600;
+  assert.equal(unverified2({ now: at + 600, proposedAt: at, windowEnd: end, voidUnverified: true }), "wait");
+  assert.equal(unverified2({ now: at + 1500, proposedAt: at, windowEnd: end, voidUnverified: true }), "wait", "15 min in: with the six-hour constants this was already a void");
+  assert.equal(unverified2({ now: at + 2000, proposedAt: at, windowEnd: end, voidUnverified: true }), "report");
+  assert.equal(unverified2({ now: at + 2700, proposedAt: at, windowEnd: end, voidUnverified: true }), "void");
+  assert.equal(unverified2({ now: at + 2700, proposedAt: at, windowEnd: end, voidUnverified: false }), "report");
+});

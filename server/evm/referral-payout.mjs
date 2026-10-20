@@ -54,6 +54,35 @@ if (proof.unknown.length) log(`held back: ${proof.unknown.length} settlement row
 if (proof.rejected.length && !DRY) await notify("⛔ 推廣回饋(Robinhood):結算列對不上鏈上", `${CHAIN_KEY}: ${proof.rejected.length} 筆結算列在鏈上找不到對應的派彩事件,已排除不付。\n${proof.rejected.slice(0, 5).map((x) => `${x.row.tx?.slice(0, 12)}… ${x.why}`).join("\n")}`, "evm-payout-rejected", 1440);
 const pts = new Map(leaderboard(rows, { decimals: () => null, close: () => null }).entries.map((e) => [e.wallet, e.points]));
 const due = referrals.pending(referrals.earnings(rows, db, (w) => pts.get(w) ?? 0), payouts);
+// Dollar values for the minimum and the run cap come from this host's own quotes, not the row's `close` (audit
+// 2026-10-20 M1): a stock token at the stock's last trade (Yahoo), a meme at DexScreener's highest quote of its mainnet
+// token (the site's listing maps a testnet mock to it). On the live chain a token without a quote waits; on the test
+// network the row's value stands in.
+const API = process.env.API ?? "https://robinhood.sharepot.xyz";
+async function repriceWithOwnQuotes(list) {
+  let listing = []; try { listing = (await (await fetch(`${API}/api/stocks`, { signal: AbortSignal.timeout(15_000) })).json()).stocks ?? []; } catch (e) { log(`own quotes: site listing unavailable: ${String(e?.message ?? e).slice(0, 80)}`); }
+  const byMint = new Map(listing.flatMap((st) => st.tokens.map((t) => [String(t.mint ?? "").toLowerCase(), { ...t, kind: st.kind, symbol: st.symbol }])));
+  const memeQuote = new Map();   // mainnet token (lowercase) → highest usd quote across its pairs
+  const memes = [...new Set(list.map((d) => byMint.get(String(d.mint).toLowerCase())).filter((t) => t?.kind === "day" && t.mainnetMint).map((t) => String(t.mainnetMint).toLowerCase()))];
+  for (let i = 0; i < memes.length; i += 30) {
+    try {
+      const pairs = await (await fetch(`https://api.dexscreener.com/tokens/v1/robinhood/${memes.slice(i, i + 30).join(",")}`, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(15_000) })).json();
+      for (const pr of pairs) { const a = String(pr?.baseToken?.address ?? "").toLowerCase(), px = Number(pr?.priceUsd); if (memes.includes(a) && px > 0 && !(memeQuote.get(a) >= px)) memeQuote.set(a, px); }
+    } catch (e) { log(`own quotes: dexscreener: ${String(e?.message ?? e).slice(0, 80)}`); }
+  }
+  const stockQuote = new Map();
+  for (const d of list) {
+    const t = byMint.get(String(d.mint).toLowerCase()); let px = null;
+    if (t?.kind === "day") px = memeQuote.get(String(t.mainnetMint).toLowerCase()) ?? null;
+    else if (t?.kind === "close") {
+      if (!stockQuote.has(t.symbol)) { let v = null; try { const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${t.symbol}?range=1d&interval=1d`, { headers: { "user-agent": "Mozilla/5.0 (SharePot)" }, signal: AbortSignal.timeout(8000) }); const n = Number((await r.json())?.chart?.result?.[0]?.meta?.regularMarketPrice); if (n > 0) v = n; } catch {} stockQuote.set(t.symbol, v); }
+      px = stockQuote.get(t.symbol);
+    }
+    const own = px != null && d.decimals != null ? (Number(d.raw) / 10 ** d.decimals) * (d.multiplier || 1) * px : null;
+    if (!chainCfg.test) d.usd = own; else if (own != null) d.usd = own;
+  }
+}
+await repriceWithOwnQuotes(due);
 log(`chain=${CHAIN_KEY} payer=${payer.account.address} pending=${due.length}${DRY ? " DRY RUN" : ""}`);
 
 // 3. pay
