@@ -67,3 +67,15 @@ test("no second quote at all: Jupiter settles alone", () => {
   const ev = chainMove(ticks(1.00, null, 1.10, null), MINT, "X", CDAY, CNOW, [-30000, 30000]);
   assert.equal(ev.ok, true); assert.equal(ev.detail.crossCheck.agreed, null);
 });
+
+// 2026-10-19: the Tokyo host rebooted at 12:59 UTC while the sampler was writing a line; the half line sat ten hours
+// before the closing hour, and the reader gave up on the whole file, so 13 markets were voided over 60 good quotes
+// (and the next day's baseline could not be read either). A line that does not parse is skipped, never the day.
+test("a line cut short by a crash does not cost the day: the good closing-hour samples still count", () => {
+  const dir = ticks(1.00, 1.00, 1.10, 1.10);
+  const half = JSON.stringify({ t: utcMidnight(CDAY) + 13 * 3600, p: { [MINT]: 1.05 }, p2: { [MINT]: 1.05 } }).slice(0, 40);
+  fs.writeFileSync(`${dir}/ticks/${CDAY}.jsonl`, half + "\n" + fs.readFileSync(`${dir}/ticks/${CDAY}.jsonl`, "utf8"));
+  fs.appendFileSync(`${dir}/ticks/${CPREV}.jsonl`, "null\n{\"t\":\n");
+  const ev = chainMove(dir, MINT, "X", CDAY, CNOW, [-30000, 30000]);
+  assert.equal(ev.ok, true); assert.equal(ev.value, 100000); assert.equal(ev.detail.samples, 60); assert.equal(ev.detail.prevSamples, 60);
+});

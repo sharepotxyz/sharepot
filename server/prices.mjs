@@ -260,9 +260,19 @@ export const utcMidnight = (date) => Math.floor(Date.parse(date + "T00:00:00Z") 
 export function closingSamples(dataDir, mint, date, key = "p") {
   const f = `${dataDir}/ticks/${date}.jsonl`;
   const start = utcMidnight(date) + 23 * 3600, end = utcMidnight(date) + 24 * 3600;
-  const lines = [];
-  try { for (const l of fs.readFileSync(f, "utf8").split("\n")) { if (!l) continue; const r = JSON.parse(l); if (r.t >= start && r.t < end && typeof r[key]?.[mint] === "number" && r[key][mint] > 0) lines.push(l); } } catch {}
-  return { samples: lines.map((l) => { const r = JSON.parse(l); return { t: r.t, usd: r[key][mint] }; }), raw: lines.join("\n") + (lines.length ? "\n" : ""), file: f };
+  const lines = []; let skipped = 0;
+  let text = ""; try { text = fs.readFileSync(f, "utf8"); } catch { /* no file for that day: no samples */ }
+  // A line that does not parse is skipped and counted, never the day. One read used to cover the whole file, so a
+  // single cut-short line ended it with zero samples: on 2026-10-19 the Tokyo host rebooted at 12:59 UTC while the
+  // sampler was mid-line, and the verifier voided 13 markets over that half line although 60 good closing-hour quotes
+  // sat below it (and could not read the baseline of the next day's markets either).
+  for (const l of text.split("\n")) {
+    if (!l) continue;
+    let r; try { r = JSON.parse(l); } catch { skipped++; continue; }
+    if (!r || typeof r !== "object") { skipped++; continue; }
+    if (r.t >= start && r.t < end && typeof r[key]?.[mint] === "number" && r[key][mint] > 0) lines.push(l);
+  }
+  return { samples: lines.map((l) => { const r = JSON.parse(l); return { t: r.t, usd: r[key][mint] }; }), raw: lines.join("\n") + (lines.length ? "\n" : ""), file: f, skipped };
 }
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); const n = s.length; return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2; };
 /** Close of `mint` for UTC day `date`: median of its closing-hour samples, in USD; null until enough samples exist. */
