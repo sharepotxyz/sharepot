@@ -255,46 +255,53 @@ export const MIN_CLOSE_SAMPLES = Number(process.env.MIN_CLOSE_SAMPLES ?? 40);
 export const utcDate = (ts) => new Date(ts * 1000).toISOString().slice(0, 10);
 export const utcMidnight = (date) => Math.floor(Date.parse(date + "T00:00:00Z") / 1000);
 
-// One day's tick file, parsed once per process and file version: one line per minute, the first line written for a
-// minute wins. Lines that do not parse are counted, never the day: on 2026-10-19 the host went down after the 12:59 UTC
-// sample was written but before it reached the disk; the cut-short line on disk ended the one-try read of the whole
-// file with zero samples for every token, and the verifier voided 13 markets over 60 good closing-hour quotes (and
-// could not read the baseline of the next day's markets either). A second line in the same minute (a replayed cron, a
-// run by hand) is dropped and counted too: the closing rule is one quote per minute, and 40 lines must mean 40 minutes,
-// not one minute pasted 40 times (review 2026-10-21).
-const dayCache = new Map();   // file → { version, rows, skipped, duplicates }; a few days at most
+// One day's tick file, parsed once per process and file version. Lines that do not parse are counted, never the day:
+// on 2026-10-19 the host went down right after the 12:59 UTC sample was written (the cron run had finished; the line
+// on disk is cut short, most likely lost on its way to the disk), and the one-try read of the whole file ended with
+// zero samples for every token: the verifier voided 13 markets over 60 good closing-hour quotes, and could not read
+// the baseline of the next day's markets either.
+const dayCache = new Map();   // file → { version, rows, skipped }; a few days at most
 export function dayLines(dataDir, date) {
   const file = `${dataDir}/ticks/${date}.jsonl`;
-  let st; try { st = fs.statSync(file); } catch { return { file, rows: [], skipped: 0, duplicates: 0 }; }
+  let st; try { st = fs.statSync(file); } catch { return { file, rows: [], skipped: 0 }; }
   const version = `${st.mtimeMs}:${st.size}`, hit = dayCache.get(file);
-  if (hit && hit.version === version) return { file, rows: hit.rows, skipped: hit.skipped, duplicates: hit.duplicates };
-  const rows = [], seen = new Set(); let skipped = 0, duplicates = 0;
+  if (hit && hit.version === version) return { file, rows: hit.rows, skipped: hit.skipped };
+  const rows = []; let skipped = 0;
   for (const line of fs.readFileSync(file, "utf8").split("\n")) {
     if (!line) continue;
     let r; try { r = JSON.parse(line); } catch { skipped++; continue; }
     if (!r || typeof r !== "object" || typeof r.t !== "number") { skipped++; continue; }
-    const minute = Math.floor(r.t / 60);
-    if (seen.has(minute)) { duplicates++; continue; }
-    seen.add(minute); rows.push({ t: r.t, line, r });
+    rows.push({ t: r.t, line, r });
   }
   rows.sort((a, b) => a.t - b.t);
   if (dayCache.size >= 8) dayCache.delete(dayCache.keys().next().value);
-  dayCache.set(file, { version, rows, skipped, duplicates });
-  return { file, rows, skipped, duplicates };
+  dayCache.set(file, { version, rows, skipped });
+  return { file, rows, skipped };
 }
 const inClosingHour = (date) => { const start = utcMidnight(date) + 23 * 3600, end = start + 3600; return (x) => x.t >= start && x.t < end; };
 const quoted = (r, key, mint) => typeof r[key]?.[mint] === "number" && r[key][mint] > 0;
+// One quote per minute, source and token: among the lines that carry a quote of `mint` from `key`, the earliest line of
+// each minute counts and the rest are dropped and counted. 40 samples are 40 minutes, a replayed cron or a run by hand
+// cannot add a sample or move the median (review 2026-10-21, #7), and a minute whose first line had no quote (the
+// source failed) is still filled by a later run that got one (review 2026-10-21b, #5).
+function perMinute(rows, pred) {
+  const out = [], seen = new Set(); let duplicates = 0;
+  for (const x of rows) { if (!pred(x)) continue; const m = Math.floor(x.t / 60); if (seen.has(m)) { duplicates++; continue; } seen.add(m); out.push(x); }
+  return { out, duplicates };
+}
 /** The sampled quotes of `mint` in the closing hour of UTC day `date`, oldest first, plus the exact bytes they came from.
  *  `key` picks the source inside each line: "p" = Jupiter (primary), "p2" = DexScreener (second source). */
 export function closingSamples(dataDir, mint, date, key = "p") {
-  const { file, rows, skipped, duplicates } = dayLines(dataDir, date);
-  const hit = rows.filter(inClosingHour(date)).filter((x) => quoted(x.r, key, mint));
-  return { samples: hit.map((x) => ({ t: x.t, usd: x.r[key][mint] })), raw: hit.map((x) => x.line + "\n").join(""), file, skipped, duplicates };
+  const { file, rows, skipped } = dayLines(dataDir, date);
+  const { out, duplicates } = perMinute(rows.filter(inClosingHour(date)), (x) => quoted(x.r, key, mint));
+  return { samples: out.map((x) => ({ t: x.t, usd: x.r[key][mint] })), raw: out.map((x) => x.line + "\n").join(""), file, skipped, duplicates };
 }
-/** The closing-hour lines of `date` that quote `mint` from any of `keys`: what a move is published with, so every number
- *  in it (the second source's included) can be recomputed from the evidence alone (review 2026-10-21). */
+/** The closing-hour lines of `date` that a close of `mint` was taken from, for any of `keys`: what a move is published
+ *  with, so every number in it (the second source's included) can be recomputed from the evidence alone (review 2026-10-21). */
 export function closingEvidence(dataDir, mint, date, keys = ["p", "p2"]) {
-  return dayLines(dataDir, date).rows.filter(inClosingHour(date)).filter((x) => keys.some((k) => quoted(x.r, k, mint))).map((x) => x.line + "\n").join("");
+  const hour = dayLines(dataDir, date).rows.filter(inClosingHour(date)), used = new Set();
+  for (const k of keys) for (const x of perMinute(hour, (x) => quoted(x.r, k, mint)).out) used.add(x);
+  return [...used].sort((a, b) => a.t - b.t).map((x) => x.line + "\n").join("");
 }
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); const n = s.length; return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2; };
 /** Close of `mint` for UTC day `date`: median of its closing-hour samples (one per minute), in USD; not ok until enough exist.

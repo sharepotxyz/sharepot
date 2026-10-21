@@ -42,6 +42,7 @@ const getJson = async (url, attempt = 1) => {
   try { r = await fetch(url, { headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (SharePot)" }, signal: AbortSignal.timeout(20_000) }); }
   catch (e) { if (attempt >= 3) throw e; console.log(new Date().toISOString(), `retrying ${url.split("?")[0]}: ${String(e?.message ?? e).slice(0, 80)}`); await sleep(15_000); return getJson(url, attempt + 1); }
   if (r.status === 429 && attempt < 3) { await sleep(30_000); return getJson(url, attempt + 1); }
+  if (r.status >= 500 && attempt < 3) { await sleep(15_000); return getJson(url, attempt + 1); }   // an upstream hiccup is retried like a dropped connection (review 2026-10-21b, #9)
   if (!r.ok) throw new Error(`${r.status} ${url.split("?")[0]}`); return r.json();
 };
 
@@ -50,16 +51,20 @@ const getJson = async (url, attempt = 1) => {
 // finds the tokens and gives the daily bars for the ranges, but the pool it names is its own id (a Uniswap v4 pool is a
 // 32-byte id there), which DexScreener may list under another id or not at all: 13 of 45 tokens got no primary quote
 // that way and their markets could only be refunded (review 2026-10-21, #5). No such pair on DexScreener: not picked.
+// Returns { best, pairs }: `best` the pair to record for a token picked afresh, `pairs` every listed pair of the token
+// (address → { liq, ageDays, dex, ok }) so a pool recorded earlier can be checked against today's listing.
 async function dexscreenerPool(addr) {
-  const pairs = await getJson(`https://api.dexscreener.com/tokens/v1/${NET}/${addr}`);
-  let best = null;
-  for (const pair of Array.isArray(pairs) ? pairs : []) {
+  const list = await getJson(`https://api.dexscreener.com/tokens/v1/${NET}/${addr}`);
+  let best = null; const pairs = new Map();
+  for (const pair of Array.isArray(list) ? list : []) {
     if (String(pair?.baseToken?.address ?? "").toLowerCase() !== addr || !(Number(pair?.priceUsd) > 0)) continue;
     const liq = Number(pair?.liquidity?.usd ?? 0), ageDays = pair?.pairCreatedAt ? (now - pair.pairCreatedAt / 1000) / 86400 : null;
-    if (!(liq >= MIN_LIQUIDITY_USD) || ageDays == null || ageDays < MIN_AGE_DAYS) continue;
-    if (!best || liq > best.liq) best = { pool: String(pair.pairAddress).toLowerCase(), liq, ageDays: Math.floor(ageDays), dex: `${pair.dexId ?? "?"}${pair.labels?.length ? " " + pair.labels.join("/") : ""}` };
+    const p = { pool: String(pair.pairAddress).toLowerCase(), liq, ageDays: ageDays == null ? null : Math.floor(ageDays), dex: `${pair.dexId ?? "?"}${pair.labels?.length ? " " + pair.labels.join("/") : ""}`,
+      ok: liq >= MIN_LIQUIDITY_USD && ageDays != null && ageDays >= MIN_AGE_DAYS };
+    pairs.set(p.pool, p);
+    if (p.ok && (!best || liq > best.liq)) best = p;
   }
-  return best;
+  return { best, pairs };
 }
 
 // ---------- universe ----------
@@ -89,6 +94,8 @@ for (const q of ["WETH", "USDG"]) {
 log(`universe: ${byToken.size} base tokens from GeckoTerminal search`);
 
 // ---------- filters ----------
+const reg = readRegistry(DIR);
+let dsDown = 0;
 const erc20 = [parseAbiItem("function decimals() view returns (uint8)"), parseAbiItem("function name() view returns (string)"), parseAbiItem("function symbol() view returns (string)")];
 const rejected = [], picked = [];
 for (const [addr, t] of [...byToken.entries()].sort((a, b) => b[1].vol - a[1].vol)) {
@@ -102,18 +109,36 @@ for (const [addr, t] of [...byToken.entries()].sort((a, b) => b[1].vol - a[1].vo
       if (STOCKISH.test(name) || STABLE_OR_WRAPPED.test(t.symbol)) why = "stock token / wrapped (by contract name)";
     } catch (e) { why = `not a readable ERC-20 (${String(e?.shortMessage ?? e?.message ?? e).slice(0, 40)})`; }
   }
-  let ds = null;
+  let pool = null;
   if (!why) {
-    try { ds = await dexscreenerPool(addr); } catch (e) { why = `DexScreener unreachable (${String(e?.message ?? e).slice(0, 40)})`; }
-    if (!why && !ds) why = `no DexScreener pair ≥ ${MIN_AGE_DAYS} d old with ≥ $${Math.round(MIN_LIQUIDITY_USD / 1000)}k`;
+    let ds = null;
+    try { ds = await dexscreenerPool(addr); } catch (e) { why = `DexScreener unreachable (${String(e?.message ?? e).slice(0, 40)})`; dsDown++; }
+    if (!why) {
+      // A pool stays with its token while a market on it is still open: today's market (forDate − 1) closes tonight
+      // on the pool its baseline was sampled from, and a switch now would price that market across two pools (review
+      // 2026-10-21b, #10). The recorded pool is kept if DexScreener still lists it and it still passes the thresholds;
+      // listed but thin: the token sits tomorrow out (today's sampling is untouched) and is picked afresh later; not
+      // listed at all: today's close could not be sampled from it anyway, so the token moves to its best pair now.
+      const prev = reg.tokens[addr], prevPool = prev?.pool ? String(prev.pool).replace(/^robinhood_/, "").toLowerCase() : null;
+      const live = prevPool && (prev.selectedFor ?? []).includes(addDays(forDate, -1)) ? ds.pairs.get(prevPool) : null;
+      if (live && live.ok) pool = { ...live, kept: true };
+      else if (live) why = `recorded pool ${prevPool.slice(0, 10)}… now $${Math.round(live.liq / 1000)}k / ${live.ageDays} d: not re-selected while its market is open`;
+      else if (ds.best) pool = ds.best;
+      else why = `no DexScreener pair ≥ ${MIN_AGE_DAYS} d old with ≥ $${Math.round(MIN_LIQUIDITY_USD / 1000)}k`;
+    }
   }
   if (why) { rejected.push(`${t.symbol} (${why})`); continue; }
   // liquidity is the sampled pool's: the one that sets the close; gtPool keeps GeckoTerminal's id for the daily bars
-  picked.push({ address: addr, symbol: t.symbol, name, decimals, usdPrice: t.price, liquidity: ds.liq, volume24h: t.vol, ageDays, pool: ds.pool, poolDex: ds.dex, gtPool: t.pool });
+  picked.push({ address: addr, symbol: t.symbol, name, decimals, usdPrice: t.price, liquidity: pool.liq, volume24h: t.vol, ageDays, pool: pool.pool, poolDex: pool.dex + (pool.kept ? " (kept)" : ""), gtPool: t.pool });
   if (picked.length >= N) break;
 }
 log(`for ${forDate}: picked ${picked.length}: ${picked.map((p) => `${p.symbol} $${(p.volume24h / 1e6).toFixed(1)}m`).join(", ")}`);
 log(`rejected (top of the list): ${rejected.slice(0, 20).join(", ")}`);
+if (dsDown) log(`DexScreener could not be reached for ${dsDown} candidates`);
+// An empty pick is not a result: with the price source down every candidate "fails", and writing that would wipe the
+// selection a healthy run made for the same day (review 2026-10-21b, #9). The registry is left as it is; exit 1 so the
+// cron log shows the run did nothing.
+if (!picked.length) { log(`nothing picked for ${forDate}: the registry is left as it is`); process.exit(1); }
 
 // ---------- ranges from history (cached a week per token) ----------
 const volFile = path.join(DIR, "vol-cache.json");
@@ -133,7 +158,6 @@ async function thresholdBps(p) {
   volCache[p.address] = { bps, at: now };
   return bps;
 }
-const reg = readRegistry(DIR);
 for (const t of Object.values(reg.tokens)) t.selectedFor = (t.selectedFor ?? []).filter((d) => d !== forDate);
 const taken = new Set(Object.values(reg.tokens).map((t) => t.symbol));
 const uniqueSymbol = (addr, raw) => {

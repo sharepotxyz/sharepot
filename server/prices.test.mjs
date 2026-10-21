@@ -68,9 +68,10 @@ test("no second quote at all: Jupiter settles alone", () => {
   assert.equal(ev.ok, true); assert.equal(ev.detail.crossCheck.agreed, null);
 });
 
-// 2026-10-19: the Tokyo host rebooted at 12:59 UTC while the sampler was writing a line; the half line sat ten hours
-// before the closing hour, and the reader gave up on the whole file, so 13 markets were voided over 60 good quotes
-// (and the next day's baseline could not be read either). A line that does not parse is skipped, never the day.
+// 2026-10-19: the Tokyo host went down right after the 12:59 UTC sample was written (the cron run had finished; the
+// line on disk is cut short, most likely lost on its way to the disk); the half line sat ten hours before the closing
+// hour, and the reader gave up on the whole file, so 13 markets were voided over 60 good quotes (and the next day's
+// baseline could not be read either). A line that does not parse is skipped, never the day.
 test("a line cut short by a crash does not cost the day: the good closing-hour samples still count", () => {
   const dir = ticks(1.00, 1.00, 1.10, 1.10);
   const half = JSON.stringify({ t: utcMidnight(CDAY) + 13 * 3600, p: { [MINT]: 1.05 }, p2: { [MINT]: 1.05 } }).slice(0, 40);
@@ -104,4 +105,20 @@ test("minutes quoted by the second source alone are part of the evidence", () =>
   const ev = chainMove(dir, MINT, "X", CDAY, CNOW, [-30000, 30000]);
   assert.equal(ev.ok, true); assert.equal(ev.detail.samples, 40); assert.equal(ev.detail.crossCheck.samples, 60);
   assert.equal(ev.evidence.response.split("\n").filter(Boolean).length, 120);
+});
+
+// A minute whose first line had no quote (the source failed that run) and whose second line, a run by hand, has one:
+// the quote counts. Uniqueness is per minute, source and token, among lines that carry a quote (review 2026-10-21b, #5).
+test("a retry in the same minute fills a minute whose first line had no quote", () => {
+  const dir = ticks(1.00, 1.00, 1.10, 1.10);
+  const t0 = utcMidnight(CDAY) + 23 * 3600;
+  const lines = Array.from({ length: 60 }, (_, i) => i < 21
+    ? JSON.stringify({ t: t0 + i * 60, p: {}, p2: { [MINT]: 1.10 } }) + "\n" + JSON.stringify({ t: t0 + i * 60 + 20, p: { [MINT]: 1.10 }, p2: { [MINT]: 1.10 } })
+    : JSON.stringify({ t: t0 + i * 60, p: { [MINT]: 1.10 }, p2: { [MINT]: 1.10 } }));
+  fs.writeFileSync(`${dir}/ticks/${CDAY}.jsonl`, lines.join("\n") + "\n");
+  const ev = chainMove(dir, MINT, "X", CDAY, CNOW, [-30000, 30000]);
+  assert.equal(ev.ok, true); assert.equal(ev.value, 100000); assert.equal(ev.detail.samples, 60); assert.equal(ev.detail.droppedLines[CDAY].duplicates, 0);
+  assert.equal(ev.detail.crossCheck.samples, 60);
+  // p2 took the first line of those 21 minutes and p the second: both are evidence
+  assert.equal(ev.evidence.response.split("\n").filter(Boolean).length, 60 + 60 + 21);
 });
