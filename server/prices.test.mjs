@@ -79,3 +79,29 @@ test("a line cut short by a crash does not cost the day: the good closing-hour s
   const ev = chainMove(dir, MINT, "X", CDAY, CNOW, [-30000, 30000]);
   assert.equal(ev.ok, true); assert.equal(ev.value, 100000); assert.equal(ev.detail.samples, 60); assert.equal(ev.detail.prevSamples, 60);
 });
+
+// One quote per minute: 40 lines must be 40 minutes. A replayed cron or a run by hand that writes a second line in a
+// minute adds nothing and cannot move the median (review 2026-10-21, #7).
+test("40 copies of one minute are one sample: the close is not trusted", () => {
+  const dir = ticks(1.00, 1.00, 1.10, 1.10);
+  const t0 = utcMidnight(CDAY) + 23 * 3600;
+  fs.writeFileSync(`${dir}/ticks/${CDAY}.jsonl`, Array.from({ length: 40 }, () => JSON.stringify({ t: t0, p: { [MINT]: 2 }, p2: { [MINT]: 2 } })).join("\n") + "\n");
+  const ev = chainMove(dir, MINT, "X", CDAY, CNOW, [-30000, 30000]);
+  assert.equal(ev.ok, false); assert.match(ev.reason, /1 of 40/);
+});
+test("a second line in the same minute is dropped: the first one written counts, the median does not move", () => {
+  const dir = ticks(1.00, 1.00, 1.10, 1.10);
+  fs.appendFileSync(`${dir}/ticks/${CDAY}.jsonl`, JSON.stringify({ t: utcMidnight(CDAY) + 23 * 3600 + 30, p: { [MINT]: 99 }, p2: { [MINT]: 99 } }) + "\n");
+  const ev = chainMove(dir, MINT, "X", CDAY, CNOW, [-30000, 30000]);
+  assert.equal(ev.ok, true); assert.equal(ev.value, 100000); assert.equal(ev.detail.samples, 60); assert.deepEqual(ev.detail.droppedLines[CDAY], { skipped: 0, duplicates: 1 });
+});
+// The evidence carries every closing-hour line that quotes the token from either source: the minutes where only the
+// second source answered are in it too, so its numbers can be recomputed from the evidence (review 2026-10-21, #8).
+test("minutes quoted by the second source alone are part of the evidence", () => {
+  const dir = ticks(1.00, 1.00, 1.10, 1.10);
+  const t0 = utcMidnight(CDAY) + 23 * 3600;
+  fs.writeFileSync(`${dir}/ticks/${CDAY}.jsonl`, Array.from({ length: 60 }, (_, i) => JSON.stringify(i < 40 ? { t: t0 + i * 60, p: { [MINT]: 1.10 }, p2: { [MINT]: 1.10 } } : { t: t0 + i * 60, p: {}, p2: { [MINT]: 1.10 } })).join("\n") + "\n");
+  const ev = chainMove(dir, MINT, "X", CDAY, CNOW, [-30000, 30000]);
+  assert.equal(ev.ok, true); assert.equal(ev.detail.samples, 40); assert.equal(ev.detail.crossCheck.samples, 60);
+  assert.equal(ev.evidence.response.split("\n").filter(Boolean).length, 120);
+});

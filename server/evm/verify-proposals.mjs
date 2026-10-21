@@ -1,6 +1,6 @@
 // Independent check of every proposed result on the EVM deployment, run where the contract admin's key lives (Tokyo) —
 // NOT on the app host. Mirrors ../verify-proposals.mjs for Solana: the proposer (the app host's hot key) publishes the
-// value a market settles on, and the dispute window (one hour here) is the only thing between a wrong or hostile
+// value a market settles on, and the dispute window (six hours since 2026-10-20, like Solana's) is the only thing between a wrong or hostile
 // proposal and the payout. This job re-derives the value from its own sources and, if the range it lands in is not the
 // proposed one, or no source answered before the window is about to close, calls voidMarket (admin only: every stake
 // refunded) and says so. Until the 2026-10-20 audit (M2) nobody checked the EVM proposer at all.
@@ -15,7 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { closeMove, chainMove, chainClose, parseMetric, movePpm, bucketOf, utcMidnight, addDays } from "../prices.mjs";
 import { notify } from "../notify.mjs";
-import { unverifiedAction, comparisonAction, BOUNDARY_PPM as DEFAULT_BOUNDARY_PPM } from "../verify-policy.mjs";
+import { unverifiedAction, comparisonAction, reportAfterFor, voidMarginFor, BOUNDARY_PPM as DEFAULT_BOUNDARY_PPM } from "../verify-policy.mjs";
 import { guardProcess } from "../retry.mjs";
 import { CHAIN_KEY, chainCfg, walletFor, allMarkets, readConfig, send, Status, explorerTx } from "./chain.mjs";
 import { evmDir } from "./index-events.mjs";
@@ -157,6 +157,9 @@ for (const m of proposed) {
     notify("⛔ 提案不符且自動作廢失敗（Robinhood）", `#${id} ${metric}\n提案 ${pv} ppm（第 ${pb} 格） vs 獨立 ${r.value} ppm（第 ${mb} 格）\n${short(e)}\n下一輪（10 分內）會自動再試；窗到 ${new Date(windowEnd * 1000).toISOString()}。連續失敗才需要看 admin 鑰匙的 ETH 與 RPC。`, `evm-verify-fail:${key}`, 60);
   }
 }
-if (late.length) notify("⚠️ 提案超過半小時還沒核對到（Robinhood）", `${late.length} 個盤獨立查價還沒答案：\n${late.slice(0, 15).join("\n")}\n每 10 分會重試；到窗關前 15 分仍沒答案就自動作廢退款。僅供知悉，不需處理。`, "evm-verify-late", 360);
+// durations from the policy for this deployment's dispute window, never typed in (the text used to say 30 and 15
+// minutes while the six-hour window reports after an hour and voids 45 minutes before the close; review 2026-10-21, #12)
+const windowSecs = Number(cfg.disputeWindowSecs), fmtDur = (s) => s % 3600 === 0 ? `${s / 3600} 小時` : `${Math.round(s / 60)} 分鐘`;
+if (late.length) notify(`⚠️ 提案超過 ${fmtDur(reportAfterFor(windowSecs))} 還沒核對到（Robinhood）`, `${late.length} 個盤獨立查價還沒答案：\n${late.slice(0, 15).join("\n")}\n每 10 分會重試；到窗關前 ${fmtDur(voidMarginFor(windowSecs))} 仍沒答案就自動作廢退款。僅供知悉，不需處理。`, "evm-verify-late", 360);
 log(`done: checked ${checked}, agreed ${agreed}, voided ${voided}, unverifiable ${late.length}`);
 process.exit(0);

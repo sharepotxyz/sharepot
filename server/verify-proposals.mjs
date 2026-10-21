@@ -18,7 +18,7 @@ import idlJson from "../idl/sharepot.json" with { type: "json" };
 import { closeMove, chainMove, chainClose, parseMetric, movePpm, bucketOf, utcMidnight, addDays } from "./prices.mjs";
 import { notify } from "./notify.mjs";
 import { sendSigned } from "./tx.mjs";
-import { unverifiedAction, comparisonAction, BOUNDARY_PPM as DEFAULT_BOUNDARY_PPM } from "./verify-policy.mjs";
+import { unverifiedAction, comparisonAction, reportAfterFor, voidMarginFor, BOUNDARY_PPM as DEFAULT_BOUNDARY_PPM } from "./verify-policy.mjs";
 
 const CLUSTER = process.env.CLUSTER ?? "devnet";
 const RPC = process.env.CLUSTER_RPC ?? "https://api.devnet.solana.com";
@@ -191,5 +191,8 @@ for (const { publicKey, account: m } of proposed) {
     notify("⛔ 提案不符且自動作廢失敗", `#${id} ${metric}\n提案 ${pv} ppm(第 ${pb} 格)vs 獨立 ${r.value} ppm(第 ${mb} 格)\n${String(e?.message ?? e).slice(0, 200)}\n下一輪(10 分內)會自動再試;窗到 ${new Date(windowEnd * 1000).toISOString()}。連續失敗才需要看 admin 金鑰餘額與 RPC。`, `verify-fail:${key}`, 60);
   }
 }
-if (late.length) notify("⚠️ 提案超過 1 小時還沒核對到", `${late.length} 個盤獨立查價還沒答案:\n${late.slice(0, 15).join("\n")}\n每 10 分會重試;到窗關前 45 分仍沒答案就自動作廢退款。僅供知悉,不需處理。`, "verify-late", 360);
+// the two durations come from the policy for this deployment's dispute window, never typed in: a six-hour window is
+// reported after an hour and voided 45 minutes before it closes, a one-hour window after 30 and 15 (review 2026-10-21, #12)
+const windowSecs = cfg.disputeWindowSecs.toNumber(), fmtDur = (s) => s % 3600 === 0 ? `${s / 3600} 小時` : `${Math.round(s / 60)} 分鐘`;
+if (late.length) notify(`⚠️ 提案超過 ${fmtDur(reportAfterFor(windowSecs))} 還沒核對到`, `${late.length} 個盤獨立查價還沒答案:\n${late.slice(0, 15).join("\n")}\n每 10 分會重試;到窗關前 ${fmtDur(voidMarginFor(windowSecs))} 仍沒答案就自動作廢退款。僅供知悉,不需處理。`, "verify-late", 360);
 log(`done: checked ${checked}, agreed ${agreed}, voided ${voided}, unverifiable ${late.length}`);

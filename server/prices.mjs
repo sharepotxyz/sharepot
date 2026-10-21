@@ -255,31 +255,55 @@ export const MIN_CLOSE_SAMPLES = Number(process.env.MIN_CLOSE_SAMPLES ?? 40);
 export const utcDate = (ts) => new Date(ts * 1000).toISOString().slice(0, 10);
 export const utcMidnight = (date) => Math.floor(Date.parse(date + "T00:00:00Z") / 1000);
 
+// One day's tick file, parsed once per process and file version: one line per minute, the first line written for a
+// minute wins. Lines that do not parse are counted, never the day: on 2026-10-19 the host went down after the 12:59 UTC
+// sample was written but before it reached the disk; the cut-short line on disk ended the one-try read of the whole
+// file with zero samples for every token, and the verifier voided 13 markets over 60 good closing-hour quotes (and
+// could not read the baseline of the next day's markets either). A second line in the same minute (a replayed cron, a
+// run by hand) is dropped and counted too: the closing rule is one quote per minute, and 40 lines must mean 40 minutes,
+// not one minute pasted 40 times (review 2026-10-21).
+const dayCache = new Map();   // file → { version, rows, skipped, duplicates }; a few days at most
+export function dayLines(dataDir, date) {
+  const file = `${dataDir}/ticks/${date}.jsonl`;
+  let st; try { st = fs.statSync(file); } catch { return { file, rows: [], skipped: 0, duplicates: 0 }; }
+  const version = `${st.mtimeMs}:${st.size}`, hit = dayCache.get(file);
+  if (hit && hit.version === version) return { file, rows: hit.rows, skipped: hit.skipped, duplicates: hit.duplicates };
+  const rows = [], seen = new Set(); let skipped = 0, duplicates = 0;
+  for (const line of fs.readFileSync(file, "utf8").split("\n")) {
+    if (!line) continue;
+    let r; try { r = JSON.parse(line); } catch { skipped++; continue; }
+    if (!r || typeof r !== "object" || typeof r.t !== "number") { skipped++; continue; }
+    const minute = Math.floor(r.t / 60);
+    if (seen.has(minute)) { duplicates++; continue; }
+    seen.add(minute); rows.push({ t: r.t, line, r });
+  }
+  rows.sort((a, b) => a.t - b.t);
+  if (dayCache.size >= 8) dayCache.delete(dayCache.keys().next().value);
+  dayCache.set(file, { version, rows, skipped, duplicates });
+  return { file, rows, skipped, duplicates };
+}
+const inClosingHour = (date) => { const start = utcMidnight(date) + 23 * 3600, end = start + 3600; return (x) => x.t >= start && x.t < end; };
+const quoted = (r, key, mint) => typeof r[key]?.[mint] === "number" && r[key][mint] > 0;
 /** The sampled quotes of `mint` in the closing hour of UTC day `date`, oldest first, plus the exact bytes they came from.
  *  `key` picks the source inside each line: "p" = Jupiter (primary), "p2" = DexScreener (second source). */
 export function closingSamples(dataDir, mint, date, key = "p") {
-  const f = `${dataDir}/ticks/${date}.jsonl`;
-  const start = utcMidnight(date) + 23 * 3600, end = utcMidnight(date) + 24 * 3600;
-  const lines = []; let skipped = 0;
-  let text = ""; try { text = fs.readFileSync(f, "utf8"); } catch { /* no file for that day: no samples */ }
-  // A line that does not parse is skipped and counted, never the day. One read used to cover the whole file, so a
-  // single cut-short line ended it with zero samples: on 2026-10-19 the Tokyo host rebooted at 12:59 UTC while the
-  // sampler was mid-line, and the verifier voided 13 markets over that half line although 60 good closing-hour quotes
-  // sat below it (and could not read the baseline of the next day's markets either).
-  for (const l of text.split("\n")) {
-    if (!l) continue;
-    let r; try { r = JSON.parse(l); } catch { skipped++; continue; }
-    if (!r || typeof r !== "object") { skipped++; continue; }
-    if (r.t >= start && r.t < end && typeof r[key]?.[mint] === "number" && r[key][mint] > 0) lines.push(l);
-  }
-  return { samples: lines.map((l) => { const r = JSON.parse(l); return { t: r.t, usd: r[key][mint] }; }), raw: lines.join("\n") + (lines.length ? "\n" : ""), file: f, skipped };
+  const { file, rows, skipped, duplicates } = dayLines(dataDir, date);
+  const hit = rows.filter(inClosingHour(date)).filter((x) => quoted(x.r, key, mint));
+  return { samples: hit.map((x) => ({ t: x.t, usd: x.r[key][mint] })), raw: hit.map((x) => x.line + "\n").join(""), file, skipped, duplicates };
+}
+/** The closing-hour lines of `date` that quote `mint` from any of `keys`: what a move is published with, so every number
+ *  in it (the second source's included) can be recomputed from the evidence alone (review 2026-10-21). */
+export function closingEvidence(dataDir, mint, date, keys = ["p", "p2"]) {
+  return dayLines(dataDir, date).rows.filter(inClosingHour(date)).filter((x) => keys.some((k) => quoted(x.r, k, mint))).map((x) => x.line + "\n").join("");
 }
 const median = (xs) => { const s = [...xs].sort((a, b) => a - b); const n = s.length; return n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2; };
-/** Close of `mint` for UTC day `date`: median of its closing-hour samples, in USD; null until enough samples exist. */
+/** Close of `mint` for UTC day `date`: median of its closing-hour samples (one per minute), in USD; not ok until enough exist.
+ *  `lines` says how many lines of that day's file were dropped (unparseable, or a second line in a minute). */
 export function chainClose(dataDir, mint, date, key = "p") {
-  const { samples, raw, file } = closingSamples(dataDir, mint, date, key);
-  if (samples.length < MIN_CLOSE_SAMPLES) return { ok: false, reason: `${samples.length} of ${MIN_CLOSE_SAMPLES} closing-hour samples for ${date}`, samples: samples.length };
-  return { ok: true, close: median(samples.map((s) => s.usd)), samples: samples.length, first: samples[0].t, last: samples.at(-1).t, raw, file };
+  const { samples, raw, file, skipped, duplicates } = closingSamples(dataDir, mint, date, key);
+  const lines = { skipped, duplicates };
+  if (samples.length < MIN_CLOSE_SAMPLES) return { ok: false, reason: `${samples.length} of ${MIN_CLOSE_SAMPLES} closing-hour samples for ${date}`, samples: samples.length, lines };
+  return { ok: true, close: median(samples.map((s) => s.usd)), samples: samples.length, first: samples[0].t, last: samples.at(-1).t, raw, file, lines };
 }
 /** Floored move in ppm between two USD prices. */
 export function movePpm(prevUsd, curUsd) {
@@ -319,7 +343,10 @@ export function chainMove(dataDir, mint, symbol, date, now = Math.floor(Date.now
   } else crossCheck = { source: names.secondary, agreed: null, note: `second source short of samples (${prevDate}: ${b2.samples ?? 0}, ${date}: ${c2.samples ?? 0} of ${MIN_CLOSE_SAMPLES}); primary used alone` };
   return {
     ok: true, value: ppm,
-    detail: { symbol, source: names.primary, mint, prevDate, baseline: b.close, prevSamples: b.samples, date, close: c.close, samples: c.samples, window: "23:00–24:00 UTC of each day, one quote per minute, median", crossCheck },
-    evidence: { source: `sampled quotes ${prevDate} and ${date}, 23:00–24:00 UTC (${names.primaryNote} as p, ${names.secondaryNote} as p2, one per minute)`, response: b.raw + c.raw },
+    detail: { symbol, source: names.primary, mint, prevDate, baseline: b.close, prevSamples: b.samples, date, close: c.close, samples: c.samples, window: "23:00–24:00 UTC of each day, one quote per minute, median",
+      droppedLines: { [prevDate]: b.lines, [date]: c.lines }, crossCheck },
+    // every closing-hour line that quotes the token from either source, so the second source's numbers above can be
+    // recomputed from the evidence too (the primary's lines are the subset with p)
+    evidence: { source: `sampled quotes ${prevDate} and ${date}, 23:00–24:00 UTC (${names.primaryNote} as p, ${names.secondaryNote} as p2, one per minute)`, response: closingEvidence(dataDir, mint, prevDate) + closingEvidence(dataDir, mint, date) },
   };
 }

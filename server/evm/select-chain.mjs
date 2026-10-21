@@ -7,8 +7,9 @@
 // screener is browser-only), but nearly every pool there quotes WETH or USDG, so GeckoTerminal's pool search for
 // those two words, a few pages each, lists the traded pools; volume is summed per base token across its pools.
 // Filters: not a stock token (Robinhood's own, by name), not a stable / wrapped / bridged asset by symbol, liquidity
-// ≥ MIN_LIQUIDITY_USD in its deepest pool that is itself ≥ MIN_AGE_DAYS old (that pool is the one sampled), first pool
-// ≥ MIN_AGE_DAYS old, price below $9,000 (picodollar range).
+// ≥ MIN_LIQUIDITY_USD in its deepest pool that is itself ≥ MIN_AGE_DAYS old, first pool ≥ MIN_AGE_DAYS old, price below
+// $9,000 (picodollar range). The pool recorded for the sampler is then looked up on DexScreener, the sampler's own
+// source (dexscreenerPool below); a token with no usable pair there is not picked.
 // Ranges: down / flat / up, cut at ± the median absolute daily move over the deepest pool's last 60 daily bars
 // (GeckoTerminal OHLCV; pools without history — Uniswap v4 ids — fall back to ±8 %), rounded to 0.5 %, [1 %, 25 %].
 import fs from "node:fs";
@@ -43,6 +44,23 @@ const getJson = async (url, attempt = 1) => {
   if (r.status === 429 && attempt < 3) { await sleep(30_000); return getJson(url, attempt + 1); }
   if (!r.ok) throw new Error(`${r.status} ${url.split("?")[0]}`); return r.json();
 };
+
+// The pool the sampler quotes all day (sample-prices.mjs `pool`) is taken from DexScreener, the source that quotes it:
+// the token's deepest pair there that is itself ≥ MIN_AGE_DAYS old and ≥ MIN_LIQUIDITY_USD deep. GeckoTerminal still
+// finds the tokens and gives the daily bars for the ranges, but the pool it names is its own id (a Uniswap v4 pool is a
+// 32-byte id there), which DexScreener may list under another id or not at all: 13 of 45 tokens got no primary quote
+// that way and their markets could only be refunded (review 2026-10-21, #5). No such pair on DexScreener: not picked.
+async function dexscreenerPool(addr) {
+  const pairs = await getJson(`https://api.dexscreener.com/tokens/v1/${NET}/${addr}`);
+  let best = null;
+  for (const pair of Array.isArray(pairs) ? pairs : []) {
+    if (String(pair?.baseToken?.address ?? "").toLowerCase() !== addr || !(Number(pair?.priceUsd) > 0)) continue;
+    const liq = Number(pair?.liquidity?.usd ?? 0), ageDays = pair?.pairCreatedAt ? (now - pair.pairCreatedAt / 1000) / 86400 : null;
+    if (!(liq >= MIN_LIQUIDITY_USD) || ageDays == null || ageDays < MIN_AGE_DAYS) continue;
+    if (!best || liq > best.liq) best = { pool: String(pair.pairAddress).toLowerCase(), liq, ageDays: Math.floor(ageDays), dex: `${pair.dexId ?? "?"}${pair.labels?.length ? " " + pair.labels.join("/") : ""}` };
+  }
+  return best;
+}
 
 // ---------- universe ----------
 const byToken = new Map();   // base token address → { name, symbol, vol, liq, pool, created, price }
@@ -84,8 +102,14 @@ for (const [addr, t] of [...byToken.entries()].sort((a, b) => b[1].vol - a[1].vo
       if (STOCKISH.test(name) || STABLE_OR_WRAPPED.test(t.symbol)) why = "stock token / wrapped (by contract name)";
     } catch (e) { why = `not a readable ERC-20 (${String(e?.shortMessage ?? e?.message ?? e).slice(0, 40)})`; }
   }
+  let ds = null;
+  if (!why) {
+    try { ds = await dexscreenerPool(addr); } catch (e) { why = `DexScreener unreachable (${String(e?.message ?? e).slice(0, 40)})`; }
+    if (!why && !ds) why = `no DexScreener pair ≥ ${MIN_AGE_DAYS} d old with ≥ $${Math.round(MIN_LIQUIDITY_USD / 1000)}k`;
+  }
   if (why) { rejected.push(`${t.symbol} (${why})`); continue; }
-  picked.push({ address: addr, symbol: t.symbol, name, decimals, usdPrice: t.price, liquidity: t.liq, volume24h: t.vol, ageDays, pool: t.pool });
+  // liquidity is the sampled pool's: the one that sets the close; gtPool keeps GeckoTerminal's id for the daily bars
+  picked.push({ address: addr, symbol: t.symbol, name, decimals, usdPrice: t.price, liquidity: ds.liq, volume24h: t.vol, ageDays, pool: ds.pool, poolDex: ds.dex, gtPool: t.pool });
   if (picked.length >= N) break;
 }
 log(`for ${forDate}: picked ${picked.length}: ${picked.map((p) => `${p.symbol} $${(p.volume24h / 1e6).toFixed(1)}m`).join(", ")}`);
@@ -99,7 +123,7 @@ async function thresholdBps(p) {
   if (hit && now - hit.at < 7 * 86400) return hit.bps;
   let bps = 800;
   try {
-    const poolAddr = String(p.pool).replace(/^robinhood_/, "");
+    const poolAddr = String(p.gtPool ?? p.pool).replace(/^robinhood_/, "");
     await sleep(2500);
     const bars = (await getJson(`https://api.geckoterminal.com/api/v2/networks/${NET}/pools/${poolAddr}/ohlcv/day?limit=60&currency=usd`)).data?.attributes?.ohlcv_list ?? [];
     const moves = []; for (let i = 0; i + 1 < bars.length; i++) if (bars[i + 1][4] > 0) moves.push(Math.abs(bars[i][4] / bars[i + 1][4] - 1));
@@ -122,9 +146,9 @@ for (const p of picked) {
   const bps = await thresholdBps(p);
   const prev = reg.tokens[p.address] ?? { addedAt: new Date().toISOString(), selectedFor: [], mock: null };
   reg.tokens[p.address] = { ...prev, symbol: uniqueSymbol(p.address, p.symbol), name: p.name, decimals: p.decimals, tokenProgram: "erc20", icon: null, category: "memes", issuer: "Robinhood meme",
-    thresholdsBps: [-bps, bps], usdPrice: p.usdPrice, liquidity: p.liquidity, volume24h: p.volume24h, ageDays: p.ageDays, pool: p.pool,
+    thresholdsBps: [-bps, bps], usdPrice: p.usdPrice, liquidity: p.liquidity, volume24h: p.volume24h, ageDays: p.ageDays, pool: p.pool, poolDex: p.poolDex, gtPool: p.gtPool,
     faucetUi: niceAmount(FAUCET_USD, p.usdPrice, p.decimals), seedUi: 0, selectedFor: [...prev.selectedFor, forDate], lastSelected: forDate };
-  log(`  ${p.symbol.padEnd(10)} ±${(bps / 100).toFixed(1)} %  $${p.usdPrice.toPrecision(3)}  faucet ${reg.tokens[p.address].faucetUi}  liq $${Math.round(p.liquidity / 1e3)}k  age ${p.ageDays} d  ${p.decimals} dec`);
+  log(`  ${p.symbol.padEnd(10)} ±${(bps / 100).toFixed(1)} %  $${p.usdPrice.toPrecision(3)}  faucet ${reg.tokens[p.address].faucetUi}  liq $${Math.round(p.liquidity / 1e3)}k (${p.poolDex} ${p.pool.slice(0, 10)}…)  age ${p.ageDays} d  ${p.decimals} dec`);
 }
 if (DRY) { log("dry run: registry not written"); process.exit(0); }
 fs.mkdirSync(DIR, { recursive: true });
