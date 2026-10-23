@@ -16,7 +16,7 @@ import { readRegistry } from "../chain-tokens.mjs";
 import { notify } from "../notify.mjs";
 import { guardProcess, isTransient } from "../retry.mjs";
 import { CHAIN_KEY, chainCfg, walletFor, pot, allMarkets, readMarket, readConfig, readPosition, send, Status, stockByToken, explorerTx, publicClient, erc20Abi } from "./chain.mjs";
-import { sync, openPositions, readEvents, evmDir } from "./index-events.mjs";
+import { sync, openPositions, readEvents, evmDir, repairGaps } from "./index-events.mjs";
 
 const OVERDUE_SECS = Number(process.env.OVERDUE_SECS ?? 7200);
 const STALE_VOID_SECS = 86_400;
@@ -155,13 +155,19 @@ async function finalize(markets, now, cfg) {
 }
 async function settle(markets) {
   await sync(DATA);
+  // a bet the index never saw is never paid: a closed market with more bettors on-chain than in the index has the
+  // chain re-read from its creation block first (2026-10-22: #343's winning bet missing for 27 hours)
+  try {
+    const r = await repairGaps(DATA, markets, now);
+    if (r) log(`event index short of on-chain bettors on #${r.ids.join(", #")}: re-read from block ${r.from}, ${r.added} event(s) added`);
+  } catch (e) { log(`event index backfill failed (next run retries): ${short(e)}`); }
   const open = openPositions(DATA);
   for (const m0 of markets) {
     if (m0.status !== Status.Resolved && m0.status !== Status.Voided) continue;
     try {
       const stock = tokenMeta(m0.token), close = officialClose(m0.id), multiplier = await multiplierOf(m0.token);
       const owners = [...(open.get(m0.id) ?? [])];
-      if (m0.positionsOpen > 0 && owners.length === 0) log(`market #${m0.id}: ${m0.positionsOpen} open position(s) on-chain but none in the event index — re-run after index-events catches up`);
+      if (m0.positionsOpen > 0 && owners.length === 0) log(`market #${m0.id}: ${m0.positionsOpen} open position(s) on-chain but none in the event index (the backfill above retries hourly)`);
       if (owners.length) log(`market #${m0.id}: settling ${owners.length} position(s)`);
       const now = Math.floor(Date.now() / 1000);
       for (const owner of owners) {
