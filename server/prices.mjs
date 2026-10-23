@@ -312,6 +312,28 @@ export function chainClose(dataDir, mint, date, key = "p") {
   if (samples.length < MIN_CLOSE_SAMPLES) return { ok: false, reason: `${samples.length} of ${MIN_CLOSE_SAMPLES} closing-hour samples for ${date}`, samples: samples.length, lines };
   return { ok: true, close: median(samples.map((s) => s.usd)), samples: samples.length, first: samples[0].t, last: samples.at(-1).t, raw, file, lines };
 }
+/** The hour of the `days` days before `now` in which the primary source left `mint` out the most: minutes in which the
+ *  second source quoted it and the primary quoted other tokens but not it (an empty primary is a failed run, not this
+ *  token). More than 60 − MIN_CLOSE_SAMPLES such minutes in a closing hour leave a market unresolvable. On Robinhood
+ *  Chain DexScreener did this for hours to a day at a time to 9 tokens in 2026-10, BLORB on five days. A token not
+ *  sampled in the window has no rows here and so no gap: not proof that it is quoted, only no evidence either way.
+ *  Returns { minutes, hour } (hour = unix start of that UTC hour, the latest one on a tie; null when none was missed). */
+export function worstPrimaryGap(dataDir, mint, now, days = 3) {
+  const from = now - days * 86400, quotedMin = new Set(), missedMin = new Set();
+  for (let d = utcDate(from); d <= utcDate(now); d = addDays(d, 1)) {
+    for (const x of dayLines(dataDir, d).rows) {
+      if (x.t < from || x.t >= now) continue;
+      const m = Math.floor(x.t / 60);
+      if (quoted(x.r, "p", mint)) quotedMin.add(m);   // a later run in the same minute that got the quote fills it
+      else if (quoted(x.r, "p2", mint) && Object.keys(x.r.p ?? {}).length) missedMin.add(m);
+    }
+  }
+  const perHour = new Map();
+  for (const m of missedMin) if (!quotedMin.has(m)) { const h = Math.floor(m / 60) * 3600; perHour.set(h, (perHour.get(h) ?? 0) + 1); }
+  let worst = { minutes: 0, hour: null };
+  for (const [hour, minutes] of [...perHour].sort((a, b) => a[0] - b[0])) if (minutes && minutes >= worst.minutes) worst = { minutes, hour };
+  return worst;
+}
 /** Floored move in ppm between two USD prices. */
 export function movePpm(prevUsd, curUsd) {
   const p0 = toPico(prevUsd), p1 = toPico(curUsd);

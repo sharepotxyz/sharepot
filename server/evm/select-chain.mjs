@@ -16,7 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createPublicClient, http, parseAbiItem } from "viem";
 import { readRegistry, writeRegistry, niceAmount } from "../chain-tokens.mjs";
-import { utcDate, addDays } from "../prices.mjs";
+import { utcDate, addDays, worstPrimaryGap, MIN_CLOSE_SAMPLES } from "../prices.mjs";
 import { CHAIN_KEY, chainCfg, chains } from "./chain.mjs";
 import { evmDir } from "./index-events.mjs";
 
@@ -26,6 +26,10 @@ const N = Number(process.env.N ?? 10), DRY = process.env.DRY_RUN === "1";
 const MIN_LIQUIDITY_USD = Number(process.env.MIN_LIQUIDITY_USD ?? 100_000), MIN_AGE_DAYS = Number(process.env.MIN_AGE_DAYS ?? 3);
 const FAUCET_USD = 25;
 const PAGES = Number(process.env.GT_PAGES ?? 5);
+// A token DexScreener left out of its answers in the last GAP_DAYS days, for more minutes of one hour than a closing
+// hour can miss, sits out: BLORB's pool was missing 2026-10-21 17:41Z → 10-22 ~16:50Z, and #357 (BLORB.day:2026-10-22)
+// could only be refunded. Only the tick lines of tokens already sampled can show it.
+const GAP_DAYS = Number(process.env.PRIMARY_GAP_DAYS ?? 3), GAP_MAX_MINUTES = 60 - MIN_CLOSE_SAMPLES;
 // the memes trade on Robinhood Chain mainnet; the testnet deployment reads them there and mints mocks for betting
 const NET = "robinhood";
 const mainnetRpc = chainCfg.mainnetRpc ?? chains.robinhood?.rpc ?? "https://robinhood.drpc.org";
@@ -102,6 +106,10 @@ for (const [addr, t] of [...byToken.entries()].sort((a, b) => b[1].vol - a[1].vo
   const ageDays = t.created ? Math.floor((now - t.created) / 86400) : null;
   let why = STABLE_OR_WRAPPED.test(t.symbol) ? "stable/wrapped" : STOCKISH.test(t.symbol) ? "stock token" : !(t.liq >= MIN_LIQUIDITY_USD) ? `liquidity $${Math.round(t.liq)}` : ageDays == null || ageDays < MIN_AGE_DAYS ? `age ${ageDays ?? "?"} d` : !(t.price > 0 && t.price < 9000) ? "price out of range" : Math.abs(t.price - 1) < 0.02 ? "pegged to $1" : null;
   let name = t.symbol, decimals = 18;
+  if (!why) {
+    const gap = worstPrimaryGap(DIR, addr, now, GAP_DAYS);
+    if (gap.minutes > GAP_MAX_MINUTES) why = `DexScreener left it out ${gap.minutes} min of the hour from ${new Date(gap.hour * 1000).toISOString().slice(0, 13)}Z, within ${GAP_DAYS} d`;
+  }
   if (!why) {
     try {
       const [d, n, s] = await Promise.all(["decimals", "name", "symbol"].map((fn) => mainnet.readContract({ address: addr, abi: erc20, functionName: fn })));

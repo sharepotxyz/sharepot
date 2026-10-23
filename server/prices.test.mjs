@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
-import { nyseYearByRule, sessions, closeMove, chainMove, utcMidnight, addDays } from "./prices.mjs";
+import { nyseYearByRule, sessions, closeMove, chainMove, utcMidnight, addDays, worstPrimaryGap } from "./prices.mjs";
 
 // NYSE's own published lists (nyse.com/markets/hours-calendars and its archives), special closures left out
 const PUBLISHED = {
@@ -121,4 +121,29 @@ test("a retry in the same minute fills a minute whose first line had no quote", 
   assert.equal(ev.detail.crossCheck.samples, 60);
   // p2 took the first line of those 21 minutes and p the second: both are evidence
   assert.equal(ev.evidence.response.split("\n").filter(Boolean).length, 60 + 60 + 21);
+});
+
+test("worstPrimaryGap: the hour the primary source left a token out the most, failed runs and older days aside", () => {
+  const A = "0x00000000000000000000000000000000000000aa", B = "0x00000000000000000000000000000000000000bb";
+  const dir = fs.mkdtempSync(os.tmpdir() + "/sp-gap-"); fs.mkdirSync(dir + "/ticks");
+  const rows = {};
+  const put = (t, p, p2) => { const d = new Date(t * 1000).toISOString().slice(0, 10); (rows[d] ??= []).push(JSON.stringify({ t, p, p2 })); };
+  const h = (date, hour) => utcMidnight(date) + hour * 3600;
+  const both = { [A]: 1, [B]: 2 }, onlyB = { [B]: 2 };
+  for (let i = 0; i < 60; i++) put(h("2026-10-22", 5) + i * 60, i < 25 ? onlyB : both, both);         // 25 minutes without A
+  put(h("2026-10-22", 5) + 30 * 60 + 5, onlyB, both);                                               // a re-run in a quoted minute
+  put(h("2026-10-22", 6) + 60, onlyB, both); put(h("2026-10-22", 6) + 65, both, both);              // a minute a re-run filled
+  for (let i = 0; i < 15; i++) { put(h("2026-10-22", 7) + i * 60, onlyB, both); put(h("2026-10-22", 8) + i * 60, onlyB, both); }
+  for (let i = 0; i < 40; i++) put(h("2026-10-21", 10) + i * 60, {}, both);                         // the primary failed outright
+  for (let i = 0; i < 50; i++) put(h("2026-10-19", 3) + i * 60, onlyB, both);                       // before the window
+  for (const [d, ls] of Object.entries(rows)) fs.writeFileSync(`${dir}/ticks/${d}.jsonl`, ls.join("\n") + "\n");
+  const now = h("2026-10-23", 12);
+  assert.deepEqual(worstPrimaryGap(dir, A, now, 3), { minutes: 25, hour: h("2026-10-22", 5) });
+  assert.deepEqual(worstPrimaryGap(dir, B, now, 3), { minutes: 0, hour: null });
+  assert.deepEqual(worstPrimaryGap(dir, "0x00000000000000000000000000000000000000cc", now, 3), { minutes: 0, hour: null }, "never sampled: no rows, no gap");
+  assert.equal(worstPrimaryGap(dir, A, h("2026-10-22", 0), 3).minutes, 50, "the 10-19 hour counts when it is inside the window");
+  assert.deepEqual(worstPrimaryGap(dir, A, h("2026-10-22", 9), 1), { minutes: 25, hour: h("2026-10-22", 5) });
+  for (let i = 0; i < 25; i++) put(h("2026-10-22", 9) + i * 60, onlyB, both);
+  fs.writeFileSync(`${dir}/ticks/2026-10-22.jsonl`, rows["2026-10-22"].join("\n") + "\n");
+  assert.deepEqual(worstPrimaryGap(dir, A, now, 3), { minutes: 25, hour: h("2026-10-22", 9) }, "a tie names the latest hour");
 });
