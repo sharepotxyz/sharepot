@@ -99,7 +99,7 @@ async function independentValue(m, spec, now, thr) {
 const cfg = await readConfig();
 if (String(cfg.admin).toLowerCase() !== admin.account.address.toLowerCase()) { console.error(`EVM_ADMIN_KEY_FILE ${admin.account.address} is not the contract admin ${cfg.admin}`); process.exit(2); }
 const now = Math.floor(Date.now() / 1000);
-const markets = await allMarkets(), proposed = markets.filter((m) => m.status === Status.Proposed);
+const markets = await allMarkets(undefined, { cacheDir: DIR }), proposed = markets.filter((m) => m.status === Status.Proposed);
 log(`chain=${CHAIN_KEY} markets=${markets.length} proposed=${proposed.length}${DRY ? " DRY RUN" : ""}`);
 let checked = 0, agreed = 0, voided = 0; const late = [];
 const voidMarket = async (id) => (await send(admin, "voidMarket", [BigInt(id)])).hash;

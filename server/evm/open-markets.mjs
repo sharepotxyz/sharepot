@@ -41,7 +41,7 @@ try {
 } catch (e) { log(`calendar check skipped (Nasdaq unavailable: ${String(e?.message ?? e).slice(0, 80)}) — using the exchange table`); }
 log(`${CHAIN_KEY}: next session ${S.date} opens ${iso(S.open)}; betting window ${iso(prev.open)} → ${iso(S.open)}; resolves after ${iso(S.close + tpl.resolveDelaySecs)}`);
 
-const existing = new Map((await allMarkets(p)).map((m) => [`${m.metric}|${m.token.toLowerCase()}`, m]));
+const existing = new Map((await allMarkets(p, { cacheDir: evmDir(DATA) })).map((m) => [`${m.metric}|${m.token.toLowerCase()}`, m]));
 // A write whose receipt never came may still have landed; sent again, createMarket would open the market a second time
 // and seedMarket double the prize (audit 2026-10-20 L4). So a send that failed for a transient reason is tried again
 // only after the chain was asked whether the first one did its job: `done()` answers with the on-chain result when it did.
@@ -53,7 +53,7 @@ async function sendOnce(label, doSend, done) {
   }
   throw lastErr;
 }
-const findMarket = (metric, token) => async () => (await allMarkets(p)).find((x) => x.metric === metric && x.token.toLowerCase() === String(token).toLowerCase()) ?? null;
+const findMarket = (metric, token) => async () => (await allMarkets(p, { cacheDir: evmDir(DATA) })).find((x) => x.metric === metric && x.token.toLowerCase() === String(token).toLowerCase()) ?? null;
 // House prize per market: only on a test network (see server/open-markets.mjs for why mainnet has none).
 const SEED_ON = process.env.SEED_MARKETS === "1";   // no house prize unless asked for (see server/open-markets.mjs)
 const seedRaw = (s) => (SEED_ON && s.seed ? parseUnits(String(s.seed), s.decimals) : 0n);

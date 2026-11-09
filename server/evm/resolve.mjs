@@ -253,10 +253,10 @@ if (wallet) {
   try { const b = Number(await publicClient.getBalance({ address: wallet.account.address })) / 1e18; if (b < LOW_ETH) notify("⛽ Robinhood proposer 快沒 ETH", `剩 ${b.toFixed(5)} ETH(${wallet.account.address})\n它也負責補 gas 水龍頭和 deployer,請領水到這個地址\n水龍頭:${chainCfg.faucet ?? "-"}`, "evm-proposer-low", 360); } catch {}
 }
 const cfg = await readConfig(p);
-const markets = await allMarkets(p);
+const markets = await allMarkets(p, { cacheDir: DIR });
 const now = Number(process.env.NOW ?? Math.floor(Date.now() / 1000));   // NOW: test runs against a local chain with its clock moved
 log(`chain=${CHAIN_KEY} markets=${markets.length} proposer=${wallet?.account.address ?? "(dry)"} dry=${DRY} steps=${ONLY.join(",")}`);
 if (ONLY.includes("propose")) await propose(markets, now);
-if (ONLY.includes("finalize")) await finalize(await allMarkets(p), now, cfg);
-if (ONLY.includes("settle")) await settle(await allMarkets(p));
+if (ONLY.includes("finalize")) await finalize(await allMarkets(p, { cacheDir: DIR }), now, cfg);
+if (ONLY.includes("settle")) await settle(await allMarkets(p, { cacheDir: DIR }));
 log("done");

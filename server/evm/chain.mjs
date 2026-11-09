@@ -2,7 +2,8 @@
 //   env: EVM_CHAIN=robinhood-testnet|robinhood (default robinhood-testnet), EVM_RPC (overrides chains.json),
 //        EVM_CHAINS=path (overrides chains.json), EVM_PROPOSER_KEY_FILE (a file holding the hex private key, for writes)
 import fs from "node:fs";
-import { withRetry } from "../retry.mjs";
+import path from "node:path";
+import { withRetry, sleep } from "../retry.mjs";
 import { createPublicClient, createWalletClient, http, getContract, parseAbiItem, keccak256, stringToBytes, defineChain, hexToString, stringToHex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
@@ -51,15 +52,50 @@ export const questionHash = (q) => keccak256(stringToBytes(q));
 export const Status = { None: 0, Open: 1, Proposed: 2, Resolved: 3, Voided: 4, Swept: 5 };
 export const NO_OUTCOME = 255;
 
-/** Every market on the contract, in id order, as plain objects with numbers where they fit. */
-export async function allMarkets(p = pot()) {
+// A swept market never changes again (every write in SharePot.sol requires Open, Proposed, Resolved or Voided), so it
+// is read once and kept on disk in the file the site's api.mjs keeps too (one per pot address). Reading every market
+// three times per resolver run had outgrown the public RPC's burst limit: about 500 calls in a few seconds and it
+// answers a whole batch with HTTP 429 (one error object, not an array, which viem reports as "unknown RPC error"), and
+// keeps refusing while the retries arrive. From 2026-11-04 (≈500 markets) about half the resolver runs died on it; on
+// 2026-11-09 a read with this file was 25 calls instead of 568.
+export const sweptFileIn = (dir) => path.join(dir, `swept-markets.${String(chainCfg.pot).toLowerCase()}.json`);
+const sweptCaches = new Map();   // file → Map(id → normalized swept market), loaded once per process
+function readSweptFile(file) {
+  const out = new Map();
+  try {
+    for (const [id, m] of JSON.parse(fs.readFileSync(file, "utf8"))) if (Number.isInteger(id) && m && m.id === id && m.status === Status.Swept) out.set(id, m);
+  } catch (e) { if (e?.code !== "ENOENT") console.log(new Date().toISOString(), `swept-market cache ${path.basename(file)} unreadable (${String(e?.message ?? e).slice(0, 80)}): reading every market`); }
+  return out;
+}
+function saveSweptFile(file, swept) {
+  try {
+    for (const [id, m] of readSweptFile(file)) if (!swept.has(id)) swept.set(id, m);   // keep what the site added meanwhile
+    const tmp = `${file}.${process.pid}.tmp`;   // the site writes the same file: its own temp name, then an atomic rename
+    fs.writeFileSync(tmp, JSON.stringify([...swept].sort((a, b) => a[0] - b[0]))); fs.renameSync(tmp, file);
+  } catch (e) { console.log(new Date().toISOString(), `swept-market cache write failed (next run reads those markets again): ${String(e?.message ?? e).slice(0, 100)}`); }
+}
+const READ_BATCH = 50, READ_GAP_MS = Number(process.env.EVM_READ_GAP_MS ?? 2000), READ_RETRY_MS = Number(process.env.EVM_READ_RETRY_MS ?? 5000);
+
+/** Every market on the contract, in id order, as plain objects with numbers where they fit. With `cacheDir` (the
+ *  chain's data directory) the swept ones come from the swept-market file and only the live ones are read. */
+export async function allMarkets(p = pot(), { cacheDir } = {}) {
   const count = Number(await withRetry(() => p.read.marketCount(), 4, "marketCount"));
   if (count === 0) return [];
-  // one JSON-RPC batch per 50 markets (the http transport batches concurrent calls); no Multicall3 dependency.
-  // A torn batch (the RPC answering fewer items than asked → viem "unknown RPC error") is retried, not fatal.
-  const rows = [];
-  for (let from = 0; from < count; from += 50) rows.push(...await withRetry(() => Promise.all(Array.from({ length: Math.min(50, count - from) }, (_, i) => p.read.getMarket([BigInt(from + i)]))), 4, `getMarket #${from}…`));
-  return rows.map((m, id) => normalizeMarket(id, m));
+  const file = cacheDir ? sweptFileIn(cacheDir) : null;
+  if (file && !sweptCaches.has(file)) sweptCaches.set(file, readSweptFile(file));
+  const swept = file ? sweptCaches.get(file) : new Map();
+  const ids = []; for (let id = 0; id < count; id++) if (!swept.has(id)) ids.push(id);
+  // one JSON-RPC batch per 50 markets (the http transport batches concurrent calls); no Multicall3 dependency. A cold
+  // read (no cache yet) pauses between batches to stay under the burst limit; a refused batch waits 5, 10, 20 s.
+  const fresh = new Map(); let newlySwept = 0;
+  for (let i = 0; i < ids.length; i += READ_BATCH) {
+    if (i) await sleep(READ_GAP_MS);
+    const slice = ids.slice(i, i + READ_BATCH);
+    const got = await withRetry(() => Promise.all(slice.map((id) => p.read.getMarket([BigInt(id)]))), 4, `getMarket #${slice[0]}…`, READ_RETRY_MS);
+    slice.forEach((id, j) => { const m = normalizeMarket(id, got[j]); fresh.set(id, m); if (file && m.status === Status.Swept) { swept.set(id, m); newlySwept++; } });
+  }
+  if (newlySwept) saveSweptFile(file, swept);
+  return Array.from({ length: count }, (_, id) => fresh.get(id) ?? structuredClone(swept.get(id)));   // a copy: callers never edit the cache
 }
 export async function readMarket(id, p = pot()) { return normalizeMarket(id, await withRetry(() => p.read.getMarket([BigInt(id)]), 4, `getMarket #${id}`)); }
 export function normalizeMarket(id, m) {
