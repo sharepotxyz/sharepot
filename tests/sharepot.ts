@@ -1,6 +1,6 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program, BN } from "@coral-xyz/anchor";
-import { Keypair, PublicKey, SystemProgram, LAMPORTS_PER_SOL, Transaction } from "@solana/web3.js";
+import { Keypair, PublicKey, SystemProgram, LAMPORTS_PER_SOL, Transaction, SYSVAR_CLOCK_PUBKEY } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID as T22, ExtensionType, AccountState, getMintLen, getAccount, createMint,
   createInitializeMintInstruction, createInitializeMetadataPointerInstruction, createInitializePermanentDelegateInstruction,
@@ -14,15 +14,25 @@ import {
 import { assert } from "chai";
 import { Sharepot } from "../target/types/sharepot";
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const wallSleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const T = 100_000_000; // 1 share (xStocks use 8 decimals)
-const now = () => Math.floor(Date.now() / 1000);
 
 describe("sharepot: parimutuel pools staked in tokenized stocks", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
   const program = anchor.workspace.Sharepot as Program<Sharepot>;
   const conn = provider.connection;   // reads use the provider's commitment, the same level rpc() confirms at
+  // The program reads the Clock sysvar, and on a busy host the test validator's clock runs seconds behind the wall
+  // clock: in November 2026 2 to 14 of the 16 tests failed BettingNotStarted on markets opened "1 s ago" by Date.now.
+  // So schedules are set, and waits measured, on the chain's own clock (unix_timestamp is at byte 32 of the sysvar).
+  const now = async () => Number((await conn.getAccountInfo(SYSVAR_CLOCK_PUBKEY, "processed"))!.data.readBigInt64LE(32));
+  const sleep = async (ms: number) => {
+    const until = (await now()) + Math.ceil(ms / 1000);
+    await wallSleep(ms);
+    while ((await now()) < until) await wallSleep(200);
+  };
+  // waits until the chain's clock is past `ts` (a market's own open/close time, read back from its account)
+  const sleepUntil = async (ts: number) => { while ((await now()) <= ts) await wallSleep(200); };
   const admin = (provider.wallet as anchor.Wallet).payer;
   const issuer = Keypair.generate();   // stands in for the xStocks issuer: mint, freeze, pause, delegate, multiplier authority
   const proposer = Keypair.generate();
@@ -88,7 +98,7 @@ describe("sharepot: parimutuel pools staked in tokenized stocks", () => {
     xNVDA = await createXStock();
   });
 
-  const cfgArgs = () => ({ proposer: proposer.publicKey, treasuryOwner: admin.publicKey, feeBps: 300, earlyBirdDiscountBps: 100, earlyBirdSecs: new BN(3), disputeWindowSecs: new BN(3), minBet: new BN(T / 100) });
+  const cfgArgs = () => ({ proposer: proposer.publicKey, treasuryOwner: admin.publicKey, feeBps: 300, earlyBirdDiscountBps: 100, earlyBirdSecs: new BN(12), disputeWindowSecs: new BN(3), minBet: new BN(T / 100) });
 
   it("initializes config", async () => {
     await program.methods.initialize(cfgArgs()).accounts({ config: configPda, admin: admin.publicKey, systemProgram: SystemProgram.programId }).rpc();
@@ -101,7 +111,7 @@ describe("sharepot: parimutuel pools staked in tokenized stocks", () => {
   async function createMarket(s: Stock, openIn: number, closeIn: number, signer = proposer, thresholds: number[] = [0]) {
     const id = (await program.account.config.fetch(configPda)).marketCount.toNumber();
     const m = marketPda(id), v = vaultPda(m);
-    const t = now();
+    const t = await now();
     await program.methods.createMarket({ metric, questionHash: qhash, thresholds: thr(...thresholds), nBuckets: thresholds.length + 1, openTs: new BN(t + openIn), closeTs: new BN(t + closeIn), resolveAfterTs: new BN(t + closeIn), baseline: new BN(0) })
       .accounts({ config: configPda, market: m, vault: v, mint: s.mint, signer: signer.publicKey, tokenProgram: s.prog, systemProgram: SystemProgram.programId }).signers([signer]).rpc();
     return { id, m, v, s };
@@ -119,7 +129,7 @@ describe("sharepot: parimutuel pools staked in tokenized stocks", () => {
   const finalize = (k: Mk, who: Keypair = admin) => program.methods.finalizeResolution().accounts({ config: configPda, market: k.m, signer: who.publicKey }).signers(who === admin ? [] : [who]).rpc();
 
   it("rejects bad schedules and unauthorized creators", async () => {
-    const t = now();
+    const t = await now();
     const bad = program.methods.createMarket({ metric, questionHash: qhash, thresholds: thr(0), nBuckets: 2, openTs: new BN(t + 10), closeTs: new BN(t + 5), resolveAfterTs: new BN(t + 5), baseline: new BN(0) })
       .accounts({ config: configPda, market: marketPda(0), vault: vaultPda(marketPda(0)), mint: xTSLA.mint, signer: proposer.publicKey, tokenProgram: T22, systemProgram: SystemProgram.programId }).signers([proposer]).rpc();
     await expectErr(bad, "BadSchedule");
@@ -127,7 +137,10 @@ describe("sharepot: parimutuel pools staked in tokenized stocks", () => {
   });
 
   it("full lifecycle in xTSLA: seed, early-bird + normal bets, propose, admin finalize, permissionless settle, sweep", async () => {
-    const k = await createMarket(xTSLA, -1, 15);   // up/down on the close-to-close move; early-bird = min(3 s, window/4) = 3 s
+    // up/down on the close-to-close move; early-bird = min(12 s, window/4) = 12 s: room for the four transactions before
+    // bob's bet even at ~2.5 s each (a loaded host took 1.3 s each, and a 3 s window was gone before alice's bet landed)
+    const k = await createMarket(xTSLA, -1, 48);
+    const { openTs, closeTs } = await program.account.market.fetch(k.m);
     const vaultAcc = await getAccount(conn, k.v, undefined, T22);
     assert.ok(vaultAcc.owner.equals(k.m), "vault owned by the market PDA");
     await seed(k, 100 * T);
@@ -136,13 +149,13 @@ describe("sharepot: parimutuel pools staked in tokenized stocks", () => {
     await bet(k, bob, "down", 300 * T);     // early bird
     const pA = await program.account.position.fetch(posPda(k.m, alice.publicKey));
     assert.equal(pA.feeW[1].toString(), new BN(100 * T).muln(200).toString());
-    await sleep(4500);                        // past early-bird window
+    await sleepUntil(openTs.toNumber() + 12); // past early-bird window
     await bet(k, carol, "up", 100 * T);     // 300 bps
     let mk = await program.account.market.fetch(k.m);
     assert.ok(mk.mint.equals(xTSLA.mint));
     assert.equal(mk.pools[1].toString(), String(200 * T)); assert.equal(mk.pools[0].toString(), String(300 * T)); assert.equal(mk.positions, 3);
     await expectErr(propose(k, 42), "TooEarlyToResolve");
-    await sleep(11000);                       // past close
+    await sleepUntil(closeTs.toNumber());     // past close
     await expectErr(bet(k, alice, "up", T), "BettingClosed");
     await expectErr(propose(k, 42, alice), "Unauthorized");
     await propose(k, 42);                     // TSLA closed +0.42 % → bucket 1 ("up")
@@ -172,14 +185,15 @@ describe("sharepot: parimutuel pools staked in tokenized stocks", () => {
   });
 
   it("forfeit: a position whose owner's token account is closed or frozen goes to the treasury after the grace (admin at once); a payable owner never does", async () => {
-    const k = await createMarket(xTSLA, -1, 6);
-    // erin: a throwaway wallet that stakes everything it holds and then closes its token account
+    // erin: a throwaway wallet that stakes everything it holds and then closes its token account (funded before the
+    // market opens: inside a 7 s window the airdrop and mint left the third bet past the close on a loaded host)
     const erin = Keypair.generate(), erinAta = getAssociatedTokenAddressSync(xTSLA.mint, erin.publicKey, false, T22);
     await conn.confirmTransaction(await conn.requestAirdrop(erin.publicKey, LAMPORTS_PER_SOL), "confirmed");
     await provider.sendAndConfirm(new Transaction().add(createAssociatedTokenAccountIdempotentInstruction(admin.publicKey, erinAta, erin.publicKey, xTSLA.mint, T22), createMintToInstruction(xTSLA.mint, erinAta, issuer.publicKey, BigInt(T), [], T22)), [issuer]);
+    const k = await createMarket(xTSLA, -1, 12);
     await bet(k, alice, "up", 100 * T); await bet(k, bob, "down", 100 * T); await bet(k, erin, "up", T, erinAta);
     await provider.sendAndConfirm(new Transaction().add(createCloseAccountInstruction(erinAta, erin.publicKey, erin.publicKey, [], T22)), [erin]);
-    await sleep(7500);
+    await sleepUntil((await program.account.market.fetch(k.m)).closeTs.toNumber());
     await propose(k, 100); await finalize(k);
     const forfeit = (owner: PublicKey, payer: PublicKey, cranker: Keypair, ownerAta = getAssociatedTokenAddressSync(xTSLA.mint, owner, false, T22)) =>
       program.methods.forfeitPosition().accounts({ config: configPda, market: k.m, position: posPda(k.m, owner), payer, vault: k.v, mint: xTSLA.mint, ownerAta, treasury: xTSLA.ata.admin, cranker: cranker.publicKey, tokenProgram: T22 }).signers(cranker === admin ? [] : [cranker]).rpc();

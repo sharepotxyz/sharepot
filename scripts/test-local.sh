@@ -9,7 +9,10 @@ LEDGER=/root/stocklana/ledger-test
 RPC=http://127.0.0.1:8899
 
 rm -rf "$LEDGER"
-solana-test-validator --reset --quiet --ledger "$LEDGER" --mint "$(solana-keygen pubkey "$WALLET")" \
+# The validator runs ahead of everything else on the host: starved of CPU it makes slots late, its clock falls 10-30 s
+# behind and then jumps to catch up, and windows of a few seconds in the tests are gone before a bet lands (2026-11-17,
+# load 13 on 6 cores during the weekly audit). Without root `nice` only warns and runs it at normal priority.
+nice -n -10 solana-test-validator --reset --quiet --ledger "$LEDGER" --mint "$(solana-keygen pubkey "$WALLET")" \
   --bpf-program "$PROGRAM_ID" target/deploy/sharepot.so > /root/stocklana/logs/validator.log 2>&1 &
 VPID=$!
 trap 'kill "$VPID" 2>/dev/null; wait "$VPID" 2>/dev/null || true' EXIT
