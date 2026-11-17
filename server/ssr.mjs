@@ -62,6 +62,33 @@ function buildEvents(c) {
 // the server does not know the viewer's clock: it names the day, and the browser then states the exact moment
 const question = (ev, tr) => tr.t(ev.kind === "day" ? "q.onUtc" : "q.on", { sym: ev.symbol, day: sessionLabel(ev.date, tr) });
 
+/** The pre-render cache key of a request (both API servers): only the query values the renderers below read, and only
+ *  values the data knows — a symbol, category, market id, event or token. Any other value renders like any other unknown
+ *  one (no such tab, no such event), so all of them share one entry. Until 2026-11-17 each unseen `?stock=` or
+ *  `?e=` value was a full render and the 100th cleared the cache, so one address could keep the process rendering
+ *  (weekly audit, the rest of 2026-10-20 M3). Each value is read the way the renderer reads it (`id` through Number). */
+const knownMemo = new WeakMap();   // per markets array: both servers replace the array (and `stocks`) on every refresh
+const UNKNOWN = "\u0000unknown";   // never a real value (buildEvents names an unparseable market's symbol "?")
+function knownOf({ markets, stocks }) {
+  const ms = markets ?? [];
+  const hit = knownMemo.get(ms); if (hit && hit.stocks === stocks) return hit;
+  const k = { stocks, symbols: new Set(), cats: new Set(["stocks"]), ids: new Set(), events: new Set(), tokens: new Set(["shares"]) };
+  for (const s of stocks ?? []) { k.symbols.add(s.symbol); k.cats.add(s.category ?? "stocks"); for (const t of s.tokens ?? []) if (t.token) k.tokens.add(t.token); }
+  for (const m of ms) { const p = parseMetric(m.metric); k.ids.add(m.id); k.events.add(p ? `${p.symbol}:${p.date}` : `m${m.id}`); k.symbols.add(p ? p.symbol : "?"); }
+  knownMemo.set(ms, k); return k;
+}
+export function ssrCacheKey(data, rel, url) {
+  const q = url.searchParams, k = knownOf(data);
+  if (rel === "/market.html") {
+    const id = q.get("id"), e = q.get("e"), t = q.get("t");
+    return `id=${id && k.ids.has(Number(id)) ? Number(id) : ""}&e=${e === null ? "" : k.events.has(e) ? e : UNKNOWN}&t=${t === null ? "" : k.tokens.has(t) ? t : UNKNOWN}`;
+  }
+  const tab = (v, set) => (!v || v === "all" ? "all" : set.has(v) ? v : UNKNOWN);
+  const tabs = `stock=${tab(q.get("stock"), k.symbols)}&cat=${tab(q.get("cat"), k.cats)}`;
+  // a list filter leaves the cards to the browser, but a tab still hides the hero: the tabs stay in the key
+  return ["issuer", "status", "sort", "q"].some((x) => q.get(x)) ? `filtered&${tabs}` : tabs;
+}
+
 /** Home: the default view (betting open, closing soon; all stocks or the ?stock= tab) as event cards + the summary line.
  *  Other filters in the URL are left to the browser. A stock tab hides the hero, as main.ts does. */
 const CATEGORY_RANK = { stocks: 0, preipo: 1, memes: 2 };   // the All tab groups by tab order, as web/src/main.ts does

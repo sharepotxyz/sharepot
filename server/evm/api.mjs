@@ -19,7 +19,7 @@ import { sync, openPositions, evmDir } from "./index-events.mjs";
 import { readRegistry, asStock, REGISTRY_FILE } from "../chain-tokens.mjs";
 import { utcDate, addDays, chainClose } from "../prices.mjs";
 import { leaderboard } from "../points.mjs";
-import { homeHtml, eventHtml } from "../ssr.mjs";
+import { homeHtml, eventHtml, ssrCacheKey } from "../ssr.mjs";
 import { resolveLang, translateHtml, translator, langScript } from "../i18n.mjs";
 import { notify } from "../notify.mjs";
 import * as referrals from "../referrals.mjs";
@@ -203,13 +203,8 @@ function applyOverlay(html, lang) {
 }
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".ico": "image/x-icon", ".json": "application/json", ".map": "application/json", ".mp4": "video/mp4", ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8" };
 const htmlCache = new Map(), renderCache = new Map(), RENDER_TTL_MS = 5000, RENDER_CACHE_MAX = 100;
-// the pre-render cache is keyed by the parameters ssr.mjs reads, not the whole query string (audit 2026-10-20 M3; as server/api.mjs)
-function ssrKey(rel, url) {
-  const q = url.searchParams;
-  if (rel === "/market.html") return ["id", "e", "t"].map((k) => `${k}=${q.get(k) ?? ""}`).join("&");
-  if (["issuer", "status", "sort", "q"].some((k) => q.get(k))) return "filtered";
-  return ["stock", "cat"].map((k) => `${k}=${q.get(k) ?? ""}`).join("&");
-}
+// the pre-render cache is keyed by ssr.mjs ssrCacheKey: the values it reads, and only values the data knows (audit M3,
+// 2026-10-20 and 2026-11-17; as server/api.mjs)
 function pageHtml(file) {
   const mtime = fs.statSync(file).mtimeMs, hit = htmlCache.get(file);
   if (hit && hit.mtime === mtime) return hit.html;
@@ -230,10 +225,10 @@ function serveStatic(res, url, req) {
     const { lang, fromQuery } = resolveLang(req, url);
     res.writeHead(200, { "content-type": TYPES[".html"], "cache-control": "no-cache", "vary": "accept-language, cookie", "content-language": lang, "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY",
       ...(fromQuery ? { "set-cookie": `sp_lang=${lang}; Path=/; Max-Age=31536000; SameSite=Lax` } : {}) });
-    const key = lang + "|" + rel + "|" + ssrKey(rel, url), hit = renderCache.get(key);
+    const data = { markets: chainCache.markets, config: chainCache.config, stocks, prices: priceCache.at ? priceCache.prices : null };
+    const key = lang + "|" + rel + "|" + ssrCacheKey(data, rel, url), hit = renderCache.get(key);
     if (hit && Date.now() - hit.at < RENDER_TTL_MS) return res.end(hit.html);
     let html = pageHtml(file).replace("</head>", () => bootScript() + "</head>");
-    const data = { markets: chainCache.markets, config: chainCache.config, stocks, prices: priceCache.at ? priceCache.prices : null };
     try { const tr = translator(lang); if (rel === "/index.html") html = homeHtml(data, html, url, tr); else if (rel === "/market.html") html = eventHtml(data, url, html, tr); }
     catch (e) { console.error("ssr failed:", String(e?.message ?? e).slice(0, 160)); }
     try { html = applyOverlay(translateHtml(html, lang), lang); } catch (e) { console.error("i18n failed:", String(e?.message ?? e).slice(0, 160)); }
@@ -370,6 +365,7 @@ const server = http.createServer(async (req, res) => {
     // ---------- referrals ----------
     const rl = p.match(/^\/referral\/lookup\/([A-Za-z0-9]{4,12})$/);
     if (rl) {
+      chargeList(clientIp(req));   // reads the referral file each time (weekly audit 2026-11-17)
       const code = referrals.normalizeCode(rl[1]), w = referrals.referrerOf(referrals.load(REFERRALS_FILE), code);
       return json(res, 200, w ? { valid: true, code, referrer: w.slice(0, 6) + "…" + w.slice(-4), refereeBps: referrals.REFEREE_BPS } : { valid: false, code }, { "cache-control": "public, max-age=60" });
     }
@@ -380,6 +376,9 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ...referralView(wallet), eligible: h.open + h.settled > 0, bets: h.open + h.settled, firstBet: h.settled === 0 && h.open > 0 }, { "cache-control": "no-store" });
     }
     if (p === "/referral/code" && req.method === "POST") {
+      // a wallet that already has a code used to cost nothing here, yet each answer walks the settlement log for its
+      // earnings: the per-address list budget now applies to every request (weekly audit 2026-11-17, M3 rest)
+      chargeList(clientIp(req));
       let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: "bad body" }); }
       if (!isAddr(b.wallet)) return json(res, 400, { error: "wallet required" });
       const wallet = String(b.wallet).toLowerCase(), db = referrals.load(REFERRALS_FILE);

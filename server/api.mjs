@@ -20,7 +20,7 @@ import anchor from "@coral-xyz/anchor";
 import { xstockPrices, utcDate, addDays, chainClose } from "./prices.mjs";
 import { readRegistry, asStock, REGISTRY_FILE } from "./chain-tokens.mjs";
 import { leaderboard, readSettlements } from "./points.mjs";
-import { homeHtml, eventHtml } from "./ssr.mjs";
+import { homeHtml, eventHtml, ssrCacheKey } from "./ssr.mjs";
 import { resolveLang, translateHtml, translator, langScript } from "./i18n.mjs";
 import { notify } from "./notify.mjs";
 import * as referrals from "./referrals.mjs";
@@ -98,16 +98,9 @@ function chargeList(ip) {
   if (n > LIST_IP_PER_MINUTE) throw Object.assign(new Error("too many requests from this address; try again in a minute"), { status: 429 });
 }
 const tagOf = (b) => Buffer.from(b).toString("utf8").replace(/\0+$/, "");
-// The first-paint pre-render (ssr.mjs) reads a few known query parameters; its cache is keyed by those, so ?x=<random>
-// is the same page as none. Until 2026-10-20 the whole query string was the key and every unseen string was a full
-// render, so one address could keep the single Node process rendering (audit M3). A list filter on the home page makes
-// the pre-render step aside whatever its value: one key for all of them.
-function ssrKey(rel, url) {
-  const q = url.searchParams;
-  if (rel === "/market.html") return ["id", "e", "t"].map((k) => `${k}=${q.get(k) ?? ""}`).join("&");
-  if (["issuer", "status", "sort", "q"].some((k) => q.get(k))) return "filtered";
-  return ["stock", "cat"].map((k) => `${k}=${q.get(k) ?? ""}`).join("&");
-}
+// The first-paint pre-render (ssr.mjs) is cached by ssrCacheKey: the query values it reads, and only values the data
+// knows, so ?x=<random> and ?stock=<random> are one entry each, not one render per request (audit M3, 2026-10-20 and
+// 2026-11-17).
 const num = (x) => (x?.toNumber ? x.toNumber() : Number(x));
 // token program, decimals and current ScaledUiAmount multiplier (dividends / splits) of each mint; re-read every 10 min
 const mintInfos = new Map();
@@ -329,11 +322,11 @@ function serveStatic(res, url, req) {
     const { lang, fromQuery } = resolveLang(req, url);
     res.writeHead(200, { "content-type": TYPES[".html"], "cache-control": "no-cache", "vary": "accept-language, cookie", "content-language": lang, "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY",
       ...(fromQuery ? { "set-cookie": `sp_lang=${lang}; Path=/; Max-Age=31536000; SameSite=Lax` } : {}) });
-    const key = lang + "|" + rel + "|" + ssrKey(rel, url), hit = renderCache.get(key);
+    // first-paint content rendered here (ssr.mjs) from this one snapshot; a rendering error only costs the pre-render
+    const data = { markets: chainCache.markets, config: chainCache.config, stocks, prices: priceCache.at ? priceCache.prices : null };
+    const key = lang + "|" + rel + "|" + ssrCacheKey(data, rel, url), hit = renderCache.get(key);
     if (hit && Date.now() - hit.at < RENDER_TTL_MS) return res.end(hit.html);
     let html = pageHtml(file).replace("</head>", () => bootScript() + "</head>"); // function replacer: "$" in token names is data, not a pattern
-    // first-paint content rendered here (ssr.mjs); a rendering error only costs the pre-render, never the page
-    const data = { markets: chainCache.markets, config: chainCache.config, stocks, prices: priceCache.at ? priceCache.prices : null };
     try { const tr = translator(lang); if (rel === "/index.html") html = homeHtml(data, html, url, tr); else if (rel === "/market.html") html = eventHtml(data, url, html, tr); }
     catch (e) { console.error("ssr failed:", String(e?.message ?? e).slice(0, 160)); }
     try { html = translateHtml(html, lang); } catch (e) { console.error("i18n failed:", String(e?.message ?? e).slice(0, 160)); }
@@ -400,6 +393,7 @@ const server = http.createServer(async (req, res) => {
     // GET /referral/lookup/:code → who a code belongs to (for the "invited by" banner)
     const rl = p.match(/^\/referral\/lookup\/([A-Za-z0-9]{4,12})$/);
     if (rl) {
+      chargeList(clientIp(req));   // reads the referral file each time (weekly audit 2026-11-17)
       const code = referrals.normalizeCode(rl[1]), w = referrals.referrerOf(referrals.load(REFERRALS_FILE), code);
       return json(res, 200, w ? { valid: true, code, referrer: w.slice(0, 4) + "…" + w.slice(-4), refereeBps: referrals.REFEREE_BPS } : { valid: false, code }, { "cache-control": "public, max-age=60" });
     }
@@ -416,6 +410,9 @@ const server = http.createServer(async (req, res) => {
     // POST /referral/code {wallet} → create the wallet's code once it has placed a bet (nothing to sign: a code only
     // ever pays its owner)
     if (p === "/referral/code" && req.method === "POST") {
+      // a wallet that already has a code used to cost nothing here, yet each answer walks the settlement log for its
+      // earnings: the per-address list budget now applies to every request (weekly audit 2026-11-17, M3 rest)
+      chargeList(clientIp(req));
       let b; try { b = JSON.parse(await readBody(req)); } catch { return json(res, 400, { error: "bad body" }); }
       const wallet = String(b.wallet ?? ""); if (!isPubkey(wallet)) return json(res, 400, { error: "wallet required" });
       const db = referrals.load(REFERRALS_FILE);
