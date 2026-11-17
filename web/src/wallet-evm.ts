@@ -67,7 +67,15 @@ function sessionFor(label: string, account: Address, client: WalletClient, befor
     await wait(hash);
     return hash;
   };
-  return { label, address: account, placeBet, signMessage, mintMock, disconnect: async () => {} };
+  const write: NonNullable<Session["write"]> = async (call, onSent) => {
+    await before();
+    const { request } = await publicClient.simulateContract({ account: signer, address: call.address as Address, abi: call.abi as any, functionName: call.functionName as any, args: call.args as any });
+    const hash = await client.writeContract({ ...(request as any), account: signer, chain });
+    onSent?.(hash);
+    await wait(hash);
+    return hash;
+  };
+  return { label, address: account, placeBet, signMessage, mintMock, write, disconnect: async () => {} };
 }
 
 export async function connectWallet(choice: WalletChoice): Promise<Session> {

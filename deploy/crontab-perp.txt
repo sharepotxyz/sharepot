@@ -1,0 +1,16 @@
+# SharePot Perp on Base Sepolia — lines to add to the `sharepot` user's crontab (next to deploy/crontab-evm.txt) once
+# the pool is deployed and its address is in server/evm/chains.json (base-sepolia.perp).
+# perp.mjs is idempotent: it schedules the next two weeks of NYSE sessions, proposes each close 30 min after the bell
+# once two sources agree (Yahoo + Nasdaq to the cent, or Yahoo + Chainlink within 1 %) and settles after the 6 h
+# dispute window. It never claims for anyone: users withdraw their own exits. It signs with the operator key only; the
+# admin key is not on this machine.
+# Its own lock file: it never overlaps itself, and it shares nothing with the Robinhood scripts (other chain, other key).
+
+*/10 * * * * cd $S/apps/sharepot && EVM_CHAIN=base-sepolia DATA_DIR=$S/data EVM_PROPOSER_KEY_FILE=$S/secrets/evm/perp-operator.key flock -n $S/locks/perp-base-sepolia.lock node server/evm/perp.mjs >> $S/logs/perp-base-sepolia.log 2>&1
+
+# This is a fragment: SHELL, PATH and S=/home/sharepot come from the header of deploy/crontab.txt (deploy-base.sh adds
+# only this line, next to them).
+#
+# The independent check runs on the OTHER host (Tokyo, root crontab), with the pool admin's key that lives only there:
+#   3,13,23,33,43,53 * * * * /root/stocklana/verify-cron-perp.sh >> /root/stocklana/logs/verify-cron-perp.log 2>&1
+# It recomputes each proposed close and rejects one that differs (the operator above then proposes again).

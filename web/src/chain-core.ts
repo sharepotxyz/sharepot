@@ -28,6 +28,9 @@ export type Session = {
   signIn?: (input: SignInInput) => Promise<SignInOutput>;
   /** Test networks only: mint `amountRaw` of a mock token (its mint is public) to this wallet; the transaction id. */
   mintMock?: (token: string, amountRaw: bigint) => Promise<string>;
+  /** EVM only: simulate, sign, send and wait for any contract call (the perp page's entries, exits and approvals);
+   *  the transaction id. Same unconfirmed-after-90s contract as placeBet. */
+  write?: (call: { address: string; abi: readonly unknown[]; functionName: string; args: readonly unknown[] }, onSent?: (txid: string) => void) => Promise<string>;
   disconnect: () => Promise<void>;
 };
 export type SignInInput = { domain: string; address: string; statement: string; uri?: string; version?: string; chainId?: string; nonce?: string; issuedAt?: string };

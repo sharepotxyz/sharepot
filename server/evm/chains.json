@@ -90,5 +90,28 @@
     "deployBlock": null,
     "stocks": [],
     "test": false
+  },
+  "base-sepolia": {
+    "_doc": "SharePot Perp (server/evm/perp.mjs): `perp` the pool, `perpToken` its stock token (a MockStock NVDAc on this testnet), `perpDeployBlock` where the claim keeper starts reading events, `perpSymbol` whose official closes settle it, `perpFeed` the Chainlink feed on Base MAINNET used as a sanity check, `perpMainnetToken` the real Coinbase token whose multiplier that check applies.",
+    "name": "Base Sepolia",
+    "chainId": 84532,
+    "rpc": "https://sepolia.base.org",
+    "explorer": "https://sepolia.basescan.org",
+    "pot": null,
+    "deployBlock": null,
+    "stocks": [],
+    "test": true,
+    "perp": "0x203E3C059f968f8D8962aA0Ad79EC957888e21F4",
+    "perpToken": "0xdFe9b139A9DA77Fe3de7Bc4656443c934b497915",
+    "perpDeployBlock": 59887456,
+    "perpDemoWallets": ["0x4d9dBd730a2EF82b867473cd7c229E87bcEafA02", "0x033Da3a0B7a96c9fF85cD84687d970252D24E6d4", "0x96490AB6A9A20bc342D06157Fb25fb9C24d035c3", "0xBaC7e279921B1bD6cEce66e7Ac0d9Ca234735ee8", "0xE3Fe0e4E70D8562b7ff8F645c74Cf45C32C09E73", "0x669ec46F8CebecA7642e15399Cb30A493aBD1cA7"],
+    "perpLogsRpcs": [
+      { "url": "https://base-sepolia.gateway.tenderly.co", "window": 100000 },
+      { "url": "https://base-sepolia-rpc.publicnode.com", "window": 45000 }
+    ],
+    "perpLogsConfirm": 3000,
+    "perpSymbol": "NVDA",
+    "perpFeed": "0x04689a41629776563E6822F76f2e57D148d28513",
+    "perpMainnetToken": "0xb20000000000000000000078ee7ce2fE4908108C"
   }
 }

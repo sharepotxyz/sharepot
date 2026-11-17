@@ -24,6 +24,16 @@ export const EVM = {
   faucet: (import.meta.env.VITE_EVM_FAUCET as string | undefined) ?? "https://faucet.testnet.chain.robinhood.com",
 };
 
+/** SharePot Perp (the Base site, perp.html): the pool, its stock token and whose closes settle it. Empty = not deployed. */
+export const PERP = {
+  address: (import.meta.env.VITE_PERP as string | undefined) ?? "",
+  token: (import.meta.env.VITE_PERP_TOKEN as string | undefined) ?? "",
+  symbol: (import.meta.env.VITE_PERP_SYMBOL as string | undefined) ?? "NVDA",
+  tokenSymbol: (import.meta.env.VITE_PERP_TOKEN_SYMBOL as string | undefined) ?? "NVDAc",
+  /** Where test ETH for gas comes from on this network (the site has none of its own). */
+  gasFaucet: (import.meta.env.VITE_PERP_GAS_FAUCET as string | undefined) ?? "https://docs.base.org/base-chain/tools/network-faucets",
+};
+
 export const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
 export const IS_TEST = IS_EVM ? EVM.test : CLUSTER !== "mainnet";
 /** Short: the chain switch already names the chain, so the badge only says which network of it. */

@@ -104,7 +104,8 @@ async function getJson(url, headers = {}) {
 }
 
 // ---------- daily closes (bars: { date, close, dividend, split }) ----------
-async function yahooDaily(symbol, start, end) {
+/** Daily bars (exported for the perp pool, which spans skipped days with the bars that actually exist). */
+export async function yahooDaily(symbol, start, end) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?period1=${nyToUnix(start, "00:00")}&period2=${nyToUnix(addDays(end, 1), "00:00")}&interval=1d&events=div%2Csplit`;
   const { json, raw } = await getJson(url, { "user-agent": "Mozilla/5.0 (SharePot resolver)" });
   const r = json.chart?.result?.[0]; if (!r) throw new Error("yahoo: empty chart result");

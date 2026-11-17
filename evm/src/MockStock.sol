@@ -20,6 +20,9 @@ contract MockStock {
     uint256 public uiMultiplier = 1e18;
     /// Skimmed from every transfer and burned; 0 for a Robinhood-like token.
     uint16 public feeBps;
+    /// Most raw units one mint call may create; 0 = no limit. The perp pool's test token sets one, so that reaching
+    /// the pool's MAX_POOL would take on the order of 1e14 transactions instead of one.
+    uint256 public mintCap;
 
     event Transfer(address indexed from, address indexed to, uint256 value);
     event Approval(address indexed owner, address indexed spender, uint256 value);
@@ -29,6 +32,7 @@ contract MockStock {
     error InsufficientBalance();
     error InsufficientAllowance();
     error NotOwner();
+    error MintTooLarge();
 
     constructor(string memory name_, string memory symbol_, uint8 decimals_) {
         name = name_;
@@ -51,6 +55,7 @@ contract MockStock {
     }
 
     function mint(address to, uint256 amount) external {
+        if (mintCap != 0 && amount > mintCap) revert MintTooLarge();
         totalSupply += amount;
         balanceOf[to] += amount;
         emit Transfer(address(0), to, amount);
@@ -60,6 +65,7 @@ contract MockStock {
     function setBlocked(address a, bool b) external onlyOwner { blocked[a] = b; }
     function setMultiplier(uint256 m) external onlyOwner { uiMultiplier = m; }
     function setFeeBps(uint16 f) external onlyOwner { feeBps = f; }
+    function setMintCap(uint256 c) external onlyOwner { mintCap = c; }
 
     function balanceOfUI(address a) external view returns (uint256) {
         return balanceOf[a] * uiMultiplier / 1e18;
