@@ -5,7 +5,7 @@ import type { Address } from "viem";
 import { PERP } from "./config";
 import type { Session } from "./wallet-evm";
 import {
-  BLOCKED, MAXU, ONE, P, PROPOSED, TESTNET, TOKEN, abi, httpsUrl, rawToStr, read, erc20, errText, esc, exposures, fillOf, fmtDate, fmtTime, fundingDaily, left, levText,
+  geo, noSend, MAXU, ONE, P, PROPOSED, TESTNET, TOKEN, abi, httpsUrl, rawToStr, read, erc20, errText, esc, exposures, fillOf, fmtDate, fmtTime, fundingDaily, left, levText,
   loadMine, loadState, netLev, parseAmount, pct, price, pt, rememberExit, tierCls, tierKey, tok, txLink, usd, type Mine, type St,
 } from "./perp-core";
 import { askGas, health, mountShell, onHealth, onSession, refreshWallet } from "./perp-shell";
@@ -21,6 +21,7 @@ const exitStr: Record<number, string> = {};
 async function refresh() {
   try {
     st = await loadState(); loadErr = "";
+    render();   // the pool first; the wallet's side follows
     mine = session ? await loadMine(st, session.address as Address) : null;
   } catch (e) { loadErr = errText(e); }
   render(); refreshWallet();
@@ -63,7 +64,7 @@ function orderCard(s: St) {
   const zero = kFull > 1.0001 ? pt("ord.zeroDrop", { sym: PERP.symbol, pct: pct(1 / kFull, 0) }) : kFull < -0.0001 ? pt("ord.zeroRise", { sym: PERP.symbol, pct: pct(1 / -kFull, 0) }) : pt("ord.zeroNever");
   const why = f >= 0.9995 ? "" : f <= 0.0005 ? pt("ord.unmatched", { sym: PERP.symbol }) : pt("ord.partial", { pct: pct(f, 0), sym: PERP.symbol });
   const levCls = (x: number) => (x > 0.005 ? "gain" : x < -0.005 ? "drop" : "");
-  const can = !!session && !!s.open && !s.paused && !BLOCKED && !s.problem;
+  const can = !!session && !!s.open && !s.paused && !noSend() && !s.problem;
   const over = !!(amt && mine && amt > mine.bal);
   const needApprove = !!(amt && mine && mine.allowance < amt);
   const btn = !session ? pt("ord.connect") : !s.open ? pt("ord.noOpen") : needApprove ? pt("ord.approve", { tok: PERP.tokenSymbol }) : pt("ord.submit");
@@ -99,10 +100,10 @@ function positionsCard(s: St) {
     const k = netLev(t, fillOf(t, e));
     const pend = p.pending.map((q) => `<div class="note">${esc(pt("pos.pendingIn", { time: fmtTime(q.cutoff), n: tok(q.amount), tok: PERP.tokenSymbol }))}</div>`).join("");
     const exits = ex.map((x) => x.ready
-      ? `<div class="pready">${esc(pt("pos.ready", { n: tok(x.tokens), tok: PERP.tokenSymbol }))} <button class="primary" data-claim="${x.day}:${x.tier}" ${busy || BLOCKED || !!s.problem ? "disabled" : ""}>${esc(pt("pos.withdraw"))}</button></div>`
+      ? `<div class="pready">${esc(pt("pos.ready", { n: tok(x.tokens), tok: PERP.tokenSymbol }))} <button class="primary" data-claim="${x.day}:${x.tier}" ${busy || noSend() || !!s.problem ? "disabled" : ""}>${esc(pt("pos.withdraw"))}</button></div>`
       : `<div class="note">${esc(pt("pos.pendingOut", { time: fmtTime(x.cutoff) }))}</div>`).join("");
     const held = p.shares > 0n ? `<div class="pposv"><b>${esc(pt("pos.value", { n: tok(p.tokens), tok: PERP.tokenSymbol, usd: usd((Number(p.tokens) / 1e8) * px) }))}</b><span class="note">${esc(pt("pos.now", { lev: levText(k) }))}</span></div>
-      <div class="pexit"><input data-exitamt="${t.i}" inputmode="decimal" placeholder="${esc(pt("pos.exitAmt", { tok: PERP.tokenSymbol }))}" value="${esc(exitStr[t.i] ?? "")}"><button data-exit="${t.i}" ${busy || !s.open || s.paused || BLOCKED || !!s.problem ? "disabled" : ""}>${esc(pt("pos.exit"))}</button><button class="ghost" data-exitall="${t.i}" ${busy || !s.open || s.paused || BLOCKED || !!s.problem ? "disabled" : ""}>${esc(pt("pos.exitAll"))}</button></div>` : "";
+      <div class="pexit"><input data-exitamt="${t.i}" inputmode="decimal" placeholder="${esc(pt("pos.exitAmt", { tok: PERP.tokenSymbol }))}" value="${esc(exitStr[t.i] ?? "")}"><button data-exit="${t.i}" ${busy || !s.open || s.paused || noSend() || !!s.problem ? "disabled" : ""}>${esc(pt("pos.exit"))}</button><button class="ghost" data-exitall="${t.i}" ${busy || !s.open || s.paused || noSend() || !!s.problem ? "disabled" : ""}>${esc(pt("pos.exitAll"))}</button></div>` : "";
     return `<div class="pposr"><div class="pposh"><b class="tc-${tierCls(t)}">${esc(pt(tierKey(t)))}</b></div>${held}${pend}${exits}</div>`;
   }).join("");
   return `<section class="card ppos"><h2>${esc(pt("pos.title"))}</h2>${rows || `<div class="note">${esc(pt("pos.none"))}</div>`}${msgs.pos ? `<div class="note pmsg">${msgs.pos}</div>` : ""}</section>`;
@@ -113,7 +114,7 @@ function faucetCard() {
   const noEth = !!(session && mine && mine.eth === 0n);
   return `<section class="card pfau"><h2>${esc(pt("faucet.title"))}</h2><p class="note">${esc(pt("faucet.p", { tok: PERP.tokenSymbol }))}</p>
     ${noEth ? `<div class="note warn">${esc(pt("faucet.noEth"))}</div>` : ""}
-    <div class="prow"><button id="pmint" ${!session || busy || BLOCKED ? "disabled" : ""}>${esc(pt("faucet.mint", { tok: PERP.tokenSymbol }))}</button>${health.faucet ? `<button id="pgas" ${!session || busy || BLOCKED ? "disabled" : ""}>${esc(pt("faucet.gas"))}</button>` : `<a class="btn" href="${esc(httpsUrl(PERP.gasFaucet))}" target="_blank" rel="noopener">${esc(pt("faucet.gas"))}</a>`}</div>
+    <div class="prow"><button id="pmint" ${!session || busy || noSend() ? "disabled" : ""}>${esc(pt("faucet.mint", { tok: PERP.tokenSymbol }))}</button>${health.faucet ? `<button id="pgas" ${!session || busy || noSend() ? "disabled" : ""}>${esc(pt("faucet.gas"))}</button>` : `<a class="btn" href="${esc(httpsUrl(PERP.gasFaucet))}" target="_blank" rel="noopener">${esc(pt("faucet.gas"))}</a>`}</div>
     ${msgs.mint ? `<div class="note pmsg">${msgs.mint}</div>` : ""}</section>`;
 }
 
@@ -122,7 +123,7 @@ const rules = () => `<details class="card prules"><summary>${esc(pt("rules.title
 function render() {
   const root = document.getElementById("perp")!;
   const keepFocus = document.activeElement instanceof HTMLInputElement ? { id: document.activeElement.id, ex: document.activeElement.dataset.exitamt, pos: document.activeElement.selectionStart } : null;
-  const hero = `<section class="phero"><h1>${pt("hero.h1", { sym: esc(PERP.symbol) })}</h1><p>${esc(pt("hero.p", { tok: PERP.tokenSymbol }))}</p>${BLOCKED ? `<div class="note warn">${pt("rules.7", { sym: esc(PERP.symbol) })}</div>` : ""}</section>`;
+  const hero = `<section class="phero"><h1>${pt("hero.h1", { sym: esc(PERP.symbol) })}</h1><p>${esc(pt("hero.p", { tok: PERP.tokenSymbol }))}</p>${geo.blocked ? `<div class="note warn">${pt("rules.7", { sym: esc(PERP.symbol) })}</div>` : ""}</section>`;
   if (!P) { root.innerHTML = hero + `<div class="note">Not deployed on this network yet.</div>`; return; }
   if (!st) { root.innerHTML = hero + `<div class="note">${loadErr ? esc(pt("err", { err: loadErr })) : "…"}</div>`; return; }
   // one flat list in reading order (phones); on wide screens the order panel takes the right column (perp.css)

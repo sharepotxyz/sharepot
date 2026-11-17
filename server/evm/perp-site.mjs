@@ -1,7 +1,8 @@
 // The SharePot Perp site (Base): its pages from web/dist-base and a small API, in one process on 127.0.0.1 (Caddy fronts
 // it as base.sharepot.xyz, and only for Cloudflare's edge, so the CF-* headers below are Cloudflare's):
-//   /, /history, /me, /docs   the four pages (perp.html, perp-history.html, perp-me.html, perp-docs.html); visitors in
-//                             the United States get window.__GEO__ = { blocked: true }: readable, nothing can be sent
+//   /, /history, /me, /docs   the four pages (perp.html, perp-history.html, perp-me.html, perp-docs.html), the same
+//                             bytes for everyone so Cloudflare can cache them; each page asks /api/health whether this
+//                             visitor is in the United States (readable, nothing can be sent) and sends nothing until told
 //   /api/health               chain, pool, faucet on/off, the caller's country as Cloudflare reports it
 //   /api/days                 every scheduled day: its close, the token value proposed and settled, what moved, the
 //                             funding paid, the transactions, and a summary of the price evidence
@@ -225,14 +226,14 @@ function serveStatic(req, res, p) {
   if (PAGES[rel]) rel = "/" + PAGES[rel];
   const file = path.resolve(STATIC, "." + rel), ext = path.extname(file).toLowerCase();
   if (!rel || rel.includes("\0") || !file.startsWith(STATIC + path.sep) || (ext === ".html" && !HTML_OK.has(path.basename(file))) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
-    res.writeHead(404, { "content-type": "text/plain", ...SEC }); return res.end("not found");
+    // never kept by Cloudflare (it would keep a .js 404 for minutes): a file missing for a moment stays missing that long
+    res.writeHead(404, { "content-type": "text/plain", "cache-control": "no-store", ...SEC }); return res.end("not found");
   }
   if (ext === ".html") {
-    let html = fs.readFileSync(file, "utf8");
-    // the flag goes in before the page's own module script, which reads it once at start
-    if (isBlocked(req)) html = html.replace("<script", `<script>window.__GEO__={"blocked":true}</script><script`);
-    res.writeHead(200, { "content-type": TYPES[".html"], "cache-control": "no-cache", vary: "cf-ipcountry", ...SEC });
-    return res.end(html);
+    // identical for every visitor (the US check is /api/health's): Cloudflare may keep a copy for a minute (s-maxage),
+    // browsers revalidate every time (max-age=0). A deploy is visible everywhere within that minute.
+    res.writeHead(200, { "content-type": TYPES[".html"], "cache-control": "public, max-age=0, s-maxage=60", ...SEC });
+    return res.end(fs.readFileSync(file));
   }
   res.writeHead(200, { "content-type": TYPES[ext] ?? "application/octet-stream", "cache-control": rel.startsWith("/assets/") ? "public, max-age=31536000, immutable" : "no-cache", ...SEC });
   fs.createReadStream(file).pipe(res);
@@ -246,7 +247,7 @@ const server = http.createServer(async (req, res) => {
     if (p === "/api/health") return json(res, 200, { ok: true, chain: CHAIN_KEY, chainId: chainCfg.chainId, perp: POOL, faucet: !!faucet, demoWallets: DEMO, treasury: TREASURY, country: country(req) || null, blocked: isBlocked(req), indexedAt: lastSyncAt ? Math.floor(lastSyncAt / 1000) : null, indexBehind: !!syncError });
     if (p === "/api/gas") return req.method === "POST" ? await gas(req, res) : json(res, 405, { error: "POST only" });
     if (p === "/api/feedback") return req.method === "POST" ? await feedback(req, res) : json(res, 405, { error: "POST only" });
-    if (p === "/api/days") { chargeRead(req); return json(res, 200, await days(), { "cache-control": "public, max-age=15" }); }
+    if (p === "/api/days") { chargeRead(req); return json(res, 200, await days(), { "cache-control": "public, max-age=15, s-maxage=15" }); }
     const ev = p.match(/^\/api\/evidence\/(\d{1,6})$/);
     if (ev) {
       chargeRead(req);

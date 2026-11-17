@@ -4,7 +4,7 @@
 import { PERP } from "./config";
 import { connectWallet, devWallet, listWallets, type Session } from "./wallet-evm";
 import { LANGS, setLang } from "./i18n";
-import { BLOCKED, P, PL, TESTNET, TOKEN, addrLink, errText, esc, pc, pt, txLink } from "./perp-core";
+import { P, PL, TESTNET, TOKEN, addrLink, errText, esc, geo, noSend, pc, pt, txLink } from "./perp-core";
 
 const LOGO = `<svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16" fill="#5b4bdb"/><g fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round"><path d="M24 23c-4-4 4-7 0-11"/><path d="M40 23c-4-4 4-7 0-11"/></g><rect x="6" y="30" width="52" height="8" rx="4" fill="#fff"/><path d="M12 30h40v8a16 16 0 0 1-16 16h-8a16 16 0 0 1-16-16z" fill="#fff"/><path d="M17 36h13v13.5a11 11 0 0 1-13-11z" fill="#ffd166"/><path d="M47 36H34v13.5a11 11 0 0 0 13-11z" fill="#f2545b"/></svg>`;
 export type PageName = "pool" | "history" | "me" | "docs";
@@ -20,7 +20,17 @@ const isHex40 = (a: unknown) => typeof a === "string" && /^0x[0-9a-fA-F]{40}$/.t
 export const oursKind = (addr: string) => (health.demoWallets.some((a) => a.toLowerCase() === addr.toLowerCase()) ? "bot" : health.treasury && health.treasury.toLowerCase() === addr.toLowerCase() ? "treasury" : null);
 const healthListeners: (() => void)[] = [];
 export const onHealth = (fn: () => void) => { healthListeners.push(fn); };
-fetch("/api/health").then((r) => (r.ok ? r.json() : null)).then((h) => {
+// A few tries: until it answers, nothing can be sent (geo.known stays false).
+async function loadHealth(tries = 4): Promise<any> {
+  for (let i = 0; ; i++) {
+    try { const r = await fetch("/api/health", { cache: "no-store" }); if (r.ok) return await r.json(); } catch {}
+    if (i + 1 >= tries) return null;
+    await new Promise((ok) => setTimeout(ok, 1500 * (i + 1)));
+  }
+}
+loadHealth().then((h) => {
+  if (!h) return;
+  geo.known = true; geo.blocked = h.blocked === true;
   health.faucet = !!h?.faucet;
   health.demoWallets = Array.isArray(h?.demoWallets) ? h.demoWallets.filter(isHex40) : [];
   health.treasury = isHex40(h?.treasury) ? h.treasury : null;
@@ -165,4 +175,4 @@ function mountFeedback() {
 }
 
 /** Pages that send transactions: false for visitors the server flagged (and nothing is sent without a wallet). */
-export const canSend = () => !!session && !BLOCKED;
+export const canSend = () => !!session && !noSend();

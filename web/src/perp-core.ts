@@ -59,7 +59,20 @@ export async function api<T = any>(path: string): Promise<T> {
 // ---------------------------------------------------------------- chain
 export const abi = perpAbiJson as any;
 export const P = PERP.address as Address, TOKEN = PERP.token as Address;
-export const pc = createPublicClient({ transport: http(EVM.rpc, { batch: true, retryCount: 3, retryDelay: 700 }) });
+// Reads are cheap on the wire but the public RPC counts them: sepolia.base.org answers "25/second request limit
+// reached" per call past 25 a second, and a page load asks ~30 (a connected wallet ~70), so the extra ones came back
+// after a 0.7 s retry on every load. Every contract read of a round therefore goes out as ONE Multicall3 call (the
+// canonical deployment on Base; a deployless one elsewhere, e.g. a local anvil); failed reads still fail one by one.
+// And sent as text/plain where the RPC accepts it (sepolia.base.org / mainnet.base.org do): a "simple" request, so the
+// browser skips the CORS preflight that otherwise costs one more round trip (~0.23 s from Asia) before the first read.
+const BASE_RPC = /(^|\.)base\.org$/.test(new URL(EVM.rpc).hostname);
+const MULTICALL3 = [8453, 84532].includes(EVM.chainId) ? "0xcA11bde05977b3631167028862bE2a173976CA11" : null;
+const chain = { id: EVM.chainId, name: EVM.name ?? "EVM", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: { default: { http: [EVM.rpc] } },
+  ...(MULTICALL3 ? { contracts: { multicall3: { address: MULTICALL3 as Address } } } : {}) };
+export const pc = createPublicClient({
+  chain, batch: { multicall: { batchSize: 16_384, deployless: !MULTICALL3 } },
+  transport: http(EVM.rpc, { batch: true, retryCount: 3, retryDelay: 700, ...(BASE_RPC ? { fetchOptions: { headers: { "Content-Type": "text/plain" } } } : {}) }),
+});
 export const erc20 = [
   parseAbiItem("function balanceOf(address) view returns (uint256)"),
   parseAbiItem("function allowance(address, address) view returns (uint256)"),
@@ -76,8 +89,13 @@ export const TESTNET = EVM.chainId === 84532 || EVM.chainId === 31337;
 export const httpsUrl = (u: string) => (/^https:\/\/[^\s"'<>]+$/.test(u) ? u : "#");
 /** Raw units → the exact decimal string (no float on the way, so "Max" never rounds above the balance). */
 export const rawToStr = (raw: bigint) => { const w = raw / ONE, f = (raw % ONE).toString().padStart(DEC, "0").replace(/0+$/, ""); return f ? `${w}.${f}` : `${w}`; };
-/** Set by the server for visitors it must not serve (US persons); everything stays readable, nothing can be sent. */
-export const BLOCKED = (window as any).__GEO__?.blocked === true;
+/** Whether this visitor may send transactions, from the site's /api/health (Cloudflare's country for the request).
+ *  Until that answer arrives nothing can be sent — fail closed; `blocked` = placed in the United States, where the page
+ *  stays readable but every button that sends is off. (It used to be written into the HTML, which kept Cloudflare from
+ *  caching the page: every visitor got a different copy.) */
+export const geo = { known: false, blocked: false };
+/** True when sending is off for this visitor right now: not known yet, or blocked. */
+export const noSend = () => !geo.known || geo.blocked;
 
 export type Tier = { i: number; c: number; isLong: boolean; gen: number; held: bigint; shares: bigint };
 export type Ep = { day: number; cutoff: number; state: number; proposedAt: number; value: bigint; rolledTo: number };
@@ -102,18 +120,27 @@ export async function fillDay(day: number): Promise<{ filled: boolean; ep: Ep }>
 }
 
 export async function loadState(): Promise<St> {
-  const [blk, lastScheduled, lastSettled, lastValue, openEpoch, dispute, feeBps, fundingBps, paused, treasury, hedge, n, chainId, poolToken] = await Promise.all([
+  // Round 1, one batched request: everything that depends on nothing else — including the first 4 tiers (this pool
+  // has 4; a read past tierCount fails, and a failed read also makes viem fetch its offchain-lookup chunk — another
+  // request — so no more are asked than a pool usually has; a 5th, if a pool ever has one, follows on its own).
+  const [blk, lastScheduled, lastSettled, lastValue, openEpoch, dispute, feeBps, fundingBps, paused, treasury, hedge, n, chainId, poolToken, ...tierRaw] = await Promise.all([
     pc.getBlock({ blockTag: "latest" }), read("lastScheduled"), read("lastSettled"), read("lastValue"), read("openEpoch"), read("disputeWindowSecs"),
-    read("feeBps"), read("fundingBps"), read("paused"), read("treasury"), read("hedgeTier"), read("tierCount"), pc.getChainId(), read("token")]);
+    read("feeBps"), read("fundingBps"), read("paused"), read("treasury"), read("hedgeTier"), read("tierCount"), pc.getChainId(), read("token"),
+    ...[0, 1, 2, 3].map((i) => read("tierInfo", [i]).catch(() => null))]);
+  for (let i = tierRaw.length; i < Number(n); i++) tierRaw.push(await read("tierInfo", [i]).catch(() => null));
   const problem = chainId !== EVM.chainId ? `this page expects chain ${EVM.chainId} but its RPC answers for chain ${chainId}`
     : String(poolToken).toLowerCase() !== TOKEN.toLowerCase() ? "the pool's token is not the one this page was built for" : null;
   const now = Number(blk.timestamp);
-  const tiers: Tier[] = (await Promise.all([...Array(Number(n)).keys()].map((i) => read("tierInfo", [i])))).map((t: any, i) => ({ i, c: Number(t.c), isLong: t.isLong, gen: Number(t.gen), held: t.held, shares: t.shares }));
+  const tiers: Tier[] = tierRaw.slice(0, Number(n)).map((t: any, i) => ({ i, c: Number(t.c), isLong: t.isLong, gen: Number(t.gen), held: t.held, shares: t.shares }));
+  if (tiers.length !== Number(n) || tierRaw.slice(0, Number(n)).some((t) => !t)) throw new Error("could not read the pool's tiers");
   const ls = Number(lastSettled), sched = Number(lastScheduled);
-  const ahead: number[] = []; for (let d = Math.max(Number(openEpoch), ls + 1); d <= Math.min(sched, Math.max(Number(openEpoch), ls + 1) + 6); d++) ahead.push(d);
+  // Round 2: the days around now, the last settled one and the treasury's hedge shares.
+  const from = Math.max(Number(openEpoch), ls + 1), ahead: number[] = [];
+  for (let d = from; d <= Math.min(sched, from + 6); d++) ahead.push(d);
   const [eps, settled, tSh] = await Promise.all([Promise.all(ahead.map(epoch)), ls ? epoch(ls) : Promise.resolve(null), read("sharesOf", [treasury, Number(hedge)])]);
-  const treasuryTok = tSh ? ((await read("sharesToTokens", [Number(hedge), tSh])) as bigint) : 0n;
-  let last = settled; for (let d = ls; last && last.state !== SETTLED && d > 1; ) last = await epoch(--d);   // a skipped day has no close of its own
+  const h = tiers[Number(hedge)];
+  const treasuryTok = h && h.shares > 0n ? ((tSh as bigint) * h.held) / h.shares : 0n;   // = sharesToTokens, from the tier's own books
+  let last = settled; for (let d = ls; last && last.state !== SETTLED && d > 1; ) last = await epoch(--d);   // only after a skipped day
   return { now, problem, lastScheduled: sched, lastSettled: ls, lastValue, dispute: Number(dispute), feeBps: Number(feeBps), fundingBps: Number(fundingBps), paused, tiers, hedge: Number(hedge), treasuryTok,
     open: eps.find((e) => e.cutoff > now) ?? null, next: eps.find((e) => e.day === ls + 1) ?? null, settled: last && last.state === SETTLED ? last : null };
 }
@@ -123,26 +150,37 @@ const rememberedExits = (user: string): number[] => { try { return JSON.parse(lo
 /** Exits are found by looking at recent days; a day this browser asked for an exit on is always looked at too. */
 export const rememberExit = (user: string, day: number) => { try { localStorage.setItem(exitDaysKey(user), JSON.stringify([...new Set([...rememberedExits(user), day])].slice(-50))); } catch {} };
 
-/** One wallet's side of the pool: balances, each tier's position, entries waiting for their close, exits. */
+/** One wallet's side of the pool: balances, each tier's position, entries waiting for their close, exits. Two or three
+ *  batched requests: round 1 asks everything at once (exits are looked for on the last two weeks of days, on any day
+ *  this browser asked to exit on, and on any the caller found in the index), round 2 which close each request fills
+ *  at, round 3 (only with filled exits) what withdrawing them pays. Token amounts of shares come from the tiers' own
+ *  books in `st`, the same arithmetic as the contract's sharesToTokens. */
 export async function loadMine(st: St, user: Address, extraExitDays: number[] = []): Promise<Mine> {
-  const [bal, allowance, eth] = await Promise.all([pc.readContract({ address: TOKEN, abi: erc20, functionName: "balanceOf", args: [user] }), pc.readContract({ address: TOKEN, abi: erc20, functionName: "allowance", args: [user, P] }), pc.getBalance({ address: user })]);
-  const pos = await Promise.all(st.tiers.map(async (t) => {
-    const shares = (await read("sharesOf", [user, t.i])) as bigint;
-    const [tokens, pend] = await Promise.all([shares ? read("sharesToTokens", [t.i, shares]) : Promise.resolve(0n), read("pendingEntries", [user, t.i])]);
-    const pending = await Promise.all((pend[0] as bigint[]).map(async (d, k) => { const f = await fillDay(Number(d)); return { day: Number(d), amount: (pend[1] as bigint[])[k], cutoff: f.ep.cutoff, filled: f.filled }; }));
-    return { tier: t.i, tokens: tokens as bigint, shares, pending: pending.filter((p) => p.amount > 0n && !p.filled) };
-  }));
-  // exits: the last two weeks of days, any this browser remembers asking for, and any the caller found in the index
   const days = new Set<number>([...rememberedExits(user), ...extraExitDays]); for (let d = Math.max(1, st.lastSettled - 14); d <= st.lastScheduled; d++) days.add(d);
-  const exits: Exit[] = [];
-  await Promise.all([...days].map(async (d) => Promise.all(st.tiers.map(async (t) => {
-    const r = await read("requests", [user, BigInt(d), t.i]);
-    if (!(r[1] > 0n)) return;
-    const f = await fillDay(d); let tokens = 0n;
-    if (f.filled) { try { const sim = await pc.simulateContract({ address: P, abi, functionName: "claim", args: [user, BigInt(d), t.i], account: user } as any); tokens = (sim.result as any)[1]; } catch {} }
-    else { try { tokens = (await read("sharesToTokens", [t.i, r[1]])) as bigint; } catch {} }
-    exits.push({ day: d, tier: t.i, ready: f.filled, tokens, cutoff: f.ep.cutoff });
-  }))));
+  const ix = st.tiers.map((t) => t.i);
+  const [bal, allowance, eth, shares, pends, reqs] = await Promise.all([
+    pc.readContract({ address: TOKEN, abi: erc20, functionName: "balanceOf", args: [user] }),
+    pc.readContract({ address: TOKEN, abi: erc20, functionName: "allowance", args: [user, P] }),
+    pc.getBalance({ address: user }),
+    Promise.all(ix.map((i) => read("sharesOf", [user, i]) as Promise<bigint>)),
+    Promise.all(ix.map((i) => read("pendingEntries", [user, i]))),
+    Promise.all([...days].flatMap((d) => ix.map(async (i) => ({ d, i, r: await read("requests", [user, BigInt(d), i]) })))),
+  ]);
+  const toTok = (i: number, sh: bigint) => { const t = st.tiers[i]; return t && t.shares > 0n ? (sh * t.held) / t.shares : 0n; };
+  const exitReqs = reqs.filter((x) => x.r[1] > 0n);
+  const need = new Set<number>([...pends.flatMap((p: any) => (p[0] as bigint[]).map(Number)), ...exitReqs.map((x) => x.d)]);
+  const fills = new Map<number, { filled: boolean; ep: Ep }>(await Promise.all([...need].map(async (d) => [d, await fillDay(d)] as [number, { filled: boolean; ep: Ep }])));
+  const pos = st.tiers.map((t, k) => {
+    const p = pends[k] as [bigint[], bigint[]];
+    const pending = p[0].map((d, j) => { const f = fills.get(Number(d))!; return { day: Number(d), amount: p[1][j], cutoff: f.ep.cutoff, filled: f.filled }; }).filter((x) => x.amount > 0n && !x.filled);
+    return { tier: t.i, tokens: toTok(t.i, shares[k]), shares: shares[k], pending };
+  });
+  const exits: Exit[] = await Promise.all(exitReqs.map(async ({ d, i, r }) => {
+    const f = fills.get(d)!; let tokens = 0n;
+    if (f.filled) { try { const sim = await pc.simulateContract({ address: P, abi, functionName: "claim", args: [user, BigInt(d), i], account: user } as any); tokens = (sim.result as any)[1]; } catch {} }
+    else tokens = toTok(i, r[1] as bigint);   // an estimate at today's share value until its close
+    return { day: d, tier: i, ready: f.filled, tokens, cutoff: f.ep.cutoff };
+  }));
   exits.sort((a, b) => a.day - b.day || a.tier - b.tier);
   return { bal, allowance, eth, pos, exits };
 }
