@@ -140,6 +140,7 @@
   "nav.me": "My activity",
   "nav.docs": "How it works",
   "nav.menu": "Menu",
+  "nav.chain": "Chain",
   "nav.chainsTitle": "SharePot on other chains: the daily four-range pools on Robinhood Chain and Solana",
   "foot.issuer": "<b>Issuer controls.</b> A stock token's issuer can pause transfers or block addresses, this pool included. Tokenized stocks are not offered to persons in the United States.",
   "foot.contracts": "Contracts:",

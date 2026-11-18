@@ -60,13 +60,17 @@ a.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff;fon
 .prules summary{cursor:pointer;font-weight:700}.prules ol{margin:10px 0 0;padding-left:20px;display:grid;gap:8px;color:var(--fg)}
 .foot{padding:18px 20px 40px;color:var(--dim);font-size:12.5px}
 
-/* frame: the current page in the nav; the chains as marks only, this one ringed in Base blue */
+/* frame: the current page in the nav; chains: the current chain's mark opens a menu of marks only (this one ringed),
+   which wraps as chains are added (narrow screens: the same marks in ☰) */
 .tb-right .navlink.on{color:var(--accent)}
-@media(max-width:900px){.tb-right>.pchains{display:none}}
-.pchainsw{display:inline-flex;align-items:center;gap:2px;padding:2px;border:1px solid var(--line);border-radius:999px;vertical-align:middle}
-.pchain{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:999px;font-size:17px;color:var(--fg)}
+.pchainbox{position:relative}
+.pchainbtn{width:auto;gap:3px;padding:0 7px 0 9px}.pchainbtn .pcaret{font-size:10px;color:var(--dim)}
+@media(max-width:900px){.tb-right>.pchainbox{display:none}}
+.pchainbox .pchainmenu{left:auto;right:0;width:max-content;max-width:226px}
+.pchaingrid{display:flex;flex-wrap:wrap;gap:6px}
+.pchain{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:10px;font-size:20px;color:var(--fg)}
 .pchain.on{background:var(--accent-bg);box-shadow:inset 0 0 0 1.5px #0052ff}
-a.pchain{opacity:.6}a.pchain:hover{opacity:1;background:var(--surface2);text-decoration:none}
+a.pchain:hover{background:var(--surface2);text-decoration:none}
 .pchain.rh{color:#00c805}
 /* language: a globe with its menu (narrow screens: in ☰) */
 .plangbox{position:relative}

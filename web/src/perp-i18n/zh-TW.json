@@ -140,6 +140,7 @@
   "nav.me": "我的紀錄",
   "nav.docs": "說明",
   "nav.menu": "選單",
+  "nav.chain": "鏈",
   "nav.chainsTitle": "其他鏈上的 SharePot:Robinhood Chain 和 Solana 上的每日四格池",
   "foot.issuer": "<b>發行商權限。</b>股票代幣的發行商可以暫停轉帳或封鎖地址，包括這個池子。代幣化股票不開放給美國人士。",
   "foot.contracts": "合約：",

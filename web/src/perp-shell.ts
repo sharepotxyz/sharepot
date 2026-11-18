@@ -12,7 +12,15 @@ export type PageName = "pool" | "history" | "me" | "faucet" | "docs";
 // the faucet only on a test network: a mainnet build has no link to it
 const PAGES: [PageName, string, string][] = ([["pool", "/", "nav.pool"], ["history", "/history", "nav.history"], ["me", "/me", "nav.me"], ["faucet", "/faucet", "nav.faucet"], ["docs", "/docs", "nav.docs"]] as [PageName, string, string][]).filter(([k]) => k !== "faucet" || TESTNET);
 // The same product family on the other chains (the four-range daily pools): one-way links, see the docs.
-const OTHERS: [string, string, string][] = [["rh", "Robinhood", "https://robinhood.sharepot.xyz"], ["sol", "Solana", "https://devnet.sharepot.xyz"]];
+// Every chain the product family runs on, as marks: this one (no link) and the others (the four-range daily pools,
+// one-way links, see the docs). A new chain is one more entry here.
+type Chain = { key: string; name: string; href: string | null; icon: () => string };
+const CHAINS: Chain[] = [
+  { key: "base", name: "Base", href: null, icon: () => ICON_BASE },
+  { key: "rh", name: "Robinhood", href: "https://robinhood.sharepot.xyz", icon: () => ICON_ROBINHOOD },
+  { key: "sol", name: "Solana", href: "https://devnet.sharepot.xyz", icon: iconSolana },
+];
+const HERE = CHAINS.find((c) => !c.href)!;
 
 // ---------------------------------------------------------------- site API flags
 /** /api/health: whether this site hands out test ETH for fees, and which wallets are ours (demo bots, the treasury). */
@@ -50,7 +58,12 @@ export async function askGas(addr: string): Promise<string> {
 // ---------------------------------------------------------------- wallet session
 let session: Session | null = null;
 let eth: bigint | null = null, stockBal: bigint | null = null;
-let walletMenu = false, navMenu = false, langMenu = false;
+/** The top bar's dropdowns: at most one is open; opening one closes the others. */
+type MenuName = "wallet" | "nav" | "lang" | "chain";
+let open: MenuName | null = null;
+const isOpen = (m: MenuName) => open === m;
+function toggleMenu(m: MenuName) { open = open === m ? null : m; renderMenus(); }
+function renderMenus() { renderWallet(); renderNavMenu(); renderLangMenu(); renderChainMenu(); }
 const WALLET_KEY = "sharepot.perp.wallet", TEST_WALLET = "Test wallet (browser)";
 const listeners: ((s: Session | null) => void)[] = [];
 export const getSession = () => session;
@@ -60,7 +73,7 @@ export const onSession = (fn: (s: Session | null) => void) => { listeners.push(f
 /** The connected wallet's ETH for fees (null = not read yet). */
 export const walletEth = () => eth;
 function setSession(s: Session | null) {
-  session = s; walletMenu = false; eth = null; stockBal = null;
+  session = s; if (open === "wallet") open = null; eth = null; stockBal = null;
   try { s ? localStorage.setItem(WALLET_KEY, s.label) : localStorage.removeItem(WALLET_KEY); } catch {}
   renderWallet(); refreshWallet();
   listeners.forEach((f) => { try { f(s); } catch (e) { console.error(e); } });
@@ -78,13 +91,13 @@ function renderWallet() {
   const el = document.getElementById("pwallet"); if (!el) return;
   if (!session) {
     const ws = listWallets();
-    el.innerHTML = `<button class="primary wbtn" id="pwbtn">${esc(pt("wallet.connect"))}</button>${walletMenu ? `<div class="menu" id="pwmenu"><div class="mh">${esc(pt("wallet.pick"))}</div>${ws.map((w, i) => `<button data-i="${i}">${esc(w.name)}</button>`).join("")}${TESTNET ? `<button id="pwdev">${esc(pt("wallet.test"))}</button>` : ""}${ws.length ? "" : `<div class="note" style="padding:6px">${esc(pt("wallet.none"))}</div>`}</div>` : ""}`;
+    el.innerHTML = `<button class="primary wbtn" id="pwbtn" aria-expanded="${isOpen("wallet")}">${esc(pt("wallet.connect"))}</button>${isOpen("wallet") ? `<div class="menu" id="pwmenu"><div class="mh">${esc(pt("wallet.pick"))}</div>${ws.map((w, i) => `<button data-i="${i}">${esc(w.name)}</button>`).join("")}${TESTNET ? `<button id="pwdev">${esc(pt("wallet.test"))}</button>` : ""}${ws.length ? "" : `<div class="note" style="padding:6px">${esc(pt("wallet.none"))}</div>`}</div>` : ""}`;
     el.querySelectorAll<HTMLButtonElement>("button[data-i]").forEach((b) => (b.onclick = async () => { try { setSession(await connectWallet(ws[Number(b.dataset.i)])); } catch (e) { alert(errText(e)); } }));
     const d = el.querySelector<HTMLButtonElement>("#pwdev"); if (d) d.onclick = () => setSession(devWallet());
   } else {
     // the button is the address only; what the wallet holds is in its menu
     const a = session.address, bal = (v: bigint | null, f: (x: bigint) => string) => (v == null ? "…" : f(v));
-    el.innerHTML = `<button class="wbtn" id="pwbtn" aria-expanded="${walletMenu}"><span class="dot"></span><span class="mono">${esc(a.slice(0, 6) + "…" + a.slice(-4))}</span></button>${walletMenu ? `<div class="menu" id="pwmenu">
+    el.innerHTML = `<button class="wbtn" id="pwbtn" aria-expanded="${isOpen("wallet")}"><span class="dot"></span><span class="mono">${esc(a.slice(0, 6) + "…" + a.slice(-4))}</span></button>${isOpen("wallet") ? `<div class="menu" id="pwmenu">
       <div class="mh">${esc(session.label === TEST_WALLET ? pt("wallet.test") : session.label)}</div>
       <div class="pwbal"><span>${esc(PERP.tokenSymbol)}${TESTNET ? ` <small>${esc(pt("wallet.testTok"))}</small>` : ""}</span><b>${esc(bal(stockBal, (x) => tok(x)))}</b></div>
       <div class="pwbal"><span>ETH <small>${esc(pt("wallet.forFees"))}</small></span><b>${esc(bal(eth, (x) => (Number(x) / 1e18).toFixed(4)))}</b></div>
@@ -93,44 +106,52 @@ function renderWallet() {
     const cp = el.querySelector<HTMLButtonElement>("#pwcopy"); if (cp) cp.onclick = async (e) => { e.stopPropagation(); try { await navigator.clipboard.writeText(a); cp.textContent = pt("wallet.copied"); } catch { cp.textContent = a; } };
     const dis = el.querySelector<HTMLButtonElement>("#pwdis"); if (dis) dis.onclick = async () => { await session?.disconnect(); setSession(null); };
   }
-  el.querySelector<HTMLButtonElement>("#pwbtn")!.onclick = (e) => { e.stopPropagation(); walletMenu = !walletMenu; navMenu = false; langMenu = false; renderNavMenu(); renderLangMenu(); renderWallet(); if (walletMenu) refreshWallet(); };
+  el.querySelector<HTMLButtonElement>("#pwbtn")!.onclick = (e) => { e.stopPropagation(); toggleMenu("wallet"); if (isOpen("wallet")) refreshWallet(); };
 }
 
 // ---------------------------------------------------------------- top bar
 const langOptions = () => LANGS.map(([k, n]) => `<option value="${k}"${k === PL ? " selected" : ""}>${esc(n)}</option>`).join("");
-// the chains as their marks only (name on hover and for screen readers); this one marked as current
-const chainSwitch = () => `<span class="pchainsw" role="group" title="${esc(pt("nav.chainsTitle"))}"><span class="pchain on" aria-label="Base" title="Base" aria-current="page">${ICON_BASE}</span>${OTHERS.map(([c, n, u]) => `<a class="pchain ${c}" href="${esc(u)}" aria-label="${esc(n)}" title="${esc(n)}">${c === "sol" ? iconSolana() : ICON_ROBINHOOD}</a>`).join("")}</span>`;
+// the chains as their marks only (name on hover and for screen readers), this one ringed; wraps as the list grows
+const chainGrid = () => `<div class="pchaingrid" role="group" title="${esc(pt("nav.chainsTitle"))}">${CHAINS.map((c) => c.href
+  ? `<a class="pchain ${esc(c.key)}" href="${esc(c.href)}" aria-label="${esc(c.name)}" title="${esc(c.name)}">${c.icon()}</a>`
+  : `<span class="pchain on ${esc(c.key)}" aria-label="${esc(c.name)}" title="${esc(c.name)}" aria-current="page">${c.icon()}</span>`).join("")}</div>`;
+/** The chain picker behind the current chain's mark (narrow screens have the marks in ☰ instead). */
+function renderChainMenu() {
+  const box = document.getElementById("pchainbox"); if (!box) return;
+  box.querySelector(".menu")?.remove();
+  if (isOpen("chain")) { const m = document.createElement("div"); m.className = "menu pchainmenu"; m.innerHTML = chainGrid(); box.appendChild(m); }
+  box.querySelector("#pchainbtn")?.setAttribute("aria-expanded", String(isOpen("chain")));
+}
 /** The language picker behind the globe button (narrow screens have it in ☰ instead). */
 function renderLangMenu() {
   const box = document.getElementById("plangbox"); if (!box) return;
   box.querySelector(".menu")?.remove();
-  if (langMenu) {
+  if (isOpen("lang")) {
     const m = document.createElement("div"); m.className = "menu plangmenu";
     m.innerHTML = LANGS.map(([k, n]) => `<button data-lang="${esc(k)}"${k === PL ? ' class="on" aria-current="true"' : ""}>${esc(n)}</button>`).join("");
     m.querySelectorAll<HTMLButtonElement>("button[data-lang]").forEach((b) => (b.onclick = () => setLang(b.dataset.lang!)));
     box.appendChild(m);
   }
-  box.querySelector("#plangbtn")?.setAttribute("aria-expanded", String(langMenu));
+  box.querySelector("#plangbtn")?.setAttribute("aria-expanded", String(isOpen("lang")));
 }
 let activePage: PageName = "pool";
 function renderNavMenu() {
   const box = document.getElementById("pnavbox"); if (!box) return;
   box.querySelector(".menu")?.remove();
-  if (navMenu) {
+  if (isOpen("nav")) {
     const m = document.createElement("div"); m.className = "menu navmenu";
     m.innerHTML = PAGES.map(([k, href, key]) => `<a class="mi${k === activePage ? " cta" : ""}" href="${href}">${esc(pt(key))}</a>`).join("")
       // language and chains: here only on screens where the bar hides them (perp.css .pmextra)
-      + `<div class="pmextra"><div class="langrow" style="padding:4px 6px"><select class="langsel" aria-label="${esc(pt("lang.label"))}" style="width:100%;max-width:none">${langOptions()}</select></div><div style="padding:4px 6px">${chainSwitch()}</div></div>`;
+      + `<div class="pmextra"><div class="langrow" style="padding:4px 6px"><select class="langsel" aria-label="${esc(pt("lang.label"))}" style="width:100%;max-width:none">${langOptions()}</select></div><div style="padding:4px 6px">${chainGrid()}</div></div>`;
     const ls = m.querySelector<HTMLSelectElement>("select")!; ls.onclick = (e) => e.stopPropagation(); ls.onchange = () => setLang(ls.value);
     box.appendChild(m);
   }
-  box.querySelector("#pnavbtn")?.setAttribute("aria-expanded", String(navMenu));
+  box.querySelector("#pnavbtn")?.setAttribute("aria-expanded", String(isOpen("nav")));
 }
 document.addEventListener("click", (e) => {
-  const w = document.getElementById("pwallet"), n = document.getElementById("pnavbox"), l = document.getElementById("plangbox");
-  if (walletMenu && w && !w.contains(e.target as Node)) { walletMenu = false; renderWallet(); }
-  if (navMenu && n && !n.contains(e.target as Node)) { navMenu = false; renderNavMenu(); }
-  if (langMenu && l && !l.contains(e.target as Node)) { langMenu = false; renderLangMenu(); }
+  if (!open) return;
+  const box = document.getElementById({ wallet: "pwallet", nav: "pnavbox", lang: "plangbox", chain: "pchainbox" }[open]);
+  if (!box || !box.contains(e.target as Node)) { open = null; renderMenus(); }
 });
 
 export function mountShell(page: PageName) {
@@ -142,13 +163,14 @@ export function mountShell(page: PageName) {
     <nav class="tb-right">
       ${PAGES.map(([k, href, key]) => `<a class="navlink${k === page ? " on" : ""}" href="${href}"${k === page ? ' aria-current="page"' : ""}>${esc(pt(key))}</a>`).join("")}
       <div class="navmorebox" id="pnavbox"><button class="navmore" id="pnavbtn" aria-label="${esc(pt("nav.menu"))}" aria-expanded="false">☰</button></div>
-      <span class="pchains">${chainSwitch()}</span>
+      <div class="pchainbox" id="pchainbox"><button class="piconbtn pchainbtn" id="pchainbtn" aria-label="${esc(pt("nav.chain"))}: ${esc(HERE.name)}" title="${esc(pt("nav.chain"))}: ${esc(HERE.name)}" aria-expanded="false">${HERE.icon()}<span class="pcaret" aria-hidden="true">▾</span></button></div>
       <div class="plangbox" id="plangbox"><button class="piconbtn" id="plangbtn" aria-label="${esc(pt("lang.label"))}" title="${esc(pt("lang.label"))}: ${esc(LANGS.find(([k]) => k === PL)?.[1] ?? PL)}" aria-expanded="false">${ICON_GLOBE}</button></div>
       <span class="netbadge">${esc(TESTNET ? pt("net.test") : pt("net.main"))}</span>
       <div id="pwallet" class="walletbox"></div>
     </nav></div>`;
-  document.getElementById("plangbtn")!.onclick = (e) => { e.stopPropagation(); langMenu = !langMenu; navMenu = false; walletMenu = false; renderWallet(); renderNavMenu(); renderLangMenu(); };
-  document.getElementById("pnavbtn")!.onclick = (e) => { e.stopPropagation(); navMenu = !navMenu; walletMenu = false; langMenu = false; renderWallet(); renderLangMenu(); renderNavMenu(); };
+  document.getElementById("plangbtn")!.onclick = (e) => { e.stopPropagation(); toggleMenu("lang"); };
+  document.getElementById("pchainbtn")!.onclick = (e) => { e.stopPropagation(); toggleMenu("chain"); };
+  document.getElementById("pnavbtn")!.onclick = (e) => { e.stopPropagation(); toggleMenu("nav"); };
   // footer: what this is, who controls the token, the contracts (their source is verified on Sourcify), the links
   const foot = document.getElementById("pfoot");
   if (foot) foot.innerHTML = `<p>${esc(pt("foot"))}</p>
