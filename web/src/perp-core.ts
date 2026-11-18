@@ -57,23 +57,30 @@ export async function api<T = any>(path: string): Promise<T> {
 }
 
 // ---------------------------------------------------------------- pools
-/** One pool per stock (config.ts PERP.pools, from chains.json), in the order the site shows them. */
+/** One live pool per stock (config.ts PERP.pools, from chains.json), in the order the site shows them. */
 export type Pool = PerpPool;
-export const POOLS: Pool[] = PERP.pools;
+export const POOLS: Pool[] = PERP.pools.filter((p) => !p.retired);
+/** Every pool, the retired ones too (older pools of a stock: their holders still exit and withdraw there). */
+export const ALL_POOLS: Pool[] = PERP.pools;
+/** "NVDA", or "NVDA (old pool)" for a retired one. */
+export const poolLabel = (p: Pool) => (p.retired ? pt("pool.old", { sym: p.symbol }) : p.symbol);
 const NAMES: Record<string, string> = { NVDA: "NVIDIA", TSLA: "Tesla", META: "Meta" };
 /** The company's name ("Tesla"); the symbol for a stock not listed here. */
 export const poolName = (p: Pool) => NAMES[p.symbol] ?? p.symbol;
 const PICK_KEY = "sharepot.perp.pool";
-/** The pool a page shows: ?s=<SYMBOL>, else the one this browser looked at last, else the first. */
+/** The pool a page shows: ?pool=<address> (any pool, a retired one too: links from My activity), else ?s=<SYMBOL>, else
+ *  the one this browser looked at last, else the first. */
 export function pickedPool(): Pool | null {
-  let want = (new URLSearchParams(location.search).get("s") ?? "").toUpperCase();
+  const q = new URLSearchParams(location.search), addr = (q.get("pool") ?? "").toLowerCase();
+  if (addr) { const p = ALL_POOLS.find((x) => x.address.toLowerCase() === addr); if (p) return p; }
+  let want = (q.get("s") ?? "").toUpperCase();
   if (!want) try { want = localStorage.getItem(PICK_KEY) ?? ""; } catch {}
   return POOLS.find((p) => p.symbol === want) ?? POOLS[0] ?? null;
 }
 /** Remembers `p` for the next page and puts it in the address bar (?s=), so a copied link opens the same stock. */
 export function setPickedPool(p: Pool) {
   try { localStorage.setItem(PICK_KEY, p.symbol); } catch {}
-  const u = new URL(location.href); u.searchParams.set("s", p.symbol); history.replaceState(null, "", u);
+  const u = new URL(location.href); u.searchParams.delete("pool"); u.searchParams.set("s", p.symbol); history.replaceState(null, "", u);
 }
 const listOf = (items: string[], type: "conjunction" | "disjunction") => { try { return new (Intl as any).ListFormat(LOCALE, { style: "long", type }).format(items) as string; } catch { return items.join(", "); } };
 /** "NVDA, TSLA and META" (or "…or META") in the page's language. */

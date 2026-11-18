@@ -14,7 +14,8 @@ pragma solidity ^0.8.24;
 ///   Intraday prices never matter, only closes.
 /// * Funding: the crowded side pays the thin side fundingBps x imbalance a day, on the matched part only.
 /// * Entries and exits are requests that are filled at that day's close (ERC-7540 style): request before the
-///   cutoff, the settlement prices it. A filled entry is the user's position at once (no claim; it is booked on their
+///   cutoff, the settlement prices it. An entry can be taken back until its cutoff (`cancelDeposit`): the price is the
+///   close either way, so backing out before the bell gains nothing; the entry fee is kept all the same. A filled entry is the user's position at once (no claim; it is booked on their
 ///   next request or claim); a filled exit waits until the user withdraws it with `claim`. Nothing is ever paid out
 ///   on the user's behalf. Gains, losses and funding all stay in the position and compound. A 0.1 % fee on both
 ///   entries and exits is turned into hedge-tier shares owned by the treasury. The treasury itself pays no fee.
@@ -134,6 +135,9 @@ contract SharePotPerp {
     uint256 public dust;
     /// Tokens accepted by `requestDeposit` and not yet withdrawn by `claim` (bounded by MAX_POOL).
     uint256 public pooled;
+    /// Entry fees kept from cancelled entries, by the day they were queued for: they become the treasury's hedge
+    /// shares at that day's close, like every other fee (a skipped day rolls them into the next).
+    mapping(uint256 => uint256) public cancelFees;
     /// Days skipped in a row since the last settlement. Claims follow skipped days at most MAX_ROLL steps, so a run
     /// is kept below that: past it a day must be proposed (an unchanged value moves nothing but funding).
     uint256 public skipRun;
@@ -149,6 +153,7 @@ contract SharePotPerp {
     event Rescheduled(uint256 indexed day, uint64 cutoff);
     event DepositRequested(address indexed user, uint256 indexed day, uint8 indexed tier, uint256 amount);
     event RedeemRequested(address indexed user, uint256 indexed day, uint8 indexed tier, uint256 shares);
+    event DepositCancelled(address indexed user, uint256 indexed day, uint8 indexed tier, uint256 amount, uint256 refund);
     event Proposed(uint256 indexed day, uint256 value, bytes32 evidence);
     event Rejected(uint256 indexed day);
     event Skipped(uint256 indexed day, uint256 rolledTo);
@@ -185,6 +190,7 @@ contract SharePotPerp {
     error ValueOutOfRange();
     error TooLate();
     error TooManySkips();
+    error NothingToCancel();
 
     modifier nonReentrant() {
         if (_entered != 1) revert Reentrancy();
@@ -354,6 +360,41 @@ contract SharePotPerp {
         emit DepositRequested(msg.sender, day, tier, got);
     }
 
+    /// Takes back `amount` (0 = all) of the caller's entry into `tier` that waits for the next close, before that
+    /// close's cutoff: after the bell the close is known, and backing out then would be a free option. The entry fee
+    /// (feeBps, none for the treasury) is kept and joins that close's fees; the rest is paid back now. Allowed while
+    /// paused: it only returns the caller's own tokens that nothing has priced yet. An entry rolled over from a skipped
+    /// day is queued under that day and cannot be taken back. Returns the tokens paid back.
+    function cancelDeposit(uint8 tier, uint256 amount) external nonReentrant returns (uint256 refund) {
+        if (tier >= _tiers.length) revert BadTier();
+        uint256 day = _currentDay();
+        Request storage r = requests[msg.sender][day][tier];
+        if (r.dep == 0) revert NothingToCancel();
+        if (amount == 0) amount = r.dep;
+        if (amount > r.dep) revert NothingToCancel();
+        uint256 b = r.exempt ? 1 : 0;
+        uint256 fee = b == 0 ? amount * feeBps / BPS : 0;
+        refund = amount - fee;
+        r.dep -= amount;
+        _batches[day][tier][b].depIn -= amount;
+        cancelFees[day] += fee;
+        pooled -= refund;
+        if (r.dep == 0) {
+            // no longer an entry: off the list `sharesOf` and `_credit` walk (a new entry the same day is pushed again)
+            uint256[] storage ds = _entryDays[msg.sender][tier];
+            for (uint256 i = 0; i < ds.length; i++) {
+                if (ds[i] == day) {
+                    ds[i] = ds[ds.length - 1];
+                    ds.pop();
+                    break;
+                }
+            }
+            if (r.red == 0) delete requests[msg.sender][day][tier];
+        }
+        emit DepositCancelled(msg.sender, day, tier, amount, refund);
+        if (refund != 0 && !_push(msg.sender, refund)) revert TransferFailed();
+    }
+
     /// Queues `shares` of `tier` to exit at the next close; the tokens are withdrawn with `claim` once it settles.
     function requestRedeem(uint8 tier, uint256 shares) external nonReentrant returns (uint256 day) {
         if (paused) revert IsPaused();
@@ -420,6 +461,10 @@ contract SharePotPerp {
         if (block.timestamp >= epochs[next].cutoff) revert TooLate();
         if (skipRun + 1 >= MAX_ROLL) revert TooManySkips();
         skipRun += 1;
+        if (cancelFees[day] != 0) {
+            cancelFees[next] += cancelFees[day];
+            cancelFees[day] = 0;
+        }
         for (uint256 i = 0; i < _tiers.length; i++) {
             uint32 g = _tiers[i].gen;
             for (uint256 b = 0; b < 2; b++) {
@@ -678,7 +723,7 @@ contract SharePotPerp {
                 emit TierWiped(uint8(i), t.gen);
             }
         }
-        uint256 fee;
+        uint256 fee = cancelFees[day];   // kept from entries taken back before this close
         for (uint256 i = 0; i < n; i++) fee += _fill(day, i);
         if (fee != 0) _creditTreasury(fee);
     }

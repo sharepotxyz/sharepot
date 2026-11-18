@@ -1,15 +1,17 @@
 // The SharePot Perp site (Base): its pages from web/dist-base and a small API, in one process on 127.0.0.1 (Caddy fronts
-// it as base.sharepot.xyz, and only for Cloudflare's edge, so the CF-* headers below are Cloudflare's). One pool per
+// it as base.sharepot.xyz, and only for Cloudflare's edge, so the CF-* headers below are Cloudflare's). One live pool per
 // stock (chains.json `perps`: NVDA, TSLA, META …); `?s=<SYMBOL>` picks one where it matters, the first is the default.
+// Retired pools (an older pool of the same stock, `retired: true`) stay indexed so their holders can see and leave
+// them: `?pool=<address>` reaches any pool, live or retired.
 //   /, /history, /me, /faucet, /docs   the pages (perp.html, perp-history.html, perp-me.html, perp-faucet.html, perp-docs.html), the same
 //                             bytes for everyone so Cloudflare can cache them; each page asks /api/health whether this
 //                             visitor is in the United States (readable, nothing can be sent) and sends nothing until told
 //   /api/health               chain, the pools, faucet on/off, the caller's country as Cloudflare reports it
-//   /api/days?s=SYM           every scheduled day of that pool: its close, the token value proposed and settled, what
+//   /api/days?s=SYM|pool=0x…  every scheduled day of that pool: its close, the token value proposed and settled, what
 //                             moved, the funding paid, the transactions, and a summary of the price evidence
 //   /api/evidence/SYM/:day    the evidence file itself, byte for byte: its sha256 is the hash recorded on-chain
 //                             (/api/evidence/:day = the first pool's, the address it had when there was one pool)
-//   /api/activity/:address    one wallet's entries, exits, bookings and withdrawals in every pool (from the event index)
+//   /api/activity/:address    one wallet's entries, cancels, exits, bookings and withdrawals in every pool (from the event index)
 //   /api/gas (POST)           {address}: a little test ETH for fees (test networks only)
 //   /api/feedback (POST)      free-text feedback
 // The event index (DATA_DIR/perp/<chain>/<pool>/events.jsonl, one per pool) is kept by this process: every 30 s it reads
@@ -91,9 +93,18 @@ const SITES = POOLS.map((pool) => {
   const events = readJsonl(eventsFile);
   return { pool, dir, eventsFile, cursorFile: path.join(dir, "events.cursor"), events, seenKeys: new Set(events.map(rowKey)), lastSyncAt: 0, syncError: "", daysCache: null, daysAt: 0, daysInFlight: null };
 });
-const BY_SYMBOL = new Map(SITES.map((s) => [s.pool.symbol, s]));
-/** The pool a request names with ?s= (the first when it names none); null for a symbol that is not one of ours. */
-const siteFor = (url) => { const s = (url.searchParams.get("s") ?? "").toUpperCase(); return s ? BY_SYMBOL.get(s) ?? null : SITES[0]; };
+const LIVE = SITES.filter((S) => !S.pool.retired);
+if (!LIVE.length) throw new Error(`chains.json ${CHAIN_KEY}: every perp pool is retired`);
+const BY_SYMBOL = new Map(LIVE.map((s) => [s.pool.symbol, s]));
+const BY_ADDRESS = new Map(SITES.map((s) => [s.pool.address.toLowerCase(), s]));
+/** The pool a request names: ?pool=<address> (any, retired too), else ?s=<SYMBOL> (a live one), else the first live
+ *  one; null when the name is not one of ours. */
+const siteFor = (url) => {
+  const a = (url.searchParams.get("pool") ?? "").toLowerCase();
+  if (a) return BY_ADDRESS.get(a) ?? null;
+  const s = (url.searchParams.get("s") ?? "").toUpperCase();
+  return s ? BY_SYMBOL.get(s) ?? null : LIVE[0];
+};
 
 async function syncPool(S) {
   const { pool } = S;
@@ -168,22 +179,26 @@ async function readDays(S) {
       prevValue: s?.a.prevValue ?? null, longExp: s?.a.longExp ?? null, shortExp: s?.a.shortExp ?? null, moved: s?.a.moved ?? null, funding: s?.a.funding ?? null,
       evidence: evidenceSummary(S, e.day) });
   }
-  S.daysCache = { at: Math.floor(now), symbol: pool.symbol, tokenSymbol: pool.tokenSymbol, pool: pool.address, explorer: chainCfg.explorer, feed: pool.feed, disputeWindowSecs: st.disputeWindowSecs,
+  S.daysCache = { at: Math.floor(now), symbol: pool.symbol, tokenSymbol: pool.tokenSymbol, pool: pool.address, retired: pool.retired, explorer: chainCfg.explorer, feed: pool.feed, disputeWindowSecs: st.disputeWindowSecs,
     indexedAt: S.lastSyncAt ? Math.floor(S.lastSyncAt / 1000) : null, days: out.reverse() };
   S.daysAt = Date.now();
   return S.daysCache;
 }
 
 // ---------- activity ----------
-const USER_EVENTS = new Set(["DepositRequested", "RedeemRequested", "EntryBooked", "Claimed"]);
-/** One wallet's rows in every pool (each row names its pool: `sym`), and per pool what it put in and took out. The
- *  amounts are in each pool's own stock token, so they are never added across pools here. */
+const USER_EVENTS = new Set(["DepositRequested", "DepositCancelled", "RedeemRequested", "EntryBooked", "Claimed"]);
+/** One wallet's rows in every pool, retired ones included (each row names its pool: `sym`, `pool` = its address), and
+ *  per pool (keyed by address) what it put in and took out — an entry taken back before its close counts as taken out:
+ *  what came back (`refund`), the kept fee being the difference. Amounts are in each pool's own stock token, so they
+ *  are never added across pools here. */
 function activity(addr) {
   const a = addr.toLowerCase(), pools = {}, rows = [];
   for (const S of SITES) {
-    const mine = S.events.filter((r) => USER_EVENTS.has(r.ev) && r.a.user === a).map((r) => ({ sym: S.pool.symbol, ev: r.ev, ts: r.ts, tx: r.tx, day: Number(r.a.day), tier: Number(r.a.tier), amount: r.a.amount ?? null, shares: r.a.shares ?? null, tokens: r.a.tokens ?? null }));
+    const pool = S.pool.address.toLowerCase();
+    const mine = S.events.filter((r) => USER_EVENTS.has(r.ev) && r.a.user === a).map((r) => ({ sym: S.pool.symbol, pool, ev: r.ev, ts: r.ts, tx: r.tx, day: Number(r.a.day), tier: Number(r.a.tier),
+      amount: r.a.amount ?? null, shares: r.a.shares ?? null, tokens: r.ev === "DepositCancelled" ? r.a.refund ?? null : r.a.tokens ?? null }));
     const sum = (ev, f) => mine.filter((r) => r.ev === ev).reduce((s, r) => s + BigInt(r[f] ?? 0), 0n);
-    pools[S.pool.symbol] = { deposited: sum("DepositRequested", "amount").toString(), withdrawn: sum("Claimed", "tokens").toString() };
+    pools[pool] = { symbol: S.pool.symbol, retired: S.pool.retired, deposited: sum("DepositRequested", "amount").toString(), withdrawn: (sum("Claimed", "tokens") + sum("DepositCancelled", "tokens")).toString() };
     rows.push(...mine);
   }
   return { address: a, indexedAt: indexedAt(), pools, rows: rows.sort((x, y) => y.ts - x.ts || y.day - x.day) };
@@ -221,7 +236,9 @@ async function gas(req, res) {
 }
 
 // ---------- feedback ----------
-const FEEDBACK = path.join(SITES[0].dir, "feedback.jsonl");   // where it has always been (the first pool's directory)
+// one file for the chain (until 2026-11-18 it lived in the first pool's directory: moved over once)
+const FEEDBACK = path.join(DATA, "perp", CHAIN_KEY, "feedback.jsonl");
+if (!fs.existsSync(FEEDBACK)) { const old = SITES.map((S) => path.join(S.dir, "feedback.jsonl")).find((f) => fs.existsSync(f)); if (old) fs.renameSync(old, FEEDBACK); }
 let fbDay = "", fbToday = 0; const fbIp = new Map();
 async function feedback(req, res) {
   const day = new Date().toISOString().slice(0, 10); if (day !== fbDay) { fbDay = day; fbToday = 0; fbIp.clear(); }
@@ -262,22 +279,22 @@ function serveStatic(req, res, p) {
   fs.createReadStream(file).pipe(res);
 }
 
-const POOL_LIST = POOLS.map((p) => ({ symbol: p.symbol, tokenSymbol: p.tokenSymbol, pool: p.address, token: p.token }));
+const POOL_LIST = POOLS.map((p) => ({ symbol: p.symbol, tokenSymbol: p.tokenSymbol, pool: p.address, token: p.token, ...(p.retired ? { retired: true } : {}) }));
 const server = http.createServer(async (req, res) => {
   let url; try { url = new URL(req.url, "http://x"); } catch { res.writeHead(400, { "content-type": "text/plain" }); return res.end("bad request"); }
   const p = url.pathname;
   try {
     // `country` is what Cloudflare says about the caller (null = no CF-IPCountry header arrived: the US block would be off)
-    if (p === "/api/health") return json(res, 200, { ok: true, chain: CHAIN_KEY, chainId: chainCfg.chainId, perp: POOLS[0].address, pools: POOL_LIST, faucet: !!faucet, demoWallets: DEMO, treasury: TREASURY, country: country(req) || null, blocked: isBlocked(req), indexedAt: indexedAt(), indexBehind: SITES.some((S) => !!S.syncError) });
+    if (p === "/api/health") return json(res, 200, { ok: true, chain: CHAIN_KEY, chainId: chainCfg.chainId, perp: LIVE[0].pool.address, pools: POOL_LIST, faucet: !!faucet, demoWallets: DEMO, treasury: TREASURY, country: country(req) || null, blocked: isBlocked(req), indexedAt: indexedAt(), indexBehind: SITES.some((S) => !!S.syncError) });
     if (p === "/api/gas") return req.method === "POST" ? await gas(req, res) : json(res, 405, { error: "POST only" });
     if (p === "/api/feedback") return req.method === "POST" ? await feedback(req, res) : json(res, 405, { error: "POST only" });
     if (p === "/api/days") {
-      const S = siteFor(url); if (!S) return json(res, 404, { error: `no pool for that symbol (${POOLS.map((x) => x.symbol).join(", ")})` });
+      const S = siteFor(url); if (!S) return json(res, 404, { error: `no such pool (${LIVE.map((x) => x.pool.symbol).join(", ")}, or ?pool=<address>)` });
       chargeRead(req); return json(res, 200, await days(S), { "cache-control": "public, max-age=15, s-maxage=15" });
     }
     const ev = p.match(/^\/api\/evidence\/(?:([A-Za-z]{1,6})\/)?(\d{1,6})$/);
     if (ev) {
-      const S = ev[1] ? BY_SYMBOL.get(ev[1].toUpperCase()) : SITES[0];
+      const S = ev[1] ? BY_SYMBOL.get(ev[1].toUpperCase()) : LIVE[0];
       if (!S) return json(res, 404, { error: "no pool for that symbol" });
       chargeRead(req);
       const f = evidenceFile(S, Number(ev[2]));
@@ -297,4 +314,4 @@ const server = http.createServer(async (req, res) => {
   }
 });
 server.headersTimeout = 15_000; server.requestTimeout = 60_000; server.keepAliveTimeout = 10_000;
-server.listen(PORT, "127.0.0.1", () => log(`perp site (${CHAIN_KEY}) on 127.0.0.1:${PORT}, static ${STATIC}, pools ${SITES.map((S) => `${S.pool.symbol} ${S.dir}`).join(" · ")}, faucet ${faucet ? faucet.account.address : "off"}`));
+server.listen(PORT, "127.0.0.1", () => log(`perp site (${CHAIN_KEY}) on 127.0.0.1:${PORT}, static ${STATIC}, pools ${SITES.map((S) => `${S.pool.label} ${S.dir}`).join(" · ")}, faucet ${faucet ? faucet.account.address : "off"}`));

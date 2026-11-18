@@ -6,7 +6,7 @@ import type { Address } from "viem";
 import type { Session } from "./wallet-evm";
 import {
   geo, noSend, MAXU, POOLS, PROPOSED, TESTNET, abi, bindPoolTabs, pickedPool, poolTabs, rawToStr, read, erc20, errText, esc, exposures, fillOf, fmtDate, fmtTime, fundingDaily, left, levText,
-  loadMine, loadState, netLev, parseAmount, pct, price, pt, rememberExit, symbolList, tierCls, tokenList, tierKey, tok, txLink, usd, type Mine, type Pool, type St,
+  loadMine, loadState, netLev, parseAmount, pct, price, pt, rememberExit, poolLabel, symbolList, tierCls, tokenList, tierKey, tok, txLink, usd, type Mine, type Pool, type St,
 } from "./perp-core";
 import { health, mountShell, onHealth, onSession, refreshWallet } from "./perp-shell";
 
@@ -28,7 +28,8 @@ async function refresh() {
   try {
     const s = await loadState(p);
     if (p !== pool) return;   // another stock was picked meanwhile: its own refresh is on the way
-    st = s; loadErr = ""; closes[p.symbol] = s.lastValue > 0n ? price(s) : null;
+    st = s; loadErr = "";
+    if (!p.retired) closes[p.symbol] = s.lastValue > 0n ? price(s) : null;   // the tabs show the live pools' closes
     render();   // the pool first; the wallet's side follows
     const m = session ? await loadMine(s, session.address as Address) : null;
     if (p !== pool) return;
@@ -57,7 +58,7 @@ function marketCard(s: St) {
   if (s.next && s.next.state === PROPOSED) status = pt("mk.proposed", { date: esc(fmtDate(s.next.cutoff)), price: usd(Number(s.next.value) / 1e8), time: esc(fmtTime(s.next.proposedAt + s.dispute)) });
   else if (s.next && s.next.cutoff <= s.now) status = pt("mk.waiting", { date: esc(fmtDate(s.next.cutoff)) });
   return `<section class="card pmk">
-    <div class="pmkh"><h2>${esc(pt("mk.title", { sym: s.pool.symbol }))}</h2>${s.paused ? `<span class="pill warnp">${esc(pt("mk.paused"))}</span>` : ""}</div>
+    <div class="pmkh"><h2>${esc(pt("mk.title", { sym: poolLabel(s.pool) }))}</h2>${s.paused ? `<span class="pill warnp">${esc(pt("mk.paused"))}</span>` : ""}</div>
     <dl class="pkv">
       <dt>${esc(pt("mk.nextClose"))}</dt><dd>${!s.open ? esc(pt("mk.noneScheduled")) : s.open.cutoff > Date.now() / 1000 ? esc(pt("mk.nextCloseVal", { time: fmtTime(s.open.cutoff), left: left(s.open.cutoff, Date.now() / 1000) })) : esc(fmtTime(s.open.cutoff))}</dd>
       <dt>${esc(pt("mk.lastClose"))}</dt><dd>${s.settled ? esc(pt("mk.lastCloseVal", { price: usd(px), date: fmtDate(s.settled.cutoff) })) : esc(pt("mk.noCloseYet"))}</dd>
@@ -72,7 +73,18 @@ function marketCard(s: St) {
   </section>`;
 }
 
+/** A retired pool takes no entries here: its holders exit and withdraw below; the live pool of the stock is one tab away. */
+const retiredCard = (s: St) => `<section class="card pord"><h2>${esc(pt("ret.title"))}</h2><p class="note">${esc(pt("ret.body", { sym: s.pool.symbol }))}</p>
+  <a class="btn primary big" href="/?s=${esc(s.pool.symbol)}" style="text-align:center">${esc(pt("ret.toLive", { sym: s.pool.symbol }))}</a></section>`;
+
+/** What taking back an entry of `amount` pays back now: all but the entry fee (the treasury pays none). */
+const cancelRefund = (s: St, amount: bigint) => {
+  const exempt = !!session && !!health.treasury && health.treasury.toLowerCase() === session.address.toLowerCase();
+  return exempt ? amount : amount - (amount * BigInt(s.feeBps)) / 10_000n;
+};
+
 function orderCard(s: St) {
+  if (s.pool.retired) return retiredCard(s);
   const t = s.tiers[pick] ?? s.tiers[0];
   const amt = parseAmount(amountStr);
   const fee = amt ? (amt * BigInt(s.feeBps)) / 10_000n : 0n, net = amt ? amt - fee : 0n;
@@ -121,7 +133,11 @@ function positionsCard(s: St) {
     const p = mine!.pos[t.i], ex = mine!.exits.filter((x) => x.tier === t.i);
     if (!p.shares && !p.pending.length && !ex.length) return "";
     const k = netLev(t, fillOf(t, e));
-    const pend = p.pending.map((q) => `<div class="note">${esc(pt("pos.pendingIn", { time: fmtTime(q.cutoff), n: tok(q.amount), tok: s.pool.tokenSymbol }))}</div>`).join("");
+    // an entry for the close still ahead can be taken back until that bell (the live pools have cancelDeposit; the
+    // retired ones predate it); one rolled over from a skipped day cannot
+    const canCancel = (q: { day: number; cutoff: number }) => !s.pool.retired && !!s.open && q.day === s.open.day && q.cutoff > s.now;
+    const pend = p.pending.map((q) => `<div class="ppend"><span class="note">${esc(pt("pos.pendingIn", { time: fmtTime(q.cutoff), n: tok(q.amount), tok: s.pool.tokenSymbol }))}</span>${canCancel(q)
+      ? `<button class="ghost" data-cancel="${t.i}" ${busy || noSend() || !!s.problem ? "disabled" : ""}>${esc(pt("pos.cancel", { n: tok(cancelRefund(s, q.amount)), tok: s.pool.tokenSymbol }))}</button>` : ""}</div>`).join("");
     const exits = ex.map((x) => x.ready
       ? `<div class="pready">${esc(pt("pos.ready", { n: tok(x.tokens), tok: s.pool.tokenSymbol }))} <button class="primary" data-claim="${x.day}:${x.tier}" ${busy || noSend() || !!s.problem ? "disabled" : ""}>${esc(pt("pos.withdraw"))}</button></div>`
       : `<div class="note">${esc(pt("pos.pendingOut", { time: fmtTime(x.cutoff) }))}</div>`).join("");
@@ -143,7 +159,8 @@ function render() {
   const tabs = poolTabs(pool, (p) => `<span class="pstockpx">${closes[p.symbol] ? usd(closes[p.symbol]!) : closes[p.symbol] === null ? esc(pt("tab.noClose")) : "…"}</span>`);
   if (!st) { root.innerHTML = hero + tabs + `<div class="note">${loadErr ? esc(pt("err", { err: loadErr })) : "…"}</div>`; bindPoolTabs(switchPool); return; }
   // one flat list in reading order (phones); on wide screens the order panel takes the right column (perp.css)
-  const problem = st.problem ? `<div class="card pwarn">${esc(pt("ord.problem", { why: st.problem }))}</div>` : "";
+  const problem = (st.problem ? `<div class="card pwarn">${esc(pt("ord.problem", { why: st.problem }))}</div>` : "")
+    + (st.pool.retired ? `<div class="card pwarn">${esc(pt("ret.banner", { sym: st.pool.symbol }))}</div>` : "");
   root.innerHTML = hero + tabs + problem + `<div class="pgrid">${marketCard(st)}${orderCard(st)}${positionsCard(st)}${rules(st)}</div>`
     + (loadErr ? `<div class="note warn">${esc(pt("err", { err: loadErr }))}</div>` : "");
   bind();
@@ -203,6 +220,15 @@ function bind() {
   });
   document.querySelectorAll<HTMLButtonElement>("button[data-exit]").forEach((b) => (b.onclick = () => exit(Number(b.dataset.exit), false)));
   document.querySelectorAll<HTMLButtonElement>("button[data-exitall]").forEach((b) => (b.onclick = () => exit(Number(b.dataset.exitall), true)));
+  document.querySelectorAll<HTMLButtonElement>("button[data-cancel]").forEach((b) => (b.onclick = () => {
+    const s = st!, tier = Number(b.dataset.cancel), q = mine!.pos[tier]?.pending.find((x) => x.day === s.open?.day);
+    if (!q) return;
+    const back = cancelRefund(s, q.amount);
+    run("pos", async () => {
+      const h = await session!.write!({ address: s.pool.address as Address, abi, functionName: "cancelDeposit", args: [tier, 0n] });
+      return esc(pt("pos.cancelled", { n: tok(back), tok: s.pool.tokenSymbol, fee: tok(q.amount - back, 8) })) + txLink(h);
+    });
+  }));
   document.querySelectorAll<HTMLButtonElement>("button[data-claim]").forEach((b) => (b.onclick = () => {
     const [d, tier] = b.dataset.claim!.split(":").map(Number), x = mine!.exits.find((e) => e.day === d && e.tier === tier);
     const s = st!;

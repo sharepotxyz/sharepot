@@ -17,7 +17,11 @@ const env = {
     symbol: /^[A-Z]{1,6}$/.test(p.symbol ?? "") ? p.symbol : fail(`perps[${i}].symbol`),
     tokenSymbol: /^[A-Za-z]{1,8}$/.test(p.tokenSymbol ?? "") ? p.tokenSymbol : fail(`perps[${i}].tokenSymbol`),
     pool: addr(p.pool, `perps[${i}].pool`), token: addr(p.token, `perps[${i}].token`),
+    ...(p.retired === true ? { retired: true } : {}),   // an older pool of the stock: shown to its holders only, no new entries
   }))),
 };
-if (new Set(JSON.parse(env.VITE_PERPS).map((p) => p.symbol)).size !== c.perps.length) fail("two pools with one symbol");
+const built = JSON.parse(env.VITE_PERPS), live = built.filter((p) => !p.retired);
+if (!live.length) fail("every pool is retired");
+if (new Set(live.map((p) => p.symbol)).size !== live.length) fail("two live pools with one symbol");
+if (new Set(built.map((p) => p.pool.toLowerCase())).size !== built.length) fail("one pool listed twice");
 for (const [k, v] of Object.entries(env)) console.log(`export ${k}='${v}'`);

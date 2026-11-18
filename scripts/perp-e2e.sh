@@ -46,6 +46,10 @@ check "eleven sessions scheduled (11-02 … 11-16)" '[ "$(call "lastScheduled()(
 check "the TSLA pool is scheduled by the same run" '[ "$(cast call "$PERP2" "lastScheduled()(uint256)" --rpc-url $RPC | awk "{print \$1}")" = 11 ]'
 tx "$PERP" "requestDeposit(uint8,uint256)" 0 10000000000 --private-key "$K3"   # alice: long 2x, 100 tokens
 tx "$PERP" "requestDeposit(uint8,uint256)" 1 10000000000 --private-key "$K4"   # bob: hedge, 100 tokens
+balOfNow() { cast call "$TOKEN" "balanceOf(address)(uint256)" "$1" --rpc-url $RPC | awk '{print $1}'; }
+tx "$PERP" "requestDeposit(uint8,uint256)" 0 5000000000 --private-key "$K4"     # bob: 50 more into long 2x …
+tx "$PERP" "cancelDeposit(uint8,uint256)" 0 0 --private-key "$K4"               # … taken back before the bell
+check "an entry taken back before the bell returns all but the 0.1 % fee" '[ "$(balOfNow "$A4")" = 89995000000 ] && [ "$(cast call "$PERP" "cancelFees(uint256)(uint256)" 1 --rpc-url $RPC | awk "{print \$1}")" = 5000000 ]'
 job run >/dev/null
 check "nothing proposed before the bell" '[ "$(state 1)" = 1 ]'
 

@@ -733,6 +733,120 @@ contract SharePotPerpTest is Test {
         vm.expectRevert(MockStock.NotOwner.selector);
         nvda.setMintCap(0);
     }
+
+    // ------------------------------------------------------------- cancel
+
+    function cancel(address who, uint8 tier, uint256 amt) internal returns (uint256 refund) {
+        vm.prank(who);
+        refund = perp.cancelDeposit(tier, amt);
+    }
+
+    /// Taken back before the bell: all but the entry fee comes back at once; the fee becomes the treasury's hedge
+    /// shares at that close, like every fee; the pool still holds exactly what it accounts for.
+    function test_cancel_beforeTheBell_refundsAllButTheFee() public {
+        perp = deploy(10, 0); // 0.1 %
+        uint256 d1 = dep(alice, LONG2, 1_000 * ONE);
+        dep(bob, HEDGE, 500 * ONE);
+        uint256 before = nvda.balanceOf(alice);
+        assertEq(cancel(alice, LONG2, 0), 999 * ONE);
+        assertEq(nvda.balanceOf(alice) - before, 999 * ONE);
+        (uint256[] memory ds,) = perp.pendingEntries(alice, LONG2);
+        assertEq(ds.length, 0);
+        assertEq(perp.cancelFees(d1), 1 * ONE);
+        assertEq(perp.pooled(), 501 * ONE);
+        close(d1, P100);
+        assertEq(perp.sharesOf(alice, LONG2), 0);
+        // the treasury: bob's entry fee (0.5) and alice's kept fee (1.0), as hedge shares
+        assertEq(perp.sharesToTokens(HEDGE, perp.sharesOf(treasury, HEDGE)), 15 * ONE / 10);
+        assertEq(perp.tierInfo(HEDGE).held, 501 * ONE);
+        assertEq(nvda.balanceOf(address(perp)), 501 * ONE);
+    }
+
+    function test_cancel_partial_keepsTheRestQueued() public {
+        perp = deploy(10, 0);
+        uint256 d1 = dep(alice, LONG2, 1_000 * ONE);
+        dep(bob, HEDGE, 1_000 * ONE);
+        assertEq(cancel(alice, LONG2, 400 * ONE), 3996 * ONE / 10);
+        (uint256[] memory ds, uint256[] memory amts) = perp.pendingEntries(alice, LONG2);
+        assertEq(ds.length, 1);
+        assertEq(amts[0], 600 * ONE);
+        close(d1, P100);
+        assertEq(perp.sharesToTokens(LONG2, perp.sharesOf(alice, LONG2)), 5994 * ONE / 10); // 600 less its 0.1 %
+    }
+
+    /// A full cancel and a new entry the same day count once: the day is on the pending list once (cancel takes it
+    /// off at once; requestDeposit's own booking would also clear an emptied day before pushing it again).
+    function test_cancel_thenEnterAgainTheSameDay_countsOnce() public {
+        uint256 d1 = dep(alice, LONG2, 1_000 * ONE);
+        dep(bob, HEDGE, 1_000 * ONE);
+        cancel(alice, LONG2, 0);
+        assertEq(dep(alice, LONG2, 300 * ONE), d1);
+        (uint256[] memory ds,) = perp.pendingEntries(alice, LONG2);
+        assertEq(ds.length, 1);
+        close(d1, P100);
+        assertEq(perp.sharesToTokens(LONG2, perp.sharesOf(alice, LONG2)), 300 * ONE);
+        claim(alice, d1, LONG2);
+        assertEq(perp.sharesToTokens(LONG2, perp.sharesOf(alice, LONG2)), 300 * ONE);
+        assertEq(perp.tierInfo(LONG2).held, 300 * ONE);
+    }
+
+    /// After the bell the close is known: nothing can be taken back (the request now belongs to a day past its cutoff).
+    function test_cancel_afterTheBell_isRefused() public {
+        uint256 d1 = dep(alice, LONG2, 1_000 * ONE);
+        (uint64 cutoff,,,,,) = perp.epochs(d1);
+        vm.warp(cutoff);
+        vm.prank(alice);
+        vm.expectRevert(SharePotPerp.NothingToCancel.selector);
+        perp.cancelDeposit(LONG2, 0);
+        vm.prank(operator);
+        perp.propose(d1, P100, bytes32(0));
+        vm.prank(alice);
+        vm.expectRevert(SharePotPerp.NothingToCancel.selector);
+        perp.cancelDeposit(LONG2, 0);
+    }
+
+    function test_cancel_refusesNothingAndTooMuch() public {
+        vm.prank(alice);
+        vm.expectRevert(SharePotPerp.NothingToCancel.selector);
+        perp.cancelDeposit(LONG2, 0);
+        dep(alice, LONG2, 100 * ONE);
+        vm.prank(alice);
+        vm.expectRevert(SharePotPerp.NothingToCancel.selector);
+        perp.cancelDeposit(LONG2, 100 * ONE + 1);
+        vm.prank(bob); // someone else's entry is not yours to take back
+        vm.expectRevert(SharePotPerp.NothingToCancel.selector);
+        perp.cancelDeposit(LONG2, 0);
+    }
+
+    function test_cancel_byTheTreasury_paysNoFee() public {
+        perp = deploy(10, 0);
+        dep(treasury, HEDGE, 100 * ONE);
+        assertEq(cancel(treasury, HEDGE, 0), 100 * ONE);
+        assertEq(perp.pooled(), 0);
+    }
+
+    /// A kept fee follows a skipped day to the close that is actually settled.
+    function test_cancel_feeRollsOverASkippedDay() public {
+        perp = deploy(10, 0);
+        uint256 d1 = dep(alice, LONG2, 1_000 * ONE);
+        cancel(alice, LONG2, 0);
+        (uint64 cutoff,,,,,) = perp.epochs(d1);
+        vm.warp(cutoff);
+        vm.prank(operator);
+        perp.skip(d1);
+        assertEq(perp.cancelFees(d1), 0);
+        assertEq(perp.cancelFees(d1 + 1), 1 * ONE);
+        close(d1 + 1, P100);
+        assertEq(perp.sharesToTokens(HEDGE, perp.sharesOf(treasury, HEDGE)), 1 * ONE);
+        assertEq(nvda.balanceOf(address(perp)), 1 * ONE);
+    }
+
+    /// Paused stops new requests, not taking back your own unpriced entry.
+    function test_cancel_worksWhilePaused() public {
+        dep(alice, LONG2, 100 * ONE);
+        perp.setPaused(true);
+        assertEq(cancel(alice, LONG2, 0), 100 * ONE);
+    }
 }
 
 /// A stock token that calls back into the pool while it is moving tokens, as an issuer-upgradeable token could.

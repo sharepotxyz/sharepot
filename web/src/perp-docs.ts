@@ -1,6 +1,7 @@
 // SharePot Perp — how it works (/docs): the long-form explanation, from perp-i18n/docs.<lang>.json (our own markup),
 // with a table of contents and the live contract addresses of every pool. Its worked examples use the first pool's stock.
-import { POOLS, PL, addrLink, esc, symbolList, tokenList } from "./perp-core";
+import { ALL_POOLS, POOLS, PL, addrLink, esc, symbolList, tokenList } from "./perp-core";
+const RETIRED = ALL_POOLS.filter((p) => p.retired);
 import { health, mountShell, onHealth } from "./perp-shell";
 import en from "./perp-i18n/docs.en.json";
 import zhTW from "./perp-i18n/docs.zh-TW.json";
@@ -15,7 +16,8 @@ function render() {
   // d.contracts.token names {tok}: filled per pool here, not with the examples' stock
   const tokLabel = (t: string) => esc((dict["d.contracts.token"] ?? "{tok}").replace(/\{tok\}/g, t));
   const contracts = POOLS.map((p) => `<h3>${esc(p.symbol)}</h3><dl class="pkv"><dt>${esc(dt("d.contracts.pool"))}</dt><dd>${addrLink(p.address, p.address)}</dd><dt>${tokLabel(p.tokenSymbol)}</dt><dd>${addrLink(p.token, p.token)}</dd></dl>
-    <p><a href="https://repo.sourcify.dev/84532/${esc(p.address)}" target="_blank" rel="noopener">${esc(dt("d.contracts.verified"))}</a></p>`).join("") + `${dt("d.contracts.api")}
+    <p><a href="https://repo.sourcify.dev/84532/${esc(p.address)}" target="_blank" rel="noopener">${esc(dt("d.contracts.verified"))}</a></p>`).join("")
+    + (RETIRED.length ? `<p class="note">${esc(dt("d.contracts.old"))}</p><ul class="pours">${RETIRED.map((p) => `<li>${esc(p.symbol)} · ${addrLink(p.address, p.address)}</li>`).join("")}</ul>` : "") + `${dt("d.contracts.api")}
     ${health.demoWallets.length || health.treasury ? `<h3>${esc(dt("d.ours.h"))}</h3><p>${dt("d.ours.b")}</p><ul class="pours">${health.treasury ? `<li>${addrLink(health.treasury, health.treasury)} · ${esc(dt("d.ours.treasury"))}</li>` : ""}${health.demoWallets.map((a) => `<li>${addrLink(a, a)} · ${esc(dt("d.ours.bot"))}</li>`).join("")}</ul>` : ""}`;
   const body = (s: string) => (s === "contracts" ? contracts : dt(`d.${s}.b`));
   document.getElementById("perp")!.innerHTML = `<section class="phero"><h1>${esc(dt("d.title"))}</h1><p>${esc(dt("d.intro"))}</p></section>
