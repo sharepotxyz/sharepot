@@ -1,10 +1,9 @@
 // SharePot Perp: the frame every page shares, in the same look as the other SharePot sites — the top bar (brand, the
 // four pages, the chain switch, language, network badge, wallet), the ☰ menu on narrow screens, the footer (contracts,
 // source verification, links) and the feedback button. Pages call mountShell(<their name>) and listen with onSession.
-import { PERP } from "./config";
 import { connectWallet, devWallet, listWallets, type Session } from "./wallet-evm";
 import { LANGS, setLang } from "./i18n";
-import { P, PL, TESTNET, TOKEN, addrLink, erc20, errText, esc, geo, noSend, pc, pt, tok, txLink } from "./perp-core";
+import { POOLS, PL, TESTNET, addrLink, erc20, errText, esc, geo, noSend, pc, pt, tok, txLink } from "./perp-core";
 import { ICON_BASE, ICON_GLOBE, ICON_ROBINHOOD, iconSolana } from "./perp-icons";
 
 const LOGO = `<svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16" fill="#5b4bdb"/><g fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round"><path d="M24 23c-4-4 4-7 0-11"/><path d="M40 23c-4-4 4-7 0-11"/></g><rect x="6" y="30" width="52" height="8" rx="4" fill="#fff"/><path d="M12 30h40v8a16 16 0 0 1-16 16h-8a16 16 0 0 1-16-16z" fill="#fff"/><path d="M17 36h13v13.5a11 11 0 0 1-13-11z" fill="#ffd166"/><path d="M47 36H34v13.5a11 11 0 0 0 13-11z" fill="#f2545b"/></svg>`;
@@ -57,7 +56,8 @@ export async function askGas(addr: string): Promise<string> {
 
 // ---------------------------------------------------------------- wallet session
 let session: Session | null = null;
-let eth: bigint | null = null, stockBal: bigint | null = null;
+/** ETH for fees and each pool's stock token (POOLS order), null = not read yet. */
+let eth: bigint | null = null, stockBals: (bigint | null)[] = POOLS.map(() => null);
 /** The top bar's dropdowns: at most one is open; opening one closes the others. */
 type MenuName = "wallet" | "nav" | "lang" | "chain";
 let open: MenuName | null = null;
@@ -73,7 +73,7 @@ export const onSession = (fn: (s: Session | null) => void) => { listeners.push(f
 /** The connected wallet's ETH for fees (null = not read yet). */
 export const walletEth = () => eth;
 function setSession(s: Session | null) {
-  session = s; if (open === "wallet") open = null; eth = null; stockBal = null;
+  session = s; if (open === "wallet") open = null; eth = null; stockBals = POOLS.map(() => null);
   try { s ? localStorage.setItem(WALLET_KEY, s.label) : localStorage.removeItem(WALLET_KEY); } catch {}
   renderWallet(); refreshWallet();
   listeners.forEach((f) => { try { f(s); } catch (e) { console.error(e); } });
@@ -81,10 +81,11 @@ function setSession(s: Session | null) {
 export async function refreshWallet() {
   if (!session) { renderWallet(); return; }
   const s = session, a = s.address as `0x${string}`;
-  const [e, b] = await Promise.all([pc.getBalance({ address: a }).catch(() => null), (pc.readContract({ address: TOKEN, abi: erc20, functionName: "balanceOf", args: [a] }) as Promise<bigint>).catch(() => null)]);
+  const [e, ...bs] = await Promise.all([pc.getBalance({ address: a }).catch(() => null),
+    ...POOLS.map((p) => (pc.readContract({ address: p.token as `0x${string}`, abi: erc20, functionName: "balanceOf", args: [a] }) as Promise<bigint>).catch(() => null))]);
   if (session !== s) return;   // switched wallets meanwhile
   if (e != null) eth = e;
-  if (b != null) stockBal = b;
+  bs.forEach((b, i) => { if (b != null) stockBals[i] = b; });
   renderWallet();
 }
 function renderWallet() {
@@ -99,7 +100,7 @@ function renderWallet() {
     const a = session.address, bal = (v: bigint | null, f: (x: bigint) => string) => (v == null ? "…" : f(v));
     el.innerHTML = `<button class="wbtn" id="pwbtn" aria-expanded="${isOpen("wallet")}"><span class="dot"></span><span class="mono">${esc(a.slice(0, 6) + "…" + a.slice(-4))}</span></button>${isOpen("wallet") ? `<div class="menu" id="pwmenu">
       <div class="mh">${esc(session.label === TEST_WALLET ? pt("wallet.test") : session.label)}</div>
-      <div class="pwbal"><span>${esc(PERP.tokenSymbol)}${TESTNET ? ` <small>${esc(pt("wallet.testTok"))}</small>` : ""}</span><b>${esc(bal(stockBal, (x) => tok(x)))}</b></div>
+      ${POOLS.map((p, i) => `<div class="pwbal"><span>${esc(p.tokenSymbol)}${TESTNET ? ` <small>${esc(pt("wallet.testTok"))}</small>` : ""}</span><b>${esc(bal(stockBals[i], (x) => tok(x)))}</b></div>`).join("")}
       <div class="pwbal"><span>ETH <small>${esc(pt("wallet.forFees"))}</small></span><b>${esc(bal(eth, (x) => (Number(x) / 1e18).toFixed(4)))}</b></div>
       ${TESTNET ? `<a class="mi" href="/faucet">${esc(pt("wallet.faucet"))}</a>` : ""}<hr>
       <button id="pwcopy">${esc(pt("wallet.copy"))}</button><a class="mi" href="/me">${esc(pt("nav.me"))}</a><button id="pwdis">${esc(pt("wallet.disconnect"))}</button></div>` : ""}`;
@@ -175,7 +176,7 @@ export function mountShell(page: PageName) {
   const foot = document.getElementById("pfoot");
   if (foot) foot.innerHTML = `<p>${esc(pt("foot"))}</p>
     <p>${pt("foot.issuer")}</p>
-    <p>${esc(pt("foot.contracts"))} ${esc(pt("foot.pool"))} ${addrLink(P)} · ${esc(pt("foot.token", { tok: PERP.tokenSymbol }))} ${addrLink(TOKEN)} · <a href="https://repo.sourcify.dev/84532/${esc(P)}" target="_blank" rel="noopener">${esc(pt("foot.verified"))}</a></p>
+    <p>${esc(pt("foot.contracts"))}</p>${POOLS.map((p) => `<p class="pfootc"><b>${esc(p.symbol)}</b> ${esc(pt("foot.pool"))} ${addrLink(p.address)} · ${esc(pt("foot.token", { tok: p.tokenSymbol }))} ${addrLink(p.token)} · <a href="https://repo.sourcify.dev/84532/${esc(p.address)}" target="_blank" rel="noopener">${esc(pt("foot.verified"))}</a></p>`).join("")}
     <p class="social"><a href="https://x.com/sharepotxyz" target="_blank" rel="noopener">X @sharepotxyz</a> · <a href="https://github.com/sharepotxyz/sharepot" target="_blank" rel="noopener">GitHub</a> · <a href="mailto:hello@sharepot.xyz">hello@sharepot.xyz</a></p>`;
   mountFeedback();
   renderWallet();

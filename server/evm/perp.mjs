@@ -1,4 +1,6 @@
-// SharePot Perp daily job (Base). One idempotent tick, run from cron every 10 minutes under flock:
+// SharePot Perp daily job (Base). One idempotent tick, run from cron every 10 minutes under flock, for every pool of the
+// chain (chains.json `perps`: one pool per stock, NVDA, TSLA, META …), one after the other; a pool that fails is reported
+// and the next one still runs:
 //   1. schedule — keeps the next PERP_AHEAD_DAYS of NYSE sessions scheduled on-chain (cutoff = that day's closing bell,
 //      early closes included). The contract has no calendar of its own: a day that is not scheduled takes no requests.
 //   2. propose — once a session's close is final and confirmed, proposes the day's token value: the last settled value
@@ -12,18 +14,18 @@
 //
 // `node server/evm/perp.mjs verify` is the independent check (run it on another host): it recomputes a proposed value
 // from the same public sources — so it catches a wrong, buggy or tampered proposal, not a source that is itself wrong
-// (that is what requiring two agreeing sources before proposing is for). With PERP_GUARDIAN_KEY_FILE (the pool's guardian
-// key, which lives only on that host and can do nothing but reject a proposal; the admin key is never loaded) a value
-// that differs is rejected on-chain at once — the operator's next tick proposes again from its own reading — and
+// (that is what requiring two agreeing sources before proposing is for). With PERP_GUARDIAN_KEY_FILE (the pools'
+// guardian key, which lives only on that host and can do nothing but reject a proposal; the admin key is never loaded) a
+// value that differs is rejected on-chain at once — the operator's next tick proposes again from its own reading — and
 // reported; without a key it only reports. A value it cannot recompute is reported, never rejected.
-// `node server/evm/perp.mjs skip <day>` skips a day that never traded (an unscheduled closure): nothing moves and its
-// requests roll into the next day. A held day is never skipped automatically. The contract only takes a skip of an
-// unproposed day (reject a proposal first) before the next day's cutoff, and at most 63 in a row; past the next cutoff
-// the day has to be proposed (the last settled value moves nothing but funding).
+// `PERP_SYMBOL=<SYM> node server/evm/perp.mjs skip <day>` skips a day that never traded (an unscheduled closure) in that
+// pool: nothing moves and its requests roll into the next day. A held day is never skipped automatically. The contract
+// only takes a skip of an unproposed day (reject a proposal first) before the next day's cutoff, and at most 63 in a
+// row; past the next cutoff the day has to be proposed (the last settled value moves nothing but funding).
 //
-//   env: EVM_CHAIN (a chains.json entry with perp, perpToken, perpSymbol, perpDeployBlock, perpFeed, perpMainnetToken),
-//        EVM_PROPOSER_KEY_FILE (the operator key), DATA_DIR, PERP_AHEAD_DAYS (14), PERP_PROPOSE_DELAY_SECS (1800),
-//        PERP_CHAINLINK_MAX_BPS (100), CHAINLINK_RPC (https://mainnet.base.org)
+//   env: EVM_CHAIN (a chains.json entry with `perps`: [{symbol, pool, token, deployBlock, feed, mainnetToken}]),
+//        PERP_SYMBOL (only these pools, comma-separated), EVM_PROPOSER_KEY_FILE (the operator key), DATA_DIR,
+//        PERP_AHEAD_DAYS (14), PERP_PROPOSE_DELAY_SECS (1800), PERP_CHAINLINK_MAX_BPS (100), CHAINLINK_RPC (https://mainnet.base.org)
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -43,37 +45,45 @@ const AHEAD_DAYS = Number(process.env.PERP_AHEAD_DAYS ?? 14);
 const PROPOSE_DELAY = Number(process.env.PERP_PROPOSE_DELAY_SECS ?? 1800);
 const CHAINLINK_MAX_BPS = Number(process.env.PERP_CHAINLINK_MAX_BPS ?? 100);
 const HOLD_ALERT_SECS = 2 * 3600; // a day still unproposed this long after its bell is worth a human look
-const log = (...a) => console.log(new Date().toISOString(), `[perp ${CHAIN_KEY}]`, ...a);
+const log = (pool, ...a) => console.log(new Date().toISOString(), `[perp ${CHAIN_KEY}${pool ? " " + pool.symbol : ""}]`, ...a);
 
-export const perpAddress = () => {
-  const a = process.env.PERP_ADDRESS ?? chainCfg.perp;
-  if (!a) throw new Error(`chains.json: no perp deployed on ${CHAIN_KEY} yet`);
-  return a;
-};
-export const SYMBOL = process.env.PERP_SYMBOL ?? chainCfg.perpSymbol ?? "NVDA";
-const perp = () => getContract({ address: perpAddress(), abi: perpAbi, client: publicClient });
+const isAddr = (a) => /^0x[0-9a-fA-F]{40}$/.test(a ?? "");
+/** The chain's pools, in chains.json order (the site shows them in that order). Each: { symbol, tokenSymbol, address,
+ *  token, deployBlock, feed, mainnetToken }. A pool whose address is not a well-formed address is not a pool. */
+export const POOLS = (chainCfg.perps ?? []).filter((p) => isAddr(p.pool) && /^[A-Z]{1,6}$/.test(p.symbol ?? "")).map((p) => ({
+  symbol: p.symbol, tokenSymbol: p.tokenSymbol ?? `${p.symbol}c`, address: p.pool, token: p.token, deployBlock: Number(p.deployBlock ?? 0),
+  feed: isAddr(p.feed) ? p.feed : null, mainnetToken: isAddr(p.mainnetToken) ? p.mainnetToken : null,
+}));
+/** The pools this run works on: all of them, or only PERP_SYMBOL's (comma-separated). */
+export function selectedPools() {
+  const only = (process.env.PERP_SYMBOL ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const ps = only.length ? POOLS.filter((p) => only.includes(p.symbol)) : POOLS;
+  if (!ps.length) throw new Error(`chains.json ${CHAIN_KEY}: no perp pool${only.length ? ` for ${only.join(",")}` : ""} (perps: ${POOLS.map((p) => p.symbol).join(", ") || "none"})`);
+  return ps;
+}
+const contract = (pool) => getContract({ address: pool.address, abi: perpAbi, client: publicClient });
 
 export async function chainNow() {
   const b = await withRetry(() => publicClient.getBlock({ blockTag: "latest" }), 4, "getBlock");
   return Number(b.timestamp);
 }
 
-export async function readEpoch(day) {
-  const e = await withRetry(() => perp().read.epochs([BigInt(day)]), 4, `epochs(${day})`);
+export async function readEpoch(pool, day) {
+  const e = await withRetry(() => contract(pool).read.epochs([BigInt(day)]), 4, `${pool.symbol} epochs(${day})`);
   return { day, cutoff: Number(e[0]), state: Number(e[1]), proposedAt: Number(e[2]), value: e[3], evidence: e[4], rolledTo: Number(e[5]) };
 }
 
-export async function readState() {
-  const p = perp();
+export async function readState(pool) {
+  const p = contract(pool);
   const [lastScheduled, lastSettled, lastValue, disputeWindowSecs] = await withRetry(
-    () => Promise.all([p.read.lastScheduled(), p.read.lastSettled(), p.read.lastValue(), p.read.disputeWindowSecs()]), 4, "perp state");
+    () => Promise.all([p.read.lastScheduled(), p.read.lastSettled(), p.read.lastValue(), p.read.disputeWindowSecs()]), 4, `${pool.symbol} state`);
   return { lastScheduled: Number(lastScheduled), lastSettled: Number(lastSettled), lastValue, disputeWindowSecs: Number(disputeWindowSecs) };
 }
 
 /** The NY session date of the last day that settled with a value (skipped days carry none), or null before the first. */
-async function lastSettledDate(st) {
+async function lastSettledDate(pool, st) {
   for (let d = st.lastSettled; d >= 1; d--) {
-    const e = await readEpoch(d);
+    const e = await readEpoch(pool, d);
     if (e.state === State.Settled) return nyDate(e.cutoff);
   }
   return null;
@@ -86,11 +96,11 @@ const FEED_ABI = [
 ];
 const mainnet = createPublicClient({ chain: base, transport: http(process.env.CHAINLINK_RPC ?? "https://mainnet.base.org", { batch: true, retryCount: 3, retryDelay: 800 }) });
 
-/** The feed's price as of `ts` (its last update at or before it) and the issuer multiplier now: token value = price.
+/** The pool's feed price as of `ts` (its last update at or before it) and the issuer multiplier now: token value = price.
  *  The feed moves only on a 0.5 % change or a 24 h heartbeat, so it is a sanity check, never the settlement price. */
-async function chainlinkAt(ts) {
-  if (!chainCfg.perpFeed) return null;
-  const latest = await mainnet.readContract({ address: chainCfg.perpFeed, abi: FEED_ABI, functionName: "latestRoundData" });
+async function chainlinkAt(pool, ts) {
+  if (!pool.feed) return null;
+  const latest = await mainnet.readContract({ address: pool.feed, abi: FEED_ABI, functionName: "latestRoundData" });
   const phase = latest[0] >> 64n;
   let agg = latest[0] & ((1n << 64n) - 1n);
   let r = Number(latest[3]) <= ts ? latest : null;
@@ -99,33 +109,33 @@ async function chainlinkAt(ts) {
     const ids = [];
     for (let i = 1n; i <= 50n && agg - i >= 1n; i++) ids.push((phase << 64n) | (agg - i));
     agg -= BigInt(ids.length);
-    const res = await mainnet.multicall({ contracts: ids.map((id) => ({ address: chainCfg.perpFeed, abi: FEED_ABI, functionName: "getRoundData", args: [id] })), allowFailure: true });
+    const res = await mainnet.multicall({ contracts: ids.map((id) => ({ address: pool.feed, abi: FEED_ABI, functionName: "getRoundData", args: [id] })), allowFailure: true });
     r = res.map((x) => (x.status === "success" ? x.result : null)).find((x) => x && Number(x[3]) <= ts) ?? null;
   }
   if (!r) return null; // too far back to look
   let multiplier = null;
-  if (chainCfg.perpMainnetToken) {
-    multiplier = await mainnet.readContract({ address: chainCfg.perpMainnetToken, abi: erc20Abi, functionName: "uiMultiplier" }).catch(() => null);
+  if (pool.mainnetToken) {
+    multiplier = await mainnet.readContract({ address: pool.mainnetToken, abi: erc20Abi, functionName: "uiMultiplier" }).catch(() => null);
   }
   return { price: r[1], updatedAt: Number(r[3]), multiplier };
 }
 
 // ---------------------------------------------------------------- the value of a day
 
-/** The total-return move from the close of `fromDate` to the close of `toDate` over the daily bars that exist, with the
- *  same guards as closeMove on the target close (final bar, Nasdaq to the cent or its grace period). */
-async function gapMove(fromDate, toDate, now) {
+/** The total-return move of `symbol` from the close of `fromDate` to the close of `toDate` over the daily bars that
+ *  exist, with the same guards as closeMove on the target close (final bar, Nasdaq to the cent or its grace period). */
+async function gapMove(symbol, fromDate, toDate, now) {
   const [cal] = await sessions(toDate, toDate);
   if (!cal) return { ok: false, alert: true, reason: `${toDate} is not a session` };
-  const { bars, raw, url, lastTradeTs } = await yahooDaily(SYMBOL, addDays(fromDate, -7), toDate);
+  const { bars, raw, url, lastTradeTs } = await yahooDaily(symbol, addDays(fromDate, -7), toDate);
   const i0 = bars.findIndex((b) => b.date === fromDate), i1 = bars.findIndex((b) => b.date === toDate);
-  if (i0 < 0) return { ok: false, alert: true, reason: `no ${SYMBOL} bar for the last settled close ${fromDate}` };
-  if (i1 <= i0) return { ok: false, reason: `no ${SYMBOL} daily close for ${toDate} yet` };
+  if (i0 < 0) return { ok: false, alert: true, reason: `no ${symbol} bar for the last settled close ${fromDate}` };
+  if (i1 <= i0) return { ok: false, reason: `no ${symbol} daily close for ${toDate} yet` };
   if (lastTradeTs != null && lastTradeTs < cal.close) return { ok: false, reason: `the ${toDate} bar is not final yet` };
   const cur = bars[i1];
   let crossCheck;
   try {
-    const nd = await nasdaqClose(SYMBOL, toDate);
+    const nd = await nasdaqClose(symbol, toDate);
     if (nd && Math.abs(nd.close - cur.close) > 0.005) return { ok: false, alert: true, reason: `Yahoo ${cur.close} and Nasdaq ${nd.close} disagree on ${toDate}` };
     if (nd) crossCheck = { source: "nasdaq", via: nd.via, close: nd.close, agreed: true };
     else if (now < cal.close + SECOND_SOURCE_GRACE_SECS) return { ok: false, reason: `waiting for Nasdaq's ${toDate} close` };
@@ -139,17 +149,18 @@ async function gapMove(fromDate, toDate, now) {
   return {
     ok: true,
     apply: (v) => steps.reduce((acc, st) => (acc * c4(st.close + st.dividend)) / c4(st.prevClose), v),   // floor per step
-    detail: { symbol: SYMBOL, source: "yahoo", date: toDate, close: r4(cur.close), prevDate: fromDate, prevClose: r4(bars[i0].close), dividend: r4(cur.dividend), gapSteps: steps, lastTradeTs, crossCheck },
+    detail: { symbol, source: "yahoo", date: toDate, close: r4(cur.close), prevDate: fromDate, prevClose: r4(bars[i0].close), dividend: r4(cur.dividend), gapSteps: steps, lastTradeTs, crossCheck },
     evidence: { source: url, response: raw },
   };
 }
 
 /**
- * Token value for the session on `date`, chained from the last settled value (or the close itself for the first
- * settlement). { ok: true, value (bigint, 8 decimals), doc } or { ok: false, reason, alert }.
+ * Token value of `pool`'s stock for the session on `date`, chained from the last settled value (or the close itself for
+ * the first settlement). { ok: true, value (bigint, 8 decimals), doc } or { ok: false, reason, alert }.
  * `doc` is the evidence: every session's close detail and the raw source responses; its sha256 goes on-chain.
  */
-export async function valueFor(date, lastValue, lastDate, now) {
+export async function valueFor(pool, date, lastValue, lastDate, now) {
+  const SYMBOL = pool.symbol;
   const evidence = [], details = [];
   let value;
   if (lastValue === 0n || lastDate === null) {
@@ -170,7 +181,7 @@ export async function valueFor(date, lastValue, lastDate, now) {
       // Skipped days in between — a data problem, or a closure the rule-based calendar cannot know about: take the
       // move from the last settled close straight to this one over the daily bars that actually exist, so a day that
       // never traded is simply not there (closeMove would wait forever for its bar).
-      const g = await gapMove(lastDate, date, now);
+      const g = await gapMove(SYMBOL, lastDate, date, now);
       if (!g.ok) return g;
       details.push(g.detail); evidence.push(g.evidence);
       value = g.apply(value);
@@ -180,14 +191,14 @@ export async function valueFor(date, lastValue, lastDate, now) {
   let chainlink = null, chainlinkOk = false;
   try {
     const cal = await sessions(date, date);
-    const cl = await chainlinkAt(cal[0].close);
+    const cl = await chainlinkAt(pool, cal[0].close);
     if (cl) {
       const mult = cl.multiplier && cl.multiplier > 0n ? cl.multiplier : 10n ** 18n;   // a 0 multiplier is a bad read, not a price
       const expected = BigInt(Math.round(last.close * 10_000)) * (SCALE / 10_000n) * mult / 10n ** 18n;
       if (expected <= 0n || cl.price <= 0n) throw new Error("no usable Chainlink comparison");
       const diff = cl.price > expected ? cl.price - expected : expected - cl.price;
       const diffBps = Number(diff * 10_000n / expected);
-      chainlink = { feed: chainCfg.perpFeed, price: cl.price.toString(), updatedAt: cl.updatedAt, multiplier: mult.toString(), expected: expected.toString(), diffBps };
+      chainlink = { feed: pool.feed, price: cl.price.toString(), updatedAt: cl.updatedAt, multiplier: mult.toString(), expected: expected.toString(), diffBps };
       if (diffBps > CHAINLINK_MAX_BPS) {
         return { ok: false, alert: true, reason: `Chainlink ${Number(cl.price) / 1e8} vs close×multiplier ${Number(expected) / 1e8} differ by ${diffBps} bps (> ${CHAINLINK_MAX_BPS})` };
       }
@@ -210,112 +221,140 @@ export const evidenceHash = (doc) => `0x${crypto.createHash("sha256").update(JSO
 
 // ---------------------------------------------------------------- writes
 
-async function send(wallet, fn, args) {
-  const { request } = await publicClient.simulateContract({ address: perpAddress(), abi: perpAbi, functionName: fn, args, account: wallet.account });
+async function send(pool, wallet, fn, args) {
+  const { request } = await publicClient.simulateContract({ address: pool.address, abi: perpAbi, functionName: fn, args, account: wallet.account });
   const hash = await wallet.client.writeContract(request);
   const receipt = await publicClient.waitForTransactionReceipt({ hash, confirmations: 1, timeout: 120_000 });
-  if (receipt.status !== "success") throw new Error(`${fn} reverted in ${hash}`);
+  if (receipt.status !== "success") throw new Error(`${pool.symbol} ${fn} reverted in ${hash}`);
   return hash;
 }
 
-const dirOf = (dataDir) => {
-  const d = path.join(dataDir, "perp", CHAIN_KEY, perpAddress().toLowerCase());
+/** DATA_DIR/perp/<chain>/<pool address>: the pool's evidence files (the site serves them) and this host's notes. */
+export const poolDir = (pool, dataDir) => {
+  const d = path.join(dataDir, "perp", CHAIN_KEY, pool.address.toLowerCase());
   fs.mkdirSync(d, { recursive: true });
   return d;
 };
 const writeAtomic = (file, text) => { const tmp = `${file}.tmp${process.pid}`; fs.writeFileSync(tmp, text); fs.renameSync(tmp, file); };
+const title = (pool) => `Perp ${CHAIN_KEY} ${pool.symbol}`;
 
 // ---------------------------------------------------------------- steps
 
 /** Keeps the next AHEAD_DAYS of sessions scheduled. */
-async function scheduleAhead(wallet, st, now) {
-  const lastCutoff = st.lastScheduled ? (await readEpoch(st.lastScheduled)).cutoff : 0;
+async function scheduleAhead(pool, wallet, st, now) {
+  const lastCutoff = st.lastScheduled ? (await readEpoch(pool, st.lastScheduled)).cutoff : 0;
   const cal = await sessions(nyDate(now), addDays(nyDate(now), AHEAD_DAYS));
   const todo = cal.map((s) => s.close).filter((c) => c > lastCutoff && c > now + 60);
   if (!todo.length) return 0;
-  const hash = await send(wallet, "schedule", [todo.map(BigInt)]);
-  log(`scheduled ${todo.length} day(s) through ${nyDate(todo[todo.length - 1])} (${hash})`);
+  const hash = await send(pool, wallet, "schedule", [todo.map(BigInt)]);
+  log(pool, `scheduled ${todo.length} day(s) through ${nyDate(todo[todo.length - 1])} (${hash})`);
   return todo.length;
 }
 
 /** Proposes or settles the next day in line. Returns what it did. */
-async function advance(wallet, st, now, dataDir) {
+async function advance(pool, wallet, st, now, dataDir) {
   const day = st.lastSettled + 1;
   if (day > st.lastScheduled) return "nothing scheduled";
-  const e = await readEpoch(day);
+  const e = await readEpoch(pool, day);
   const date = nyDate(e.cutoff);
   if (e.state === State.Scheduled) {
     if (now < e.cutoff + PROPOSE_DELAY) return `day ${day} (${date}) closes at ${new Date(e.cutoff * 1000).toISOString()}`;
-    const r = await valueFor(date, st.lastValue, await lastSettledDate(st), now);
+    const r = await valueFor(pool, date, st.lastValue, await lastSettledDate(pool, st), now);
     if (!r.ok) {
       const late = now - e.cutoff > HOLD_ALERT_SECS;
-      if (r.alert || late) notify(`Perp ${CHAIN_KEY}: day ${day} (${date}) held`, r.reason, `perp-hold-${day}`, 360);
+      if (r.alert || late) notify(`${title(pool)}: day ${day} (${date}) held`, r.reason, `perp-hold-${pool.symbol}-${day}`, 360);
       return `day ${day} (${date}) held: ${r.reason}`;
     }
     const hash = evidenceHash(r.doc);
-    writeAtomic(path.join(dirOf(dataDir), `evidence-${day}.json`), JSON.stringify(r.doc));
-    const tx = await send(wallet, "propose", [BigInt(day), r.value, hash]);
+    writeAtomic(path.join(poolDir(pool, dataDir), `evidence-${day}.json`), JSON.stringify(r.doc));
+    const tx = await send(pool, wallet, "propose", [BigInt(day), r.value, hash]);
     return { did: "proposed", text: `day ${day} (${date}) proposed ${Number(r.value) / 1e8} (${tx})` };
   }
   if (e.state === State.Proposed) {
     if (now < e.proposedAt + st.disputeWindowSecs) return `day ${day} (${date}) in dispute window until ${new Date((e.proposedAt + st.disputeWindowSecs) * 1000).toISOString()}`;
-    const tx = await send(wallet, "settle", [BigInt(day)]);
+    const tx = await send(pool, wallet, "settle", [BigInt(day)]);
     return { did: "settled", text: `day ${day} (${date}) settled at ${Number(e.value) / 1e8} (${tx})` };
   }
   return `day ${day} in unexpected state ${e.state}`;
 }
 
+// The last proposal this host recomputed and matched. A proposal on-chain never changes (a new one has a new
+// proposedAt), so once it has matched, the sources failing to give the day later on (Yahoo blanks the newest daily
+// close for a while around 8 pm New York) says nothing about it: logged, not sent. A reason flagged for a human (alert)
+// and any mismatch still go out as before.
+const verifiedFile = (pool, dataDir) => path.join(poolDir(pool, dataDir), "verified.json");
+export const sameProposal = (m, e) => !!m && m.day === e.day && m.proposedAt === e.proposedAt && m.value === e.value.toString();
+const readVerified = (pool, dataDir) => { try { return JSON.parse(fs.readFileSync(verifiedFile(pool, dataDir), "utf8")); } catch { return null; } };
+
 /** Independent check: recompute the proposed value; alert on any difference. */
-async function verify() {
-  const st = await readState(), now = await chainNow();
+async function verify(pool, dataDir) {
+  const st = await readState(pool), now = await chainNow();
   const day = st.lastSettled + 1;
   if (day > st.lastScheduled) return "nothing scheduled";
-  const e = await readEpoch(day);
+  const e = await readEpoch(pool, day);
   if (e.state !== State.Proposed) return `day ${day} not proposed (state ${e.state})`;
   const date = nyDate(e.cutoff);
-  const r = await valueFor(date, st.lastValue, await lastSettledDate(st), now);
+  const r = await valueFor(pool, date, st.lastValue, await lastSettledDate(pool, st), now);
   const deadline = new Date((e.proposedAt + st.disputeWindowSecs) * 1000).toISOString();
+  const key = `perp-verify-${pool.symbol}-${day}`;
   if (!r.ok) {
-    notify(`Perp ${CHAIN_KEY}: cannot verify day ${day} (${date})`, `${r.reason}\nproposed ${Number(e.value) / 1e8}; reject before ${deadline} if in doubt`, `perp-verify-${day}`, 60);
+    const seen = readVerified(pool, dataDir);
+    if (!r.alert && sameProposal(seen, e)) return `day ${day} (${date}) not recomputable right now (${r.reason}); this proposal already matched at ${seen.at}: not alerting`;
+    notify(`${title(pool)}: cannot verify day ${day} (${date})`, `${r.reason}\nproposed ${Number(e.value) / 1e8}; reject before ${deadline} if in doubt`, key, 60);
     return `day ${day} unverifiable: ${r.reason}`;
   }
   if (r.value !== e.value) {
     const keyFile = process.env.PERP_GUARDIAN_KEY_FILE;
     if (keyFile) {
-      const tx = await send(walletFor(keyFile), "reject", [BigInt(day)]);
-      notify(`Perp ${CHAIN_KEY}: day ${day} (${date}) rejected`, `proposed ${e.value} but the sources give ${r.value}; rejected on-chain (${tx}). The operator proposes again on its next run.`, `perp-verify-${day}`, 30);
+      const tx = await send(pool, walletFor(keyFile), "reject", [BigInt(day)]);
+      notify(`${title(pool)}: day ${day} (${date}) rejected`, `proposed ${e.value} but the sources give ${r.value}; rejected on-chain (${tx}). The operator proposes again on its next run.`, key, 30);
       return `day ${day} MISMATCH: proposed ${e.value}, recomputed ${r.value} → rejected (${tx})`;
     }
-    notify(`Perp ${CHAIN_KEY}: day ${day} (${date}) WRONG — reject it`, `proposed ${e.value} but the sources give ${r.value}; reject before ${deadline}`, `perp-verify-${day}`, 30);
+    notify(`${title(pool)}: day ${day} (${date}) WRONG — reject it`, `proposed ${e.value} but the sources give ${r.value}; reject before ${deadline}`, key, 30);
     return `day ${day} MISMATCH: proposed ${e.value}, recomputed ${r.value}`;
   }
+  writeAtomic(verifiedFile(pool, dataDir), JSON.stringify({ day, proposedAt: e.proposedAt, value: e.value.toString(), at: new Date().toISOString() }));
   return `day ${day} (${date}) verified ${Number(e.value) / 1e8}`;
 }
 
-async function main() {
-  guardProcess(log);
-  const mode = process.argv[2] ?? "run";
-  const dataDir = process.env.DATA_DIR ?? path.join(process.cwd(), "data");
-  if (mode === "verify") { log(await verify()); return; }
-  const wallet = walletFor();
-  if (mode === "skip") {
-    const day = Number(process.argv[3]);
-    if (!day) throw new Error("usage: perp.mjs skip <day>");
-    log(`skip day ${day}: ${await send(wallet, "skip", [BigInt(day)])}`);
-    return;
-  }
+/** One pool's tick. */
+async function runPool(pool, wallet, dataDir) {
   const now = await chainNow();
-  let st = await readState();
-  await scheduleAhead(wallet, st, now);
+  let st = await readState(pool);
+  await scheduleAhead(pool, wallet, st, now);
   // a tick may settle one day and propose the next (backlog after downtime): a few steps at most
   for (let i = 0; i < 4; i++) {
-    st = await readState();
-    const r = await advance(wallet, st, await chainNow(), dataDir);
-    log(typeof r === "string" ? r : r.text);
+    st = await readState(pool);
+    const r = await advance(pool, wallet, st, await chainNow(), dataDir);
+    log(pool, typeof r === "string" ? r : r.text);
     if (typeof r === "string" || r.did !== "settled") break;   // after a settle, the next day may already be due
   }
 }
 
+async function main() {
+  guardProcess((...a) => log(null, ...a));
+  const mode = process.argv[2] ?? "run";
+  const dataDir = process.env.DATA_DIR ?? path.join(process.cwd(), "data");
+  const pools = selectedPools();
+  if (mode === "skip") {
+    const day = Number(process.argv[3]);
+    if (!day) throw new Error("usage: PERP_SYMBOL=<SYM> perp.mjs skip <day>");
+    if (pools.length !== 1) throw new Error(`skip is for one pool: set PERP_SYMBOL to one of ${POOLS.map((p) => p.symbol).join(", ")}`);
+    log(pools[0], `skip day ${day}: ${await send(pools[0], walletFor(), "skip", [BigInt(day)])}`);
+    return;
+  }
+  const wallet = mode === "verify" ? null : walletFor();
+  // pools one after the other (one key, one nonce); one pool failing never stops the others
+  let failed = 0;
+  for (const pool of pools) {
+    try {
+      if (mode === "verify") log(pool, await verify(pool, dataDir));
+      else await runPool(pool, wallet, dataDir);
+    } catch (e) { failed++; log(pool, `FAILED: ${firstLine(e)}`); }
+  }
+  if (failed) throw new Error(`${failed} of ${pools.length} pool(s) failed`);
+}
+
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main().then(async () => { await notifyFlush(); process.exit(0); }, async (e) => { log(`FAILED: ${firstLine(e)}`); await notifyFlush(); process.exit(1); });
+  main().then(async () => { await notifyFlush(); process.exit(0); }, async (e) => { log(null, `FAILED: ${firstLine(e)}`); await notifyFlush(); process.exit(1); });
 }

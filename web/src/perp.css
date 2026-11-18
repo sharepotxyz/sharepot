@@ -33,6 +33,15 @@ button.ghost{background:transparent;border-color:transparent;color:var(--accent)
 .pbar.long i{background:color-mix(in srgb,var(--gain) 28%,transparent)}.pbar.long b{background:var(--gain)}
 .pbar.short i{background:color-mix(in srgb,var(--drop) 28%,transparent)}.pbar.short b{background:var(--drop)}
 
+/* the stocks (one pool each): a tab row under the hero; the pool and history pages show the one picked */
+.pstocks{display:grid;grid-template-columns:repeat(auto-fit,minmax(96px,1fr));gap:8px;margin:0 0 16px;max-width:620px}
+.pstock{display:flex;flex-direction:column;align-items:flex-start;gap:1px;text-align:left;padding:9px 12px;min-width:0}
+@media(max-width:480px){.pstock{padding:8px 10px}.pstock .pstockpx{font-size:12px}}
+.pstock b{font-size:16px;letter-spacing:.01em}.pstock small{color:var(--dim);font-size:12px}
+.pstock .pstockpx{font-size:13px;font-variant-numeric:tabular-nums;color:var(--fg);margin-top:2px}
+.pstock.on{border-color:var(--accent);background:var(--accent-bg)}
+.pmetbl{min-width:0}.pmetbl td{vertical-align:top}.pmetbl td .note{white-space:normal}
+.pfootc{margin:2px 0}
 .ptiers{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
 .ptier{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;padding:10px 12px;min-width:0}
 .ptier small{color:var(--dim);font-size:12px;line-height:1.35}

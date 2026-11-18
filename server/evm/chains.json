@@ -92,7 +92,7 @@
     "test": false
   },
   "base-sepolia": {
-    "_doc": "SharePot Perp (server/evm/perp.mjs): `perp` the pool, `perpToken` its stock token (a MockStock NVDAc on this testnet), `perpDeployBlock` where the claim keeper starts reading events, `perpSymbol` whose official closes settle it, `perpFeed` the Chainlink feed on Base MAINNET used as a sanity check, `perpMainnetToken` the real Coinbase token whose multiplier that check applies.",
+    "_doc": "SharePot Perp (server/evm/perp.mjs, perp-site.mjs): `perps` lists the pools, one per stock, in the order the site shows them: `symbol` whose official closes settle it, `tokenSymbol`/`token` its stock token (a MockStock on this testnet), `pool` the SharePotPerp contract, `deployBlock` where the event index starts, `feed` the Chainlink feed on Base MAINNET used as a sanity check, `mainnetToken` the real Coinbase token whose multiplier that check applies. Every pool has the same admin, operator, guardian and treasury.",
     "name": "Base Sepolia",
     "chainId": 84532,
     "rpc": "https://sepolia.base.org",
@@ -101,17 +101,19 @@
     "deployBlock": null,
     "stocks": [],
     "test": true,
-    "perp": "0x203E3C059f968f8D8962aA0Ad79EC957888e21F4",
-    "perpToken": "0xdFe9b139A9DA77Fe3de7Bc4656443c934b497915",
-    "perpDeployBlock": 59887456,
-    "perpDemoWallets": ["0x4d9dBd730a2EF82b867473cd7c229E87bcEafA02", "0x033Da3a0B7a96c9fF85cD84687d970252D24E6d4", "0x96490AB6A9A20bc342D06157Fb25fb9C24d035c3", "0xBaC7e279921B1bD6cEce66e7Ac0d9Ca234735ee8", "0xE3Fe0e4E70D8562b7ff8F645c74Cf45C32C09E73", "0x669ec46F8CebecA7642e15399Cb30A493aBD1cA7"],
+    "perps": [
+      { "symbol": "NVDA", "tokenSymbol": "NVDAc", "pool": "0x203E3C059f968f8D8962aA0Ad79EC957888e21F4", "token": "0xdFe9b139A9DA77Fe3de7Bc4656443c934b497915", "deployBlock": 59887456,
+        "feed": "0x04689a41629776563E6822F76f2e57D148d28513", "mainnetToken": "0xb20000000000000000000078ee7ce2fE4908108C" },
+      { "symbol": "TSLA", "tokenSymbol": "TSLAc", "pool": "0x4Dc69287FC09A0b0cb524E5C9844af51e6C71cC8", "token": "0x1cC48bc9193f92aF35B254f4e0DE3fECD68712D6", "deployBlock": 60215686,
+        "feed": "0xFaf869185383a24F8cb00e27BdA6b63B9905DCb4", "mainnetToken": "0xb2000000000000000000001e800a7f5189430cD0" },
+      { "symbol": "META", "tokenSymbol": "METAc", "pool": "0x52BfDA00Fe34c3D85438Ba547c49763173Cf1DF3", "token": "0x1E5C148E8953839C5fCa7C28223978ea874049DD", "deployBlock": 60215726,
+        "feed": "0x6526aE6797A76123638b863AeE4dD27Ba4E4b27D", "mainnetToken": "0xb2000000000000000000008bC8786B856E61707C" }
+    ],
+    "perpDemoWallets": ["0x4d9dBd730a2EF82b867473cd7c229E87bcEafA02", "0x033Da3a0B7a96c9fF85cD84687d970252D24E6d4", "0x96490AB6A9A20bc342D06157Fb25fb9C24d035c3", "0xBaC7e279921B1bD6cEce66e7Ac0d9Ca234735ee8", "0xE3Fe0e4E70D8562b7ff8F645c74Cf45C32C09E73", "0x669ec46F8CebecA7642e15399Cb30A493aBD1cA7", "0x6aE42e4F75646EBb229F140E3b0ac77c06768506", "0xf80Fa9461758167726c77BBa0905cEC1Be1da66A"],
     "perpLogsRpcs": [
       { "url": "https://base-sepolia.gateway.tenderly.co", "window": 100000 },
       { "url": "https://base-sepolia-rpc.publicnode.com", "window": 45000 }
     ],
-    "perpLogsConfirm": 3000,
-    "perpSymbol": "NVDA",
-    "perpFeed": "0x04689a41629776563E6822F76f2e57D148d28513",
-    "perpMainnetToken": "0xb20000000000000000000078ee7ce2fE4908108C"
+    "perpLogsConfirm": 3000
   }
 }

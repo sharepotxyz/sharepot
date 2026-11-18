@@ -1,8 +1,7 @@
-// SharePot Perp — daily closes (/history): every scheduled day, newest first, with the close it settled on, where that
+// SharePot Perp — daily closes (/history): one pool at a time (tabs; ?s=<SYMBOL>), every scheduled day, newest first, with the close it settled on, where that
 // price came from (Yahoo, Nasdaq's second opinion, Chainlink on Base mainnet), what moved between the sides, the funding,
 // the transactions, and a button that hashes the evidence file in the browser and compares it with the hash on-chain.
-import { PERP } from "./config";
-import { addrLink, api, esc, fmtDate, fmtTime, left, pct, pt, spct, tok, txLink, usd, PROPOSED, SETTLED, SKIPPED, SCHEDULED } from "./perp-core";
+import { addrLink, api, bindPoolTabs, esc, pickedPool, poolTabs, type Pool, fmtDate, fmtTime, left, pct, pt, spct, tok, txLink, usd, PROPOSED, SETTLED, SKIPPED, SCHEDULED } from "./perp-core";
 import { mountShell } from "./perp-shell";
 
 type Sess = { date: string; close: number; prevClose: number; prevDate: string; dividend: number; movePpm: number | null; nasdaq: boolean | null; nasdaqClose: number | null; nasdaqNote: string | null };
@@ -11,10 +10,13 @@ type Day = {
   proposeTx: string | null; settleTx: string | null; settledAt: number | null; prevValue: string | null; longExp: string | null; shortExp: string | null; moved: string | null; funding: string | null;
   evidence: { sessions: Sess[]; close: number | null; chainlink: { diffBps: number; price: number; updatedAt: number; feed: string } | null; sources: string[] } | null;
 };
-type Days = { at: number; pool: string; explorer: string; feed: string | null; disputeWindowSecs: number; indexedAt: number | null; days: Day[] };
+type Days = { at: number; symbol: string; tokenSymbol: string; pool: string; explorer: string; feed: string | null; disputeWindowSecs: number; indexedAt: number | null; days: Day[] };
 
+let pool: Pool | null = pickedPool();
 let data: Days | null = null, err = "";
-const checks: Record<number, string> = {};   // day -> result line (HTML)
+const checks: Record<number, string> = {};   // day -> result line (HTML), for the pool shown
+/** The evidence file of `day` in the pool shown (its symbol is one of the build's own, never the visitor's text). */
+const evidenceUrl = (day: number) => `/api/evidence/${encodeURIComponent(pool!.symbol)}/${day}`;
 
 function pill(d: Day, now: number) {
   if (d.state === SETTLED) return `<span class="pill ok">${esc(pt("h.settled"))}</span>`;
@@ -24,7 +26,7 @@ function pill(d: Day, now: number) {
 }
 
 function dayCard(d: Day, prevSettled: Day | undefined, now: number) {
-  const v = Number(d.value) / 1e8, ev = d.evidence;
+  const v = Number(d.value) / 1e8, ev = d.evidence, TOK = pool!.tokenSymbol;
   const rows: string[] = [];
   const row = (k: string, val: string) => rows.push(`<dt>${esc(pt(k))}</dt><dd>${val}</dd>`);
   if (d.state === SCHEDULED && d.cutoff > now) row("h.closesAt", esc(pt("h.closesAtVal", { time: fmtTime(d.cutoff), left: left(d.cutoff, now) })));
@@ -44,16 +46,16 @@ function dayCard(d: Day, prevSettled: Day | undefined, now: number) {
   if (d.state === PROPOSED && d.disputeEnds) row("h.dispute", esc(pt("h.disputeUntil", { time: fmtTime(d.disputeEnds), left: left(d.disputeEnds, now) })));
   if (d.state === SETTLED) {
     const L = Number(d.longExp ?? 0) / 1e8, S = Number(d.shortExp ?? 0) / 1e8, up = d.prevValue ? Number(d.value) > Number(d.prevValue) : false;
-    row("h.sides", esc(pt("h.sidesVal", { l: L.toLocaleString("en-US", { maximumFractionDigits: 2 }), s: S.toLocaleString("en-US", { maximumFractionDigits: 2 }), tok: PERP.tokenSymbol })));
+    row("h.sides", esc(pt("h.sidesVal", { l: L.toLocaleString("en-US", { maximumFractionDigits: 2 }), s: S.toLocaleString("en-US", { maximumFractionDigits: 2 }), tok: TOK })));
     const moved = BigInt(d.moved ?? "0"), fund = BigInt(d.funding ?? "0");
-    row("h.moved", moved > 0n ? esc(pt(up ? "h.movedUp" : "h.movedDown", { n: tok(moved, 6), tok: PERP.tokenSymbol })) : esc(pt(d.prevValue ? "h.movedNone" : "h.movedFirst")));
-    row("h.funding", fund > 0n ? esc(pt(L > S ? "h.fundLongs" : "h.fundShorts", { n: tok(fund, 6), tok: PERP.tokenSymbol })) : esc(pt("h.fundNone")));
+    row("h.moved", moved > 0n ? esc(pt(up ? "h.movedUp" : "h.movedDown", { n: tok(moved, 6), tok: TOK })) : esc(pt(d.prevValue ? "h.movedNone" : "h.movedFirst")));
+    row("h.funding", fund > 0n ? esc(pt(L > S ? "h.fundLongs" : "h.fundShorts", { n: tok(fund, 6), tok: TOK })) : esc(pt("h.fundNone")));
   }
   if (d.rejected) row("h.rejected", esc(pt("h.rejectedVal", { n: d.rejected })));
   const links = [d.proposeTx ? txLink(d.proposeTx, pt("h.txProposed")) : "", d.settleTx ? txLink(d.settleTx, pt(d.state === SKIPPED ? "h.txSkipped" : "h.txSettled")) : ""].filter(Boolean).join(" ·");
   const hasHash = /^0x[0-9a-fA-F]{64}$/.test(d.evidenceHash) && !/^0x0{64}$/.test(d.evidenceHash);
   const evidence = hasHash ? `<div class="pevid"><div><span class="note">${esc(pt("h.hash"))}</span> <code class="mono">${esc(d.evidenceHash.slice(0, 10) + "…" + d.evidenceHash.slice(-8))}</code></div>
-      <div class="prow">${ev ? `<button data-check="${d.day}">${esc(pt("h.check"))}</button><a class="btn" href="/api/evidence/${d.day}" target="_blank" rel="noopener">${esc(pt("h.file"))}</a>` : `<span class="note">${esc(pt("h.noFile"))}</span>`}${(ev?.sources ?? []).slice(0, 2).map((u) => `<a class="btn" href="${esc(u)}" target="_blank" rel="noopener nofollow">${esc(pt("h.source", { host: new URL(u).hostname }))}</a>`).join("")}</div>
+      <div class="prow">${ev ? `<button data-check="${d.day}">${esc(pt("h.check"))}</button><a class="btn" href="${esc(evidenceUrl(d.day))}" target="_blank" rel="noopener">${esc(pt("h.file"))}</a>` : `<span class="note">${esc(pt("h.noFile"))}</span>`}${(ev?.sources ?? []).slice(0, 2).map((u) => `<a class="btn" href="${esc(u)}" target="_blank" rel="noopener nofollow">${esc(pt("h.source", { host: new URL(u).hostname }))}</a>`).join("")}</div>
       ${checks[d.day] ? `<div class="pmsg">${checks[d.day]}</div>` : ""}</div>` : "";
   return `<section class="card pday" id="day-${d.day}"><div class="pdayh"><h2>${esc(fmtDate(d.cutoff))}</h2>${pill(d, now)}<span class="note">${esc(pt("h.dayN", { n: d.day }))}</span></div>
     ${rows.length ? `<dl class="pkv">${rows.join("")}</dl>` : ""}${links ? `<div class="note ptx">${links}</div>` : ""}${evidence}</section>`;
@@ -61,21 +63,30 @@ function dayCard(d: Day, prevSettled: Day | undefined, now: number) {
 
 function render() {
   const root = document.getElementById("perp")!;
-  const intro = `<section class="phero"><h1>${esc(pt("h.title"))}</h1><p>${esc(pt("h.intro"))}</p></section>`;
-  if (!data) { root.innerHTML = intro + `<div class="note">${err ? esc(pt("err", { err })) : "…"}</div>`; return; }
+  const intro = `<section class="phero"><h1>${esc(pt("h.title"))}</h1><p>${esc(pt("h.intro"))}</p></section>` + (pool ? poolTabs(pool) : "");
+  if (!data || data.symbol !== pool?.symbol) { root.innerHTML = intro + `<div class="note">${err ? esc(pt("err", { err })) : "…"}</div>`; bindPoolTabs(switchPool); return; }
   const now = Date.now() / 1000, settled = data.days.filter((d) => d.state === SETTLED);
   const cards = data.days.map((d) => dayCard(d, settled.find((x) => x.day < d.day), now)).join("");
   root.innerHTML = intro + `<div class="phist">${cards || `<div class="note">${esc(pt("h.none"))}</div>`}</div>`
     + `<p class="note">${esc(pt("h.updated", { time: fmtTime(data.at) }))}</p>`;
   root.querySelectorAll<HTMLButtonElement>("button[data-check]").forEach((b) => (b.onclick = () => check(Number(b.dataset.check))));
+  bindPoolTabs(switchPool);
+}
+
+function switchPool(p: Pool) {
+  if (p === pool) return;
+  pool = p; data = null; err = "";
+  for (const k of Object.keys(checks)) delete checks[Number(k)];
+  render(); load();
 }
 
 /** Hash the evidence file exactly as served and compare it with the hash the pool stored on-chain. */
 async function check(day: number) {
-  const d = data?.days.find((x) => x.day === day); if (!d) return;
+  const d = data?.days.find((x) => x.day === day), p = pool; if (!d || !p) return;
   checks[day] = esc(pt("h.checking")); render();
   try {
-    const buf = await (await fetch(`/api/evidence/${day}`)).arrayBuffer();
+    const buf = await (await fetch(evidenceUrl(day))).arrayBuffer();
+    if (p !== pool) return;
     const h = "0x" + [...new Uint8Array(await crypto.subtle.digest("SHA-256", buf))].map((b) => b.toString(16).padStart(2, "0")).join("");
     checks[day] = h.toLowerCase() === d.evidenceHash.toLowerCase()
       ? `<span class="gain">✓ ${esc(pt("h.match"))}</span> <code class="mono">${esc(h.slice(0, 10) + "…" + h.slice(-8))}</code>`
@@ -85,7 +96,8 @@ async function check(day: number) {
 }
 
 async function load() {
-  try { data = await api<Days>("/days"); err = ""; } catch (e: any) { err = String(e?.message ?? e); }
+  const p = pool; if (!p) return render();
+  try { const d = await api<Days>(`/days?s=${encodeURIComponent(p.symbol)}`); if (p !== pool) return; data = d; err = ""; } catch (e: any) { if (p === pool) err = String(e?.message ?? e); }
   render();
 }
 

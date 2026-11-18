@@ -24,12 +24,20 @@ export const EVM = {
   faucet: (import.meta.env.VITE_EVM_FAUCET as string | undefined) ?? "https://faucet.testnet.chain.robinhood.com",
 };
 
-/** SharePot Perp (the Base site, perp.html): the pool, its stock token and whose closes settle it. Empty = not deployed. */
+/** One SharePot Perp pool: the stock whose closes settle it, its stock token and the pool contract. */
+export type PerpPool = { symbol: string; tokenSymbol: string; address: string; token: string };
+const isHexAddr = (a: unknown): a is string => typeof a === "string" && /^0x[0-9a-fA-F]{40}$/.test(a);
+/** VITE_PERPS (scripts/base-env.mjs, from chains.json): the pools as JSON, in the order the site shows them. */
+function perpPools(): PerpPool[] {
+  try {
+    const raw = JSON.parse((import.meta.env.VITE_PERPS as string | undefined) ?? "[]");
+    return (Array.isArray(raw) ? raw : []).filter((p: any) => p && isHexAddr(p.pool) && isHexAddr(p.token) && /^[A-Z]{1,6}$/.test(p.symbol ?? "") && /^[A-Za-z]{1,8}$/.test(p.tokenSymbol ?? ""))
+      .map((p: any) => ({ symbol: p.symbol, tokenSymbol: p.tokenSymbol, address: p.pool, token: p.token }));
+  } catch { return []; }
+}
+/** SharePot Perp (the Base site, perp.html): one pool per stock (NVDA, TSLA, META …). Empty = not deployed. */
 export const PERP = {
-  address: (import.meta.env.VITE_PERP as string | undefined) ?? "",
-  token: (import.meta.env.VITE_PERP_TOKEN as string | undefined) ?? "",
-  symbol: (import.meta.env.VITE_PERP_SYMBOL as string | undefined) ?? "NVDA",
-  tokenSymbol: (import.meta.env.VITE_PERP_TOKEN_SYMBOL as string | undefined) ?? "NVDAc",
+  pools: perpPools(),
   /** Where test ETH for gas comes from on this network (the site has none of its own). */
   gasFaucet: (import.meta.env.VITE_PERP_GAS_FAUCET as string | undefined) ?? "https://docs.base.org/base-chain/tools/network-faucets",
 };

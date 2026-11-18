@@ -4,7 +4,8 @@
 # Base mainnet, all read live). Covers: scheduling, proposing the first close and chained moves, the independent
 # verify (match and mismatch, rejecting with the guardian's reject-only key), the operator's move cap, a re-propose, settling after the dispute
 # window, entries that are the user's position without any claim, and an exit the user withdraws (nothing is paid on
-# anyone's behalf). Keys are anvil's public test mnemonic; alerts are disabled.
+# anyone's behalf). A second pool (TSLA, its own MockStock) runs beside it through the same job: scheduled, proposed
+# with TSLA's own close, verified, its evidence kept apart, and a skip in one pool leaves the other alone. Keys are anvil's public test mnemonic; alerts are disabled.
 # Exit 0 only when every check holds.   Usage: bash scripts/perp-e2e.sh
 set -euo pipefail
 export PATH=/root/stocklana/tools/node22/bin:$HOME/.foundry/bin:$PATH
@@ -26,18 +27,23 @@ tx() { cast send "$@" --rpc-url $RPC >/dev/null 2>&1; }
 
 out=$(cd "$R/evm" && OPERATOR=$A1 GUARDIAN=$A5 TREASURY=$A2 forge script script/DeployPerp.s.sol --rpc-url $RPC --private-key "$K0" --broadcast 2>&1)
 TOKEN=$(echo "$out" | awk '/MockStock NVDAc/{print $3}'); PERP=$(echo "$out" | awk '/SharePotPerp 0x/{print $2}')
+out=$(cd "$R/evm" && OPERATOR=$A1 GUARDIAN=$A5 TREASURY=$A2 MOCK_SYMBOL=TSLAc forge script script/DeployPerp.s.sol --rpc-url $RPC --private-key "$K0" --broadcast 2>&1)
+TOKEN2=$(echo "$out" | awk '/MockStock TSLAc/{print $3}'); PERP2=$(echo "$out" | awk '/SharePotPerp 0x/{print $2}')
 cat > "$D/chains.json" <<JSON
-{ "anvil": { "name": "anvil", "chainId": 31337, "rpc": "$RPC", "explorer": "", "stocks": [], "perp": "$PERP", "perpToken": "$TOKEN",
-  "perpSymbol": "NVDA", "perpDeployBlock": 0, "perpFeed": "0x04689a41629776563E6822F76f2e57D148d28513",
-  "perpMainnetToken": "0xb20000000000000000000078ee7ce2fE4908108C" } }
+{ "anvil": { "name": "anvil", "chainId": 31337, "rpc": "$RPC", "explorer": "", "stocks": [], "perps": [
+  { "symbol": "NVDA", "tokenSymbol": "NVDAc", "pool": "$PERP", "token": "$TOKEN", "deployBlock": 0,
+    "feed": "0x04689a41629776563E6822F76f2e57D148d28513", "mainnetToken": "0xb20000000000000000000078ee7ce2fE4908108C" },
+  { "symbol": "TSLA", "tokenSymbol": "TSLAc", "pool": "$PERP2", "token": "$TOKEN2", "deployBlock": 0,
+    "feed": "0xFaf869185383a24F8cb00e27BdA6b63B9905DCb4", "mainnetToken": "0xb2000000000000000000001e800a7f5189430cD0" } ] } }
 JSON
 for k in "$K3" "$K4"; do a=$(cast wallet address "$k"); tx "$TOKEN" "mint(address,uint256)" "$a" 100000000000 --private-key "$k"; tx "$TOKEN" "approve(address,uint256)" "$PERP" "$(cast max-uint)" --private-key "$k"; done
 call() { cast call "$PERP" "$@" --rpc-url $RPC | awk '{print $1}'; }
-state() { cast call "$PERP" "epochs(uint256)(uint64,uint8,uint64,uint256,bytes32,uint256)" "$1" --rpc-url $RPC | sed -n 2p; }
+state() { cast call "${2:-$PERP}" "epochs(uint256)(uint64,uint8,uint64,uint256,bytes32,uint256)" "$1" --rpc-url $RPC | sed -n 2p; }
 
 echo "== schedule and requests"
 job run >/dev/null
 check "eleven sessions scheduled (11-02 … 11-16)" '[ "$(call "lastScheduled()(uint256)")" = 11 ]'
+check "the TSLA pool is scheduled by the same run" '[ "$(cast call "$PERP2" "lastScheduled()(uint256)" --rpc-url $RPC | awk "{print \$1}")" = 11 ]'
 tx "$PERP" "requestDeposit(uint8,uint256)" 0 10000000000 --private-key "$K3"   # alice: long 2x, 100 tokens
 tx "$PERP" "requestDeposit(uint8,uint256)" 1 10000000000 --private-key "$K4"   # bob: hedge, 100 tokens
 job run >/dev/null
@@ -45,7 +51,10 @@ check "nothing proposed before the bell" '[ "$(state 1)" = 1 ]'
 
 echo "== day 1 (first close) and day 2 (chained move)"
 warp 2026-11-02T21:31:00Z; job run >/dev/null; v=$(job verify)
-check "day 1 proposed at the 11-02 close (202.06) and verified" '[[ "$v" == *"verified 202.06"* ]]'
+check "day 1 proposed at the 11-02 close (202.06) and verified" '[[ "$v" == *"NVDA] day 1 (2026-11-02) verified 202.06"* ]]'
+check "TSLA day 1 proposed at TSLA's own close and verified" '[[ "$v" == *"TSLA] day 1 (2026-11-02) verified"* ]] && [[ "$v" != *"TSLA] day 1 (2026-11-02) verified 202.06"* ]]'
+P2DIR="$D/data/perp/anvil/$(echo "$PERP2" | tr A-F a-f)"
+check "each pool keeps its own evidence (TSLA's names TSLA)" '[ "$(node -e "console.log(JSON.parse(require(\"fs\").readFileSync(\"$P2DIR/evidence-1.json\",\"utf8\")).symbol)")" = TSLA ]'
 warp 2026-11-03T03:32:00Z; job run >/dev/null
 check "day 1 settled after the dispute window" '[ "$(state 1)" = 3 ]'
 check "both entries are their positions with no claim" '[ "$(call "sharesOf(address,uint8)(uint256)" "$A3" 0)" != 0 ] && [ "$(call "sharesOf(address,uint8)(uint256)" "$A4" 1)" != 0 ]'
@@ -83,13 +92,16 @@ bal=$(balOf "$A3")
 check "alice withdraws her exit (88–90 of 100 tokens back)" '[ "$bal" -gt 98800000000 ] && [ "$bal" -lt 99000000000 ]'
 echo "== a skipped day"
 warp 2026-11-06T21:31:00Z
-job skip 5 >/dev/null
+check "skip refuses without naming a pool" '! job skip 5 >/dev/null'
+PERP_SYMBOL=NVDA job skip 5 >/dev/null
 check "day 5 (11-06) skipped by hand" '[ "$(state 5)" = 4 ]'
+check "the skip left the TSLA pool alone" '[ "$(state 5 "$PERP2")" = 1 ]'
 warp 2026-11-09T21:31:00Z; job run >/dev/null; v=$(job verify)
 # 11-05 → 11-09 over the bars that exist (11-06, 11-09); chained day by day it was 178.6695
 check "day 6 is proposed across the skipped day and verifies" '[[ "$v" == *"verified 178.6"* ]]'
 warp 2026-11-10T03:32:00Z; job run >/dev/null
 check "day 6 settles" '[ "$(state 6)" = 3 ]'
+check "the TSLA pool settled its 11-06 close meanwhile" '[ "$(state 5 "$PERP2")" = 3 ]'
 held=0; for t in 0 1 2 3; do h=$(cast call "$PERP" "tierInfo(uint8)((uint8,bool,uint32,uint256,uint256))" $t --rpc-url $RPC | tr -d '()' | awk -F', ' '{print $4}' | awk '{print $1}'); held=$((held + h)); done
 cb=$(cast call "$TOKEN" "balanceOf(address)(uint256)" "$PERP" --rpc-url $RPC | awk '{print $1}')
 check "the contract holds every tier's tokens" '[ "$cb" -ge "$held" ]'

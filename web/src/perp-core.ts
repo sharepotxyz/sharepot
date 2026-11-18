@@ -1,10 +1,10 @@
-// SharePot Perp (the Base site): what every page shares — the strings, the formatting, the chain reads and the pool
-// arithmetic. The pages are perp.ts (the pool), perp-history.ts, perp-me.ts, perp-faucet.ts and perp-docs.ts; the top bar, the wallet
+// SharePot Perp (the Base site): what every page shares — the strings, the formatting, the pools (one per stock, the
+// one shown picked with ?s=), the chain reads and the pool arithmetic. The pages are perp.ts (the pool), perp-history.ts, perp-me.ts, perp-faucet.ts and perp-docs.ts; the top bar, the wallet
 // and the footer are perp-shell.ts. Strings live in perp-i18n/ (English and Traditional Chinese so far; other
 // languages fall back to English).
 import { createPublicClient, http, parseAbiItem, type Address } from "viem";
 import perpAbiJson from "../../evm/abi/SharePotPerp.json";
-import { EVM, PERP } from "./config";
+import { EVM, PERP, type PerpPool } from "./config";
 import { LANG, LANGS } from "./i18n";
 import en from "./perp-i18n/en.json";
 import zhTW from "./perp-i18n/zh-TW.json";
@@ -56,9 +56,38 @@ export async function api<T = any>(path: string): Promise<T> {
   return j as T;
 }
 
+// ---------------------------------------------------------------- pools
+/** One pool per stock (config.ts PERP.pools, from chains.json), in the order the site shows them. */
+export type Pool = PerpPool;
+export const POOLS: Pool[] = PERP.pools;
+const NAMES: Record<string, string> = { NVDA: "NVIDIA", TSLA: "Tesla", META: "Meta" };
+/** The company's name ("Tesla"); the symbol for a stock not listed here. */
+export const poolName = (p: Pool) => NAMES[p.symbol] ?? p.symbol;
+const PICK_KEY = "sharepot.perp.pool";
+/** The pool a page shows: ?s=<SYMBOL>, else the one this browser looked at last, else the first. */
+export function pickedPool(): Pool | null {
+  let want = (new URLSearchParams(location.search).get("s") ?? "").toUpperCase();
+  if (!want) try { want = localStorage.getItem(PICK_KEY) ?? ""; } catch {}
+  return POOLS.find((p) => p.symbol === want) ?? POOLS[0] ?? null;
+}
+/** Remembers `p` for the next page and puts it in the address bar (?s=), so a copied link opens the same stock. */
+export function setPickedPool(p: Pool) {
+  try { localStorage.setItem(PICK_KEY, p.symbol); } catch {}
+  const u = new URL(location.href); u.searchParams.set("s", p.symbol); history.replaceState(null, "", u);
+}
+const listOf = (items: string[], type: "conjunction" | "disjunction") => { try { return new (Intl as any).ListFormat(LOCALE, { style: "long", type }).format(items) as string; } catch { return items.join(", "); } };
+/** "NVDA, TSLA and META" (or "…or META") in the page's language. */
+export const symbolList = (type: "conjunction" | "disjunction" = "conjunction") => listOf(POOLS.map((p) => p.symbol), type);
+/** "NVDAc, TSLAc and METAc" in the page's language. */
+export const tokenList = (type: "conjunction" | "disjunction" = "conjunction") => listOf(POOLS.map((p) => p.tokenSymbol), type);
+/** A tab row of the pools (perp.css .pstocks); `extra(p)` adds a line under each symbol (HTML, the caller's to escape). */
+export const poolTabs = (cur: Pool, extra: (p: Pool) => string = () => "") => `<div class="pstocks" role="tablist">${POOLS.map((p) =>
+  `<button role="tab" aria-selected="${p === cur}" class="pstock${p === cur ? " on" : ""}" data-pool="${esc(p.symbol)}"><b>${esc(p.symbol)}</b><small>${esc(poolName(p))}</small>${extra(p)}</button>`).join("")}</div>`;
+/** Wires the buttons of poolTabs: `go` gets the pool clicked. */
+export const bindPoolTabs = (go: (p: Pool) => void) => document.querySelectorAll<HTMLButtonElement>("button[data-pool]").forEach((b) => (b.onclick = () => { const p = POOLS.find((x) => x.symbol === b.dataset.pool); if (p) { setPickedPool(p); go(p); } }));
+
 // ---------------------------------------------------------------- chain
 export const abi = perpAbiJson as any;
-export const P = PERP.address as Address, TOKEN = PERP.token as Address;
 // Reads are cheap on the wire but the public RPC counts them: sepolia.base.org answers "25/second request limit
 // reached" per call past 25 a second, and a page load asks ~30 (a connected wallet ~70), so the extra ones came back
 // after a 0.7 s retry on every load. Every contract read of a round therefore goes out as ONE Multicall3 call (the
@@ -79,7 +108,7 @@ export const erc20 = [
   parseAbiItem("function approve(address, uint256) returns (bool)"),
   parseAbiItem("function mint(address to, uint256 amount)"),
 ];
-export const read = (functionName: string, args: unknown[] = []) => pc.readContract({ address: P, abi, functionName, args } as any) as Promise<any>;
+export const read = (pool: Pool, functionName: string, args: unknown[] = []) => pc.readContract({ address: pool.address as Address, abi, functionName, args } as any) as Promise<any>;
 export const MAXU = 2n ** 256n - 1n;
 /** Test-network behaviour (the browser test wallet, the mint button, the "no value" notices) follows the chain the
  *  build talks to, never an env default: a mainnet build that forgot a flag must not ship them. 84532 = Base Sepolia,
@@ -101,7 +130,7 @@ export type Tier = { i: number; c: number; isLong: boolean; gen: number; held: b
 export type Ep = { day: number; cutoff: number; state: number; proposedAt: number; value: bigint; rolledTo: number };
 export const SCHEDULED = 1, PROPOSED = 2, SETTLED = 3, SKIPPED = 4;
 export type St = {
-  now: number; lastScheduled: number; lastSettled: number; lastValue: bigint; dispute: number; feeBps: number; fundingBps: number; paused: boolean;
+  pool: Pool; now: number; lastScheduled: number; lastSettled: number; lastValue: bigint; dispute: number; feeBps: number; fundingBps: number; paused: boolean;
   tiers: Tier[]; hedge: number; treasuryTok: bigint; open: Ep | null; next: Ep | null; settled: Ep | null;
   /** Set when this page is not talking to the pool it was built for (wrong chain, or the pool's token is not the one
    *  the page would ask to approve): nothing may be sent then. */
@@ -111,25 +140,27 @@ export type St = {
 export type Exit = { day: number; tier: number; ready: boolean; tokens: bigint; cutoff: number };
 export type Mine = { bal: bigint; allowance: bigint; eth: bigint; pos: { tier: number; tokens: bigint; shares: bigint; pending: { day: number; amount: bigint; cutoff: number }[] }[]; exits: Exit[] };
 
-export const epoch = async (day: number): Promise<Ep> => { const e = await read("epochs", [BigInt(day)]); return { day, cutoff: Number(e[0]), state: Number(e[1]), proposedAt: Number(e[2]), value: e[3] as bigint, rolledTo: Number(e[5]) }; };
+export const epoch = async (pool: Pool, day: number): Promise<Ep> => { const e = await read(pool, "epochs", [BigInt(day)]); return { day, cutoff: Number(e[0]), state: Number(e[1]), proposedAt: Number(e[2]), value: e[3] as bigint, rolledTo: Number(e[5]) }; };
 /** The day a request of `day` is (or will be) filled at, following skipped days; `filled` once that day settled. */
-export async function fillDay(day: number): Promise<{ filled: boolean; ep: Ep }> {
-  let e = await epoch(day);
-  for (let i = 0; e.state === SKIPPED && e.rolledTo && i < 64; i++) e = await epoch(e.rolledTo);
+export async function fillDay(pool: Pool, day: number): Promise<{ filled: boolean; ep: Ep }> {
+  let e = await epoch(pool, day);
+  for (let i = 0; e.state === SKIPPED && e.rolledTo && i < 64; i++) e = await epoch(pool, e.rolledTo);
   return { filled: e.state === SETTLED, ep: e };
 }
 
-export async function loadState(): Promise<St> {
+/** One pool's state: two batched requests (one Multicall3 call each). */
+export async function loadState(pool: Pool): Promise<St> {
+  const rd = (fn: string, args: unknown[] = []) => read(pool, fn, args);
   // Round 1, one batched request: everything that depends on nothing else — including the first 4 tiers (this pool
   // has 4; a read past tierCount fails, and a failed read also makes viem fetch its offchain-lookup chunk — another
   // request — so no more are asked than a pool usually has; a 5th, if a pool ever has one, follows on its own).
   const [blk, lastScheduled, lastSettled, lastValue, openEpoch, dispute, feeBps, fundingBps, paused, treasury, hedge, n, chainId, poolToken, ...tierRaw] = await Promise.all([
-    pc.getBlock({ blockTag: "latest" }), read("lastScheduled"), read("lastSettled"), read("lastValue"), read("openEpoch"), read("disputeWindowSecs"),
-    read("feeBps"), read("fundingBps"), read("paused"), read("treasury"), read("hedgeTier"), read("tierCount"), pc.getChainId(), read("token"),
-    ...[0, 1, 2, 3].map((i) => read("tierInfo", [i]).catch(() => null))]);
-  for (let i = tierRaw.length; i < Number(n); i++) tierRaw.push(await read("tierInfo", [i]).catch(() => null));
+    pc.getBlock({ blockTag: "latest" }), rd("lastScheduled"), rd("lastSettled"), rd("lastValue"), rd("openEpoch"), rd("disputeWindowSecs"),
+    rd("feeBps"), rd("fundingBps"), rd("paused"), rd("treasury"), rd("hedgeTier"), rd("tierCount"), pc.getChainId(), rd("token"),
+    ...[0, 1, 2, 3].map((i) => rd("tierInfo", [i]).catch(() => null))]);
+  for (let i = tierRaw.length; i < Number(n); i++) tierRaw.push(await rd("tierInfo", [i]).catch(() => null));
   const problem = chainId !== EVM.chainId ? `this page expects chain ${EVM.chainId} but its RPC answers for chain ${chainId}`
-    : String(poolToken).toLowerCase() !== TOKEN.toLowerCase() ? "the pool's token is not the one this page was built for" : null;
+    : String(poolToken).toLowerCase() !== pool.token.toLowerCase() ? "the pool's token is not the one this page was built for" : null;
   const now = Number(blk.timestamp);
   const tiers: Tier[] = tierRaw.slice(0, Number(n)).map((t: any, i) => ({ i, c: Number(t.c), isLong: t.isLong, gen: Number(t.gen), held: t.held, shares: t.shares }));
   if (tiers.length !== Number(n) || tierRaw.slice(0, Number(n)).some((t) => !t)) throw new Error("could not read the pool's tiers");
@@ -137,18 +168,18 @@ export async function loadState(): Promise<St> {
   // Round 2: the days around now, the last settled one and the treasury's hedge shares.
   const from = Math.max(Number(openEpoch), ls + 1), ahead: number[] = [];
   for (let d = from; d <= Math.min(sched, from + 6); d++) ahead.push(d);
-  const [eps, settled, tSh] = await Promise.all([Promise.all(ahead.map(epoch)), ls ? epoch(ls) : Promise.resolve(null), read("sharesOf", [treasury, Number(hedge)])]);
+  const [eps, settled, tSh] = await Promise.all([Promise.all(ahead.map((d) => epoch(pool, d))), ls ? epoch(pool, ls) : Promise.resolve(null), rd("sharesOf", [treasury, Number(hedge)])]);
   const h = tiers[Number(hedge)];
   const treasuryTok = h && h.shares > 0n ? ((tSh as bigint) * h.held) / h.shares : 0n;   // = sharesToTokens, from the tier's own books
-  let last = settled; for (let d = ls; last && last.state !== SETTLED && d > 1; ) last = await epoch(--d);   // only after a skipped day
-  return { now, problem, lastScheduled: sched, lastSettled: ls, lastValue, dispute: Number(dispute), feeBps: Number(feeBps), fundingBps: Number(fundingBps), paused, tiers, hedge: Number(hedge), treasuryTok,
+  let last = settled; for (let d = ls; last && last.state !== SETTLED && d > 1; ) last = await epoch(pool, --d);   // only after a skipped day
+  return { pool, now, problem, lastScheduled: sched, lastSettled: ls, lastValue, dispute: Number(dispute), feeBps: Number(feeBps), fundingBps: Number(fundingBps), paused, tiers, hedge: Number(hedge), treasuryTok,
     open: eps.find((e) => e.cutoff > now) ?? null, next: eps.find((e) => e.day === ls + 1) ?? null, settled: last && last.state === SETTLED ? last : null };
 }
 
-const exitDaysKey = (user: string) => `sharepot.perp.exits.${P.toLowerCase()}.${user.toLowerCase()}`;
-const rememberedExits = (user: string): number[] => { try { return JSON.parse(localStorage.getItem(exitDaysKey(user)) ?? "[]").filter((x: unknown) => Number.isInteger(x)); } catch { return []; } };
+const exitDaysKey = (pool: Pool, user: string) => `sharepot.perp.exits.${pool.address.toLowerCase()}.${user.toLowerCase()}`;
+const rememberedExits = (pool: Pool, user: string): number[] => { try { return JSON.parse(localStorage.getItem(exitDaysKey(pool, user)) ?? "[]").filter((x: unknown) => Number.isInteger(x)); } catch { return []; } };
 /** Exits are found by looking at recent days; a day this browser asked for an exit on is always looked at too. */
-export const rememberExit = (user: string, day: number) => { try { localStorage.setItem(exitDaysKey(user), JSON.stringify([...new Set([...rememberedExits(user), day])].slice(-50))); } catch {} };
+export const rememberExit = (pool: Pool, user: string, day: number) => { try { localStorage.setItem(exitDaysKey(pool, user), JSON.stringify([...new Set([...rememberedExits(pool, user), day])].slice(-50))); } catch {} };
 
 /** One wallet's side of the pool: balances, each tier's position, entries waiting for their close, exits. Two or three
  *  batched requests: round 1 asks everything at once (exits are looked for on the last two weeks of days, on any day
@@ -156,20 +187,21 @@ export const rememberExit = (user: string, day: number) => { try { localStorage.
  *  at, round 3 (only with filled exits) what withdrawing them pays. Token amounts of shares come from the tiers' own
  *  books in `st`, the same arithmetic as the contract's sharesToTokens. */
 export async function loadMine(st: St, user: Address, extraExitDays: number[] = []): Promise<Mine> {
-  const days = new Set<number>([...rememberedExits(user), ...extraExitDays]); for (let d = Math.max(1, st.lastSettled - 14); d <= st.lastScheduled; d++) days.add(d);
+  const pool = st.pool, P = pool.address as Address, TOKEN = pool.token as Address, rd = (fn: string, args: unknown[] = []) => read(pool, fn, args);
+  const days = new Set<number>([...rememberedExits(pool, user), ...extraExitDays]); for (let d = Math.max(1, st.lastSettled - 14); d <= st.lastScheduled; d++) days.add(d);
   const ix = st.tiers.map((t) => t.i);
   const [bal, allowance, eth, shares, pends, reqs] = await Promise.all([
     pc.readContract({ address: TOKEN, abi: erc20, functionName: "balanceOf", args: [user] }),
     pc.readContract({ address: TOKEN, abi: erc20, functionName: "allowance", args: [user, P] }),
     pc.getBalance({ address: user }),
-    Promise.all(ix.map((i) => read("sharesOf", [user, i]) as Promise<bigint>)),
-    Promise.all(ix.map((i) => read("pendingEntries", [user, i]))),
-    Promise.all([...days].flatMap((d) => ix.map(async (i) => ({ d, i, r: await read("requests", [user, BigInt(d), i]) })))),
+    Promise.all(ix.map((i) => rd("sharesOf", [user, i]) as Promise<bigint>)),
+    Promise.all(ix.map((i) => rd("pendingEntries", [user, i]))),
+    Promise.all([...days].flatMap((d) => ix.map(async (i) => ({ d, i, r: await rd("requests", [user, BigInt(d), i]) })))),
   ]);
   const toTok = (i: number, sh: bigint) => { const t = st.tiers[i]; return t && t.shares > 0n ? (sh * t.held) / t.shares : 0n; };
   const exitReqs = reqs.filter((x) => x.r[1] > 0n);
   const need = new Set<number>([...pends.flatMap((p: any) => (p[0] as bigint[]).map(Number)), ...exitReqs.map((x) => x.d)]);
-  const fills = new Map<number, { filled: boolean; ep: Ep }>(await Promise.all([...need].map(async (d) => [d, await fillDay(d)] as [number, { filled: boolean; ep: Ep }])));
+  const fills = new Map<number, { filled: boolean; ep: Ep }>(await Promise.all([...need].map(async (d) => [d, await fillDay(pool, d)] as [number, { filled: boolean; ep: Ep }])));
   const pos = st.tiers.map((t, k) => {
     const p = pends[k] as [bigint[], bigint[]];
     const pending = p[0].map((d, j) => { const f = fills.get(Number(d))!; return { day: Number(d), amount: p[1][j], cutoff: f.ep.cutoff, filled: f.filled }; }).filter((x) => x.amount > 0n && !x.filled);

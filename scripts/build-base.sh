@@ -19,4 +19,4 @@ if [ -d "$out/assets" ]; then
   find "$tmp/assets" -type f -mtime +7 -delete
 fi
 rm -rf "$out.old"; if [ -d "$out" ]; then mv "$out" "$out.old"; fi; mv "$tmp" "$out"; rm -rf "$out.old"
-echo "build-base: ${VITE_EVM_NAME} (chain ${VITE_EVM_CHAIN_ID}) pool ${VITE_PERP} → web/$out"
+echo "build-base: ${VITE_EVM_NAME} (chain ${VITE_EVM_CHAIN_ID}) pools ${VITE_PERPS} → web/$out"
