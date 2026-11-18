@@ -7,8 +7,9 @@ import { LANGS, setLang } from "./i18n";
 import { P, PL, TESTNET, TOKEN, addrLink, errText, esc, geo, noSend, pc, pt, txLink } from "./perp-core";
 
 const LOGO = `<svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16" fill="#5b4bdb"/><g fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round"><path d="M24 23c-4-4 4-7 0-11"/><path d="M40 23c-4-4 4-7 0-11"/></g><rect x="6" y="30" width="52" height="8" rx="4" fill="#fff"/><path d="M12 30h40v8a16 16 0 0 1-16 16h-8a16 16 0 0 1-16-16z" fill="#fff"/><path d="M17 36h13v13.5a11 11 0 0 1-13-11z" fill="#ffd166"/><path d="M47 36H34v13.5a11 11 0 0 0 13-11z" fill="#f2545b"/></svg>`;
-export type PageName = "pool" | "history" | "me" | "docs";
-const PAGES: [PageName, string, string][] = [["pool", "/", "nav.pool"], ["history", "/history", "nav.history"], ["me", "/me", "nav.me"], ["docs", "/docs", "nav.docs"]];
+export type PageName = "pool" | "history" | "me" | "faucet" | "docs";
+// the faucet only on a test network: a mainnet build has no link to it
+const PAGES: [PageName, string, string][] = ([["pool", "/", "nav.pool"], ["history", "/history", "nav.history"], ["me", "/me", "nav.me"], ["faucet", "/faucet", "nav.faucet"], ["docs", "/docs", "nav.docs"]] as [PageName, string, string][]).filter(([k]) => k !== "faucet" || TESTNET);
 // The same product family on the other chains (the four-range daily pools): one-way links, see the docs.
 const OTHERS: [string, string, string][] = [["rh", "Robinhood", "https://robinhood.sharepot.xyz"], ["sol", "Solana", "https://devnet.sharepot.xyz"]];
 
@@ -78,7 +79,7 @@ function renderWallet() {
   } else {
     const a = session.address, ethTxt = eth != null ? `<span class="note">${(Number(eth) / 1e18).toFixed(4)} ETH</span>` : "";
     el.innerHTML = `<button class="wbtn" id="pwbtn"><span class="dot"></span><span class="mono">${esc(a.slice(0, 6) + "…" + a.slice(-4))}</span>${ethTxt}</button>${walletMenu ? `<div class="menu" id="pwmenu">
-      <div class="mh">${esc(session.label === TEST_WALLET ? pt("wallet.test") : session.label)}</div>
+      <div class="mh">${esc(session.label === TEST_WALLET ? pt("wallet.test") : session.label)}${eth != null ? ` · ${(Number(eth) / 1e18).toFixed(4)} ETH` : ""}</div>
       <button id="pwcopy">${esc(pt("wallet.copy"))}</button><a class="mi" href="/me">${esc(pt("nav.me"))}</a><button id="pwdis">${esc(pt("wallet.disconnect"))}</button></div>` : ""}`;
     const cp = el.querySelector<HTMLButtonElement>("#pwcopy"); if (cp) cp.onclick = async (e) => { e.stopPropagation(); try { await navigator.clipboard.writeText(a); cp.textContent = pt("wallet.copied"); } catch { cp.textContent = a; } };
     const dis = el.querySelector<HTMLButtonElement>("#pwdis"); if (dis) dis.onclick = async () => { await session?.disconnect(); setSession(null); };

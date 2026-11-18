@@ -1,5 +1,5 @@
 // SharePot Perp (the Base site): what every page shares — the strings, the formatting, the chain reads and the pool
-// arithmetic. The pages are perp.ts (the pool), perp-history.ts, perp-me.ts and perp-docs.ts; the top bar, the wallet
+// arithmetic. The pages are perp.ts (the pool), perp-history.ts, perp-me.ts, perp-faucet.ts and perp-docs.ts; the top bar, the wallet
 // and the footer are perp-shell.ts. Strings live in perp-i18n/ (English and Traditional Chinese so far; other
 // languages fall back to English).
 import { createPublicClient, http, parseAbiItem, type Address } from "viem";

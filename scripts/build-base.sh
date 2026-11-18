@@ -13,7 +13,7 @@ cd "$R/web"
 out="${2:-dist-base}"; out="${out%/}"; tmp="$out.building"
 rm -rf "$tmp"
 VITE_OUT_DIR="$tmp" npm run build 2>&1 | tail -2
-for page in perp perp-history perp-me perp-docs; do test -f "$tmp/$page.html" || { echo "build-base: $page.html is missing"; rm -rf "$tmp"; exit 5; }; done
+for page in perp perp-history perp-me perp-faucet perp-docs; do test -f "$tmp/$page.html" || { echo "build-base: $page.html is missing"; rm -rf "$tmp"; exit 5; }; done
 if [ -d "$out/assets" ]; then
   cp -pn "$out"/assets/* "$tmp/assets/" 2>/dev/null || true
   find "$tmp/assets" -type f -mtime +7 -delete

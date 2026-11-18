@@ -1,14 +1,15 @@
 // SharePot Perp — the pool page (/): the pool, what an entry would really be (fill, net leverage, funding, zero line)
 // before anyone signs, the user's positions, and the three things a user does: enter, exit, withdraw an exit. Nothing
-// is done on a user's behalf. Shared parts: perp-core.ts (strings, formatting, chain reads), perp-shell.ts (frame).
+// is done on a user's behalf. Test tokens are on their own page (perp-faucet.ts). Shared parts: perp-core.ts (strings,
+// formatting, chain reads), perp-shell.ts (frame).
 import type { Address } from "viem";
 import { PERP } from "./config";
 import type { Session } from "./wallet-evm";
 import {
-  geo, noSend, MAXU, ONE, P, PROPOSED, TESTNET, TOKEN, abi, httpsUrl, rawToStr, read, erc20, errText, esc, exposures, fillOf, fmtDate, fmtTime, fundingDaily, left, levText,
+  geo, noSend, MAXU, P, PROPOSED, TESTNET, TOKEN, abi, rawToStr, read, erc20, errText, esc, exposures, fillOf, fmtDate, fmtTime, fundingDaily, left, levText,
   loadMine, loadState, netLev, parseAmount, pct, price, pt, rememberExit, tierCls, tierKey, tok, txLink, usd, type Mine, type St,
 } from "./perp-core";
-import { askGas, health, mountShell, onHealth, onSession, refreshWallet } from "./perp-shell";
+import { health, mountShell, onHealth, onSession, refreshWallet } from "./perp-shell";
 
 let session: Session | null = null;
 
@@ -67,6 +68,8 @@ function orderCard(s: St) {
   const can = !!session && !!s.open && !s.paused && !noSend() && !s.problem;
   const over = !!(amt && mine && amt > mine.bal);
   const needApprove = !!(amt && mine && mine.allowance < amt);
+  // test tokens are on their own page (/faucet); pointed to only when this wallet is short of them
+  const toFaucet = TESTNET && !!mine && (mine.bal === 0n || mine.eth === 0n || over);
   const btn = !session ? pt("ord.connect") : !s.open ? pt("ord.noOpen") : needApprove ? pt("ord.approve", { tok: PERP.tokenSymbol }) : pt("ord.submit");
   return `<section class="card pord">
     <h2>${esc(pt("ord.title"))}</h2>
@@ -85,6 +88,7 @@ function orderCard(s: St) {
     ${why ? `<div class="note pwarn">${esc(why)}</div>` : ""}
     ${Math.abs(k) > 1.05 ? `<div class="note">${esc(pt("ord.decay"))}</div>` : ""}
     ${over ? `<div class="note warn">${esc(pt("ord.tooBig"))}</div>` : ""}
+    ${toFaucet ? `<div class="note">${pt("ord.toFaucet", { tok: esc(PERP.tokenSymbol) })}</div>` : ""}
     <button class="primary big" id="penter" ${can && !busy && !over ? "" : "disabled"}>${esc(btn)}</button>
     ${msgs.enter ? `<div class="note pmsg">${msgs.enter}</div>` : ""}
   </section>`;
@@ -109,15 +113,6 @@ function positionsCard(s: St) {
   return `<section class="card ppos"><h2>${esc(pt("pos.title"))}</h2>${rows || `<div class="note">${esc(pt("pos.none"))}</div>`}${msgs.pos ? `<div class="note pmsg">${msgs.pos}</div>` : ""}</section>`;
 }
 
-function faucetCard() {
-  if (!TESTNET) return "";
-  const noEth = !!(session && mine && mine.eth === 0n);
-  return `<section class="card pfau"><h2>${esc(pt("faucet.title"))}</h2><p class="note">${esc(pt("faucet.p", { tok: PERP.tokenSymbol }))}</p>
-    ${noEth ? `<div class="note warn">${esc(pt("faucet.noEth"))}</div>` : ""}
-    <div class="prow"><button id="pmint" ${!session || busy || noSend() ? "disabled" : ""}>${esc(pt("faucet.mint", { tok: PERP.tokenSymbol }))}</button>${health.faucet ? `<button id="pgas" ${!session || busy || noSend() ? "disabled" : ""}>${esc(pt("faucet.gas"))}</button>` : `<a class="btn" href="${esc(httpsUrl(PERP.gasFaucet))}" target="_blank" rel="noopener">${esc(pt("faucet.gas"))}</a>`}</div>
-    ${msgs.mint ? `<div class="note pmsg">${msgs.mint}</div>` : ""}</section>`;
-}
-
 const rules = () => `<details class="card prules"><summary>${esc(pt("rules.title"))}</summary><ol>${[1, 2, 3, 4, 5, 6, 7].map((i) => `<li>${pt("rules." + i, { sym: esc(PERP.symbol) })}</li>`).join("")}</ol></details>`;
 
 function render() {
@@ -128,7 +123,7 @@ function render() {
   if (!st) { root.innerHTML = hero + `<div class="note">${loadErr ? esc(pt("err", { err: loadErr })) : "…"}</div>`; return; }
   // one flat list in reading order (phones); on wide screens the order panel takes the right column (perp.css)
   const problem = st.problem ? `<div class="card pwarn">${esc(pt("ord.problem", { why: st.problem }))}</div>` : "";
-  root.innerHTML = hero + problem + `<div class="pgrid">${marketCard(st)}${orderCard(st)}${positionsCard(st)}${faucetCard()}${rules()}</div>`
+  root.innerHTML = hero + problem + `<div class="pgrid">${marketCard(st)}${orderCard(st)}${positionsCard(st)}${rules()}</div>`
     + (loadErr ? `<div class="note warn">${esc(pt("err", { err: loadErr }))}</div>` : "");
   bind();
   if (keepFocus) {
@@ -189,15 +184,6 @@ function bind() {
     const [d, tier] = b.dataset.claim!.split(":").map(Number), x = mine!.exits.find((e) => e.day === d && e.tier === tier);
     run("pos", async () => { const h = await session!.write!({ address: P, abi, functionName: "claim", args: [session!.address, BigInt(d), tier] }); return esc(pt("pos.withdrawn", { n: tok(x?.tokens ?? 0n), tok: PERP.tokenSymbol })) + txLink(h); });
   }));
-  const mint = document.getElementById("pmint");
-  if (mint) mint.onclick = () => run("mint", async () => {
-    let pre = "";
-    if (health.faucet && mine && mine.eth === 0n) { msgs.mint = esc(pt("faucet.gasAsking")); render(); pre = (await askGas(session!.address)) + "<br>"; }   // a fresh wallet cannot pay for the mint
-    const h = await session!.write!({ address: TOKEN, abi: erc20, functionName: "mint", args: [session!.address, 100n * ONE] });
-    return pre + esc(pt("faucet.minted", { tok: PERP.tokenSymbol })) + txLink(h);
-  });
-  const gasBtn = document.getElementById("pgas");
-  if (gasBtn) gasBtn.onclick = () => run("mint", () => askGas(session!.address));
 }
 
 // ---------------------------------------------------------------- boot

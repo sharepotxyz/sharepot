@@ -1,6 +1,6 @@
 // The SharePot Perp site (Base): its pages from web/dist-base and a small API, in one process on 127.0.0.1 (Caddy fronts
 // it as base.sharepot.xyz, and only for Cloudflare's edge, so the CF-* headers below are Cloudflare's):
-//   /, /history, /me, /docs   the four pages (perp.html, perp-history.html, perp-me.html, perp-docs.html), the same
+//   /, /history, /me, /faucet, /docs   the pages (perp.html, perp-history.html, perp-me.html, perp-faucet.html, perp-docs.html), the same
 //                             bytes for everyone so Cloudflare can cache them; each page asks /api/health whether this
 //                             visitor is in the United States (readable, nothing can be sent) and sends nothing until told
 //   /api/health               chain, pool, faucet on/off, the caller's country as Cloudflare reports it
@@ -219,7 +219,7 @@ async function feedback(req, res) {
 
 // ---------- pages ----------
 // Only this site's own pages: the same build also emits the four-range SharePot pages, which belong to the other sites.
-const PAGES = { "/": "perp.html", "/history": "perp-history.html", "/me": "perp-me.html", "/docs": "perp-docs.html" };
+const PAGES = { "/": "perp.html", "/history": "perp-history.html", "/me": "perp-me.html", "/faucet": "perp-faucet.html", "/docs": "perp-docs.html" };
 const HTML_OK = new Set(Object.values(PAGES));
 function serveStatic(req, res, p) {
   let rel; try { rel = decodeURIComponent(p); } catch { res.writeHead(400, { "content-type": "text/plain" }); return res.end("bad request"); }
