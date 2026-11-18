@@ -4,7 +4,8 @@
 import { PERP } from "./config";
 import { connectWallet, devWallet, listWallets, type Session } from "./wallet-evm";
 import { LANGS, setLang } from "./i18n";
-import { P, PL, TESTNET, TOKEN, addrLink, errText, esc, geo, noSend, pc, pt, txLink } from "./perp-core";
+import { P, PL, TESTNET, TOKEN, addrLink, erc20, errText, esc, geo, noSend, pc, pt, tok, txLink } from "./perp-core";
+import { ICON_BASE, ICON_GLOBE, ICON_ROBINHOOD, iconSolana } from "./perp-icons";
 
 const LOGO = `<svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16" fill="#5b4bdb"/><g fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round"><path d="M24 23c-4-4 4-7 0-11"/><path d="M40 23c-4-4 4-7 0-11"/></g><rect x="6" y="30" width="52" height="8" rx="4" fill="#fff"/><path d="M12 30h40v8a16 16 0 0 1-16 16h-8a16 16 0 0 1-16-16z" fill="#fff"/><path d="M17 36h13v13.5a11 11 0 0 1-13-11z" fill="#ffd166"/><path d="M47 36H34v13.5a11 11 0 0 0 13-11z" fill="#f2545b"/></svg>`;
 export type PageName = "pool" | "history" | "me" | "faucet" | "docs";
@@ -48,8 +49,8 @@ export async function askGas(addr: string): Promise<string> {
 
 // ---------------------------------------------------------------- wallet session
 let session: Session | null = null;
-let eth: bigint | null = null;
-let walletMenu = false, navMenu = false;
+let eth: bigint | null = null, stockBal: bigint | null = null;
+let walletMenu = false, navMenu = false, langMenu = false;
 const WALLET_KEY = "sharepot.perp.wallet", TEST_WALLET = "Test wallet (browser)";
 const listeners: ((s: Session | null) => void)[] = [];
 export const getSession = () => session;
@@ -59,14 +60,18 @@ export const onSession = (fn: (s: Session | null) => void) => { listeners.push(f
 /** The connected wallet's ETH for fees (null = not read yet). */
 export const walletEth = () => eth;
 function setSession(s: Session | null) {
-  session = s; walletMenu = false; eth = null;
+  session = s; walletMenu = false; eth = null; stockBal = null;
   try { s ? localStorage.setItem(WALLET_KEY, s.label) : localStorage.removeItem(WALLET_KEY); } catch {}
   renderWallet(); refreshWallet();
   listeners.forEach((f) => { try { f(s); } catch (e) { console.error(e); } });
 }
 export async function refreshWallet() {
   if (!session) { renderWallet(); return; }
-  try { eth = await pc.getBalance({ address: session.address as `0x${string}` }); } catch {}
+  const s = session, a = s.address as `0x${string}`;
+  const [e, b] = await Promise.all([pc.getBalance({ address: a }).catch(() => null), (pc.readContract({ address: TOKEN, abi: erc20, functionName: "balanceOf", args: [a] }) as Promise<bigint>).catch(() => null)]);
+  if (session !== s) return;   // switched wallets meanwhile
+  if (e != null) eth = e;
+  if (b != null) stockBal = b;
   renderWallet();
 }
 function renderWallet() {
@@ -77,19 +82,36 @@ function renderWallet() {
     el.querySelectorAll<HTMLButtonElement>("button[data-i]").forEach((b) => (b.onclick = async () => { try { setSession(await connectWallet(ws[Number(b.dataset.i)])); } catch (e) { alert(errText(e)); } }));
     const d = el.querySelector<HTMLButtonElement>("#pwdev"); if (d) d.onclick = () => setSession(devWallet());
   } else {
-    const a = session.address, ethTxt = eth != null ? `<span class="note">${(Number(eth) / 1e18).toFixed(4)} ETH</span>` : "";
-    el.innerHTML = `<button class="wbtn" id="pwbtn"><span class="dot"></span><span class="mono">${esc(a.slice(0, 6) + "…" + a.slice(-4))}</span>${ethTxt}</button>${walletMenu ? `<div class="menu" id="pwmenu">
-      <div class="mh">${esc(session.label === TEST_WALLET ? pt("wallet.test") : session.label)}${eth != null ? ` · ${(Number(eth) / 1e18).toFixed(4)} ETH` : ""}</div>
+    // the button is the address only; what the wallet holds is in its menu
+    const a = session.address, bal = (v: bigint | null, f: (x: bigint) => string) => (v == null ? "…" : f(v));
+    el.innerHTML = `<button class="wbtn" id="pwbtn" aria-expanded="${walletMenu}"><span class="dot"></span><span class="mono">${esc(a.slice(0, 6) + "…" + a.slice(-4))}</span></button>${walletMenu ? `<div class="menu" id="pwmenu">
+      <div class="mh">${esc(session.label === TEST_WALLET ? pt("wallet.test") : session.label)}</div>
+      <div class="pwbal"><span>${esc(PERP.tokenSymbol)}${TESTNET ? ` <small>${esc(pt("wallet.testTok"))}</small>` : ""}</span><b>${esc(bal(stockBal, (x) => tok(x)))}</b></div>
+      <div class="pwbal"><span>ETH <small>${esc(pt("wallet.forFees"))}</small></span><b>${esc(bal(eth, (x) => (Number(x) / 1e18).toFixed(4)))}</b></div>
+      ${TESTNET ? `<a class="mi" href="/faucet">${esc(pt("wallet.faucet"))}</a>` : ""}<hr>
       <button id="pwcopy">${esc(pt("wallet.copy"))}</button><a class="mi" href="/me">${esc(pt("nav.me"))}</a><button id="pwdis">${esc(pt("wallet.disconnect"))}</button></div>` : ""}`;
     const cp = el.querySelector<HTMLButtonElement>("#pwcopy"); if (cp) cp.onclick = async (e) => { e.stopPropagation(); try { await navigator.clipboard.writeText(a); cp.textContent = pt("wallet.copied"); } catch { cp.textContent = a; } };
     const dis = el.querySelector<HTMLButtonElement>("#pwdis"); if (dis) dis.onclick = async () => { await session?.disconnect(); setSession(null); };
   }
-  el.querySelector<HTMLButtonElement>("#pwbtn")!.onclick = (e) => { e.stopPropagation(); walletMenu = !walletMenu; navMenu = false; renderNavMenu(); renderWallet(); };
+  el.querySelector<HTMLButtonElement>("#pwbtn")!.onclick = (e) => { e.stopPropagation(); walletMenu = !walletMenu; navMenu = false; langMenu = false; renderNavMenu(); renderLangMenu(); renderWallet(); if (walletMenu) refreshWallet(); };
 }
 
 // ---------------------------------------------------------------- top bar
 const langOptions = () => LANGS.map(([k, n]) => `<option value="${k}"${k === PL ? " selected" : ""}>${esc(n)}</option>`).join("");
-const chainSwitch = () => `<span class="chains" title="${esc(pt("nav.chainsTitle"))}"><span class="on base">Base</span>${OTHERS.map(([c, n, u]) => `<a class="${c}" href="${esc(u)}">${esc(n)}</a>`).join("")}</span>`;
+// the chains as their marks only (name on hover and for screen readers); this one marked as current
+const chainSwitch = () => `<span class="pchainsw" role="group" title="${esc(pt("nav.chainsTitle"))}"><span class="pchain on" aria-label="Base" title="Base" aria-current="page">${ICON_BASE}</span>${OTHERS.map(([c, n, u]) => `<a class="pchain ${c}" href="${esc(u)}" aria-label="${esc(n)}" title="${esc(n)}">${c === "sol" ? iconSolana() : ICON_ROBINHOOD}</a>`).join("")}</span>`;
+/** The language picker behind the globe button (narrow screens have it in ☰ instead). */
+function renderLangMenu() {
+  const box = document.getElementById("plangbox"); if (!box) return;
+  box.querySelector(".menu")?.remove();
+  if (langMenu) {
+    const m = document.createElement("div"); m.className = "menu plangmenu";
+    m.innerHTML = LANGS.map(([k, n]) => `<button data-lang="${esc(k)}"${k === PL ? ' class="on" aria-current="true"' : ""}>${esc(n)}</button>`).join("");
+    m.querySelectorAll<HTMLButtonElement>("button[data-lang]").forEach((b) => (b.onclick = () => setLang(b.dataset.lang!)));
+    box.appendChild(m);
+  }
+  box.querySelector("#plangbtn")?.setAttribute("aria-expanded", String(langMenu));
+}
 let activePage: PageName = "pool";
 function renderNavMenu() {
   const box = document.getElementById("pnavbox"); if (!box) return;
@@ -97,16 +119,18 @@ function renderNavMenu() {
   if (navMenu) {
     const m = document.createElement("div"); m.className = "menu navmenu";
     m.innerHTML = PAGES.map(([k, href, key]) => `<a class="mi${k === activePage ? " cta" : ""}" href="${href}">${esc(pt(key))}</a>`).join("")
-      + `<hr><div class="langrow" style="display:block;padding:4px 6px"><select class="langsel" aria-label="${esc(pt("lang.label"))}" style="width:100%;max-width:none">${langOptions()}</select></div><div style="padding:4px 6px">${chainSwitch()}</div>`;
+      // language and chains: here only on screens where the bar hides them (perp.css .pmextra)
+      + `<div class="pmextra"><div class="langrow" style="padding:4px 6px"><select class="langsel" aria-label="${esc(pt("lang.label"))}" style="width:100%;max-width:none">${langOptions()}</select></div><div style="padding:4px 6px">${chainSwitch()}</div></div>`;
     const ls = m.querySelector<HTMLSelectElement>("select")!; ls.onclick = (e) => e.stopPropagation(); ls.onchange = () => setLang(ls.value);
     box.appendChild(m);
   }
   box.querySelector("#pnavbtn")?.setAttribute("aria-expanded", String(navMenu));
 }
 document.addEventListener("click", (e) => {
-  const w = document.getElementById("pwallet"), n = document.getElementById("pnavbox");
+  const w = document.getElementById("pwallet"), n = document.getElementById("pnavbox"), l = document.getElementById("plangbox");
   if (walletMenu && w && !w.contains(e.target as Node)) { walletMenu = false; renderWallet(); }
   if (navMenu && n && !n.contains(e.target as Node)) { navMenu = false; renderNavMenu(); }
+  if (langMenu && l && !l.contains(e.target as Node)) { langMenu = false; renderLangMenu(); }
 });
 
 export function mountShell(page: PageName) {
@@ -119,12 +143,12 @@ export function mountShell(page: PageName) {
       ${PAGES.map(([k, href, key]) => `<a class="navlink${k === page ? " on" : ""}" href="${href}"${k === page ? ' aria-current="page"' : ""}>${esc(pt(key))}</a>`).join("")}
       <div class="navmorebox" id="pnavbox"><button class="navmore" id="pnavbtn" aria-label="${esc(pt("nav.menu"))}" aria-expanded="false">☰</button></div>
       <span class="pchains">${chainSwitch()}</span>
-      <select id="plang" class="langsel" aria-label="${esc(pt("lang.label"))}">${langOptions()}</select>
+      <div class="plangbox" id="plangbox"><button class="piconbtn" id="plangbtn" aria-label="${esc(pt("lang.label"))}" title="${esc(pt("lang.label"))}: ${esc(LANGS.find(([k]) => k === PL)?.[1] ?? PL)}" aria-expanded="false">${ICON_GLOBE}</button></div>
       <span class="netbadge">${esc(TESTNET ? pt("net.test") : pt("net.main"))}</span>
       <div id="pwallet" class="walletbox"></div>
     </nav></div>`;
-  (document.getElementById("plang") as HTMLSelectElement).onchange = (e) => setLang((e.target as HTMLSelectElement).value);
-  document.getElementById("pnavbtn")!.onclick = (e) => { e.stopPropagation(); navMenu = !navMenu; walletMenu = false; renderWallet(); renderNavMenu(); };
+  document.getElementById("plangbtn")!.onclick = (e) => { e.stopPropagation(); langMenu = !langMenu; navMenu = false; walletMenu = false; renderWallet(); renderNavMenu(); renderLangMenu(); };
+  document.getElementById("pnavbtn")!.onclick = (e) => { e.stopPropagation(); navMenu = !navMenu; walletMenu = false; langMenu = false; renderWallet(); renderLangMenu(); renderNavMenu(); };
   // footer: what this is, who controls the token, the contracts (their source is verified on Sourcify), the links
   const foot = document.getElementById("pfoot");
   if (foot) foot.innerHTML = `<p>${esc(pt("foot"))}</p>
