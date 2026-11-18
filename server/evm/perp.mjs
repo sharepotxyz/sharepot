@@ -23,6 +23,11 @@
 // pool: nothing moves and its requests roll into the next day. A held day is never skipped automatically. The contract
 // only takes a skip of an unproposed day (reject a proposal first) before the next day's cutoff, and at most 63 in a
 // row; past the next cutoff the day has to be proposed (the last settled value moves nothing but funding).
+// A close more than the contract's daily cap (maxMoveBps, 50 %) from the last one is beyond the operator key: the job
+// holds the day and sends a Telegram instead of reverting every tick, and nothing in that pool settles until
+// `PERP_SYMBOL=<SYM> PERP_ADMIN_KEY_FILE=<admin key> perp.mjs admin-propose <day>` (by hand, on the host that holds the
+// admin key: /root/stocklana/perp-admin-propose.sh, which also puts the evidence file on the site) recomputes and
+// proposes it. A skip would not help: the next day is compared with the same last settled value.
 //
 //   env: EVM_CHAIN (a chains.json entry with `perps`: [{symbol, pool, token, deployBlock, feed, mainnetToken}]),
 //        PERP_SYMBOL (only these pools, comma-separated labels: NVDA = the live NVDA pool, NVDA-old-203e = a retired one), EVM_PROPOSER_KEY_FILE (the operator key), DATA_DIR,
@@ -79,10 +84,19 @@ export async function readEpoch(pool, day) {
 
 export async function readState(pool) {
   const p = contract(pool);
-  const [lastScheduled, lastSettled, lastValue, disputeWindowSecs] = await withRetry(
-    () => Promise.all([p.read.lastScheduled(), p.read.lastSettled(), p.read.lastValue(), p.read.disputeWindowSecs()]), 4, `${pool.label} state`);
-  return { lastScheduled: Number(lastScheduled), lastSettled: Number(lastSettled), lastValue, disputeWindowSecs: Number(disputeWindowSecs) };
+  const [lastScheduled, lastSettled, lastValue, disputeWindowSecs, maxMoveBps] = await withRetry(
+    () => Promise.all([p.read.lastScheduled(), p.read.lastSettled(), p.read.lastValue(), p.read.disputeWindowSecs(), p.read.maxMoveBps()]), 4, `${pool.label} state`);
+  return { lastScheduled: Number(lastScheduled), lastSettled: Number(lastSettled), lastValue, disputeWindowSecs: Number(disputeWindowSecs), maxMoveBps: Number(maxMoveBps) };
 }
+
+/** The signed move from `last` to `value` in bps when it is past `capBps` — the contract's test for a proposal only the
+ *  admin may send (`d × BPS > last × maxMoveBps`) — else null. Nothing is past the cap before the first settlement. */
+export function overCap(last, value, capBps) {
+  if (!last) return null;
+  const d = value > last ? value - last : last - value;
+  return d * 10_000n > last * BigInt(capBps) ? Number(((value - last) * 10_000n) / last) : null;
+}
+const pct = (bps) => `${bps > 0 ? "+" : ""}${(bps / 100).toFixed(2)} %`;
 
 /** The NY session date of the last day that settled with a value (skipped days carry none), or null before the first. */
 async function lastSettledDate(pool, st) {
@@ -269,6 +283,20 @@ async function advance(pool, wallet, st, now, dataDir) {
       if (r.alert || late) notify(`${title(pool)}: day ${day} (${date}) held`, r.reason, `perp-hold-${pool.label}-${day}`, 360);
       return `day ${day} (${date}) held: ${r.reason}`;
     }
+    // Past the operator's daily cap the contract refuses this key: sending would only revert every tick, and a revert is
+    // logged, never sent anywhere. The pool stays unsettled (no entry or exit fills) until a human decides — so it goes
+    // to Telegram with the one command that proposes it with the admin key. No evidence file is written here: the
+    // admin's run writes the one whose hash goes on-chain, and the site must serve exactly those bytes.
+    const mv = overCap(st.lastValue, r.value, st.maxMoveBps);
+    if (mv !== null) {
+      const cap = `${st.maxMoveBps / 100} %`;
+      notify(`${title(pool)}: day ${day} (${date}) moved ${pct(mv)}, past the ${cap} cap — needs the admin`,
+        `單日 ${pct(mv)} 超過合約上限 ${cap}，營運鑰匙送不出這個收盤價。送出前這個池子不會對帳：所有進場、出場都在排隊，沒人能出場。\n` +
+        `先確認這個漲跌是真的（不是拆股或資料錯誤），再在東京跑：\n/root/stocklana/perp-admin-propose.sh ${pool.label} ${day}\n` +
+        `它會在東京重算一次（要兩個來源一致）再用管理員鑰匙送出；之後照常 6 小時異議期、東京核對、VPS 對帳。`,
+        `perp-overcap-${pool.label}-${day}`, 360);
+      return `day ${day} (${date}) held: ${pct(mv)} since the last close is past the operator's ${cap} cap; the admin has to propose it (perp-admin-propose.sh; Telegram sent)`;
+    }
     const hash = evidenceHash(r.doc);
     writeAtomic(path.join(poolDir(pool, dataDir), `evidence-${day}.json`), JSON.stringify(r.doc));
     const tx = await send(pool, wallet, "propose", [BigInt(day), r.value, hash]);
@@ -321,6 +349,31 @@ async function verify(pool, dataDir) {
   return `day ${day} (${date}) verified ${Number(e.value) / 1e8}`;
 }
 
+/** By hand, with the admin key: proposes a day the operator cannot because its move is past the daily cap. The value is
+ *  recomputed here from the same sources and under the same two-source rule; a day within the cap is refused (the
+ *  operator's job proposes it). The dispute window, the independent verify and the settle then run as on any day. */
+async function adminPropose(pool, day, dataDir) {
+  const keyFile = process.env.PERP_ADMIN_KEY_FILE;
+  if (!keyFile) throw new Error("admin-propose needs PERP_ADMIN_KEY_FILE (the pool's admin key)");
+  const wallet = walletFor(keyFile);
+  const admin = await withRetry(() => contract(pool).read.admin(), 4, `${pool.label} admin`);
+  if (admin.toLowerCase() !== wallet.account.address.toLowerCase()) throw new Error(`${keyFile} is ${wallet.account.address}, not the pool's admin ${admin}`);
+  const st = await readState(pool), now = await chainNow();
+  if (day !== st.lastSettled + 1) throw new Error(`day ${day} is not next in line (the next is ${st.lastSettled + 1})`);
+  const e = await readEpoch(pool, day);
+  if (e.state !== State.Scheduled) throw new Error(`day ${day} is not waiting for a proposal (state ${e.state})`);
+  const date = nyDate(e.cutoff);
+  if (now < e.cutoff + PROPOSE_DELAY) throw new Error(`day ${day} (${date}): too soon after the bell, try after ${new Date((e.cutoff + PROPOSE_DELAY) * 1000).toISOString()}`);
+  const r = await valueFor(pool, date, st.lastValue, await lastSettledDate(pool, st), now);
+  if (!r.ok) throw new Error(`day ${day} (${date}) has no value on this host: ${r.reason}`);
+  const mv = overCap(st.lastValue, r.value, st.maxMoveBps);
+  if (mv === null) throw new Error(`day ${day} (${date}) moved within the operator's ${st.maxMoveBps / 100} % cap: the VPS job proposes it, not the admin`);
+  const file = path.join(poolDir(pool, dataDir), `evidence-${day}.json`);
+  writeAtomic(file, JSON.stringify(r.doc));
+  const tx = await send(pool, wallet, "propose", [BigInt(day), r.value, evidenceHash(r.doc)]);
+  return `day ${day} (${date}) proposed by the admin at ${Number(r.value) / 1e8}, ${pct(mv)} (${tx}); evidence ${file}`;
+}
+
 /** One pool's tick. */
 async function runPool(pool, wallet, dataDir) {
   const now = await chainNow();
@@ -345,6 +398,13 @@ async function main() {
     if (!day) throw new Error("usage: PERP_SYMBOL=<SYM> perp.mjs skip <day>");
     if (pools.length !== 1) throw new Error(`skip is for one pool: set PERP_SYMBOL to one of ${POOLS.map((p) => p.label).join(", ")}`);
     log(pools[0], `skip day ${day}: ${await send(pools[0], walletFor(), "skip", [BigInt(day)])}`);
+    return;
+  }
+  if (mode === "admin-propose") {
+    const day = Number(process.argv[3]);
+    if (!day) throw new Error("usage: PERP_SYMBOL=<SYM> PERP_ADMIN_KEY_FILE=<key> perp.mjs admin-propose <day>");
+    if (pools.length !== 1) throw new Error(`admin-propose is for one pool: set PERP_SYMBOL to one of ${POOLS.map((p) => p.label).join(", ")}`);
+    log(pools[0], await adminPropose(pools[0], day, dataDir));
     return;
   }
   const wallet = mode === "verify" ? null : walletFor();

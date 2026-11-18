@@ -5,7 +5,9 @@
 # verify (match and mismatch, rejecting with the guardian's reject-only key), the operator's move cap, a re-propose, settling after the dispute
 # window, entries that are the user's position without any claim, and an exit the user withdraws (nothing is paid on
 # anyone's behalf). A second pool (TSLA, its own MockStock) runs beside it through the same job: scheduled, proposed
-# with TSLA's own close, verified, its evidence kept apart, and a skip in one pool leaves the other alone. Keys are anvil's public test mnemonic; alerts are disabled.
+# with TSLA's own close, verified, its evidence kept apart, and a skip in one pool leaves the other alone. A close past
+# the operator's cap is held (not retried into a revert) while the other pool carries on, then proposed by the admin's
+# command and settled as usual. Keys are anvil's public test mnemonic; alerts are disabled.
 # Exit 0 only when every check holds.   Usage: bash scripts/perp-e2e.sh
 set -euo pipefail
 export PATH=/root/stocklana/tools/node22/bin:$HOME/.foundry/bin:$PATH
@@ -106,6 +108,27 @@ check "day 6 is proposed across the skipped day and verifies" '[[ "$v" == *"veri
 warp 2026-11-10T03:32:00Z; job run >/dev/null
 check "day 6 settles" '[ "$(state 6)" = 3 ]'
 check "the TSLA pool settled its 11-06 close meanwhile" '[ "$(state 5 "$PERP2")" = 3 ]'
+
+echo "== a move past the operator's cap (the cap lowered to 0.01 % so a real day crosses it)"
+printf '%s\n' "$K0" > "$D/admin.key"
+warp 2026-11-10T21:31:00Z
+v=$(PERP_SYMBOL=NVDA PERP_ADMIN_KEY_FILE=$D/admin.key DATA_DIR=$D/admin-data job admin-propose 7 || true)
+check "the admin's command refuses a day within the cap" '[[ "$v" == *"within the operator"* ]] && [ "$(state 7)" = 1 ]'
+tx "$PERP" "setMaxMove(uint16)" 1 --private-key "$K0"
+v=$(job run || true)
+check "the job holds a day past the cap instead of reverting" '[[ "$v" == *"NVDA] day 7 (2026-11-10) held:"*"past the operator"* ]] && [[ "$v" != *FAILED* ]] && [ "$(state 7)" = 1 ]'
+check "it writes no evidence file for that day (the admin's run writes the one on-chain)" '[ ! -e "$D/data/perp/anvil/$(echo "$PERP" | tr A-F a-f)/evidence-7.json" ]'
+check "the TSLA pool proposes its own 11-10 close meanwhile" '[ "$(state 7 "$PERP2")" = 2 ]'
+v=$(PERP_SYMBOL=NVDA PERP_ADMIN_KEY_FILE=$D/operator.key DATA_DIR=$D/admin-data job admin-propose 7 || true)
+check "the admin's command refuses a key that is not the admin" '[[ "$v" == *"not the pool"* ]] && [ "$(state 7)" = 1 ]'
+v=$(PERP_SYMBOL=NVDA PERP_ADMIN_KEY_FILE=$D/admin.key DATA_DIR=$D/admin-data job admin-propose 7 || true)
+check "the admin's command proposes it, with its evidence file" '[[ "$v" == *"proposed by the admin"* ]] && [ "$(state 7)" = 2 ] && [ -s "$D/admin-data/perp/anvil/$(echo "$PERP" | tr A-F a-f)/evidence-7.json" ]'
+AFILE="$D/admin-data/perp/anvil/$(echo "$PERP" | tr A-F a-f)/evidence-7.json"
+check "the hash on-chain is the evidence file's sha256" '[ "$(cast call "$PERP" "epochs(uint256)(uint64,uint8,uint64,uint256,bytes32,uint256)" 7 --rpc-url $RPC | sed -n 5p)" = "0x$(sha256sum "$AFILE" | cut -c1-64)" ]'
+v=$(job verify)
+check "the independent verify agrees with the admin's value" '[[ "$v" == *"NVDA] day 7 (2026-11-10) verified"* ]]'
+warp 2026-11-11T03:45:00Z; job run >/dev/null
+check "day 7 settles after the dispute window as usual" '[ "$(state 7)" = 3 ]'
 held=0; for t in 0 1 2 3; do h=$(cast call "$PERP" "tierInfo(uint8)((uint8,bool,uint32,uint256,uint256))" $t --rpc-url $RPC | tr -d '()' | awk -F', ' '{print $4}' | awk '{print $1}'); held=$((held + h)); done
 cb=$(cast call "$TOKEN" "balanceOf(address)(uint256)" "$PERP" --rpc-url $RPC | awk '{print $1}')
 check "the contract holds every tier's tokens" '[ "$cb" -ge "$held" ]'
