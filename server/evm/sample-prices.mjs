@@ -14,6 +14,7 @@ import path from "node:path";
 import { readRegistry } from "../chain-tokens.mjs";
 import { utcDate, addDays } from "../prices.mjs";
 import { withRetry, guardProcess } from "../retry.mjs";
+import { siteTokenList } from "../site-tokens.mjs";
 guardProcess();
 import { evmDir } from "./index-events.mjs";
 
@@ -23,8 +24,12 @@ const now = Math.floor(Date.now() / 1000), today = utcDate(now);
 // tokens to sample: { <lowercase mainnet address>: <pool address or null> }
 const pinned = new Map();
 if (process.env.TOKENS_API) {
-  const { stocks } = await (await fetch(process.env.TOKENS_API, { signal: AbortSignal.timeout(15_000) })).json();
-  for (const s of stocks ?? []) if (s.kind === "day") for (const t of s.tokens) if (t.mainnetMint) pinned.set(String(t.mainnetMint).toLowerCase(), t.pool ? String(t.pool).replace(/^robinhood_/, "").toLowerCase() : null);
+  // an unreachable site falls back to the list it last gave (../site-tokens.mjs): the prices never came from it
+  const tl = await siteTokenList({ url: process.env.TOKENS_API, cacheFile: path.join(DIR, "site-tokens.json"),
+    pick: (stocks) => stocks.filter((s) => s.kind === "day").flatMap((s) => (s.tokens ?? []).filter((t) => t.mainnetMint)
+      .map((t) => [String(t.mainnetMint).toLowerCase(), t.pool ? String(t.pool).replace(/^robinhood_/, "").toLowerCase() : null])) });
+  if (tl.fromCache) console.log(new Date().toISOString(), `site token list unavailable (${tl.siteError}); using the copy from ${Math.round((now - tl.cachedAt) / 60)} min ago`);
+  for (const e of tl.list) if (Array.isArray(e) && typeof e[0] === "string" && e[0]) pinned.set(e[0], typeof e[1] === "string" ? e[1] : null);
 } else {
   const reg = readRegistry(DIR);
   for (const [a, t] of Object.entries(reg.tokens)) if ([addDays(today, -1), today, addDays(today, 1)].some((d) => (t.selectedFor ?? []).includes(d))) pinned.set(a.toLowerCase(), t.pool ? String(t.pool).replace(/^robinhood_/, "").toLowerCase() : null);

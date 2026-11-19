@@ -14,7 +14,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { closeMove, chainMove, chainClose, parseMetric, movePpm, bucketOf, utcMidnight, addDays } from "../prices.mjs";
-import { notify } from "../notify.mjs";
+import { notify as sendNotify } from "../notify.mjs";
 import { unverifiedAction, comparisonAction, reportAfterFor, voidMarginFor, BOUNDARY_PPM as DEFAULT_BOUNDARY_PPM } from "../verify-policy.mjs";
 import { guardProcess } from "../retry.mjs";
 import { CHAIN_KEY, chainCfg, walletFor, allMarkets, readConfig, send, Status, explorerTx } from "./chain.mjs";
@@ -37,7 +37,10 @@ const short = (e) => String(e?.shortMessage ?? e?.message ?? e).split("\n")[0].s
 fs.mkdirSync(DIR, { recursive: true });
 const STATE = path.join(DIR, "verified.json");
 const state = (() => { try { return JSON.parse(fs.readFileSync(STATE, "utf8")); } catch { return {}; } })();
-const saveState = () => { fs.writeFileSync(STATE + ".tmp", JSON.stringify(state, null, 1)); fs.renameSync(STATE + ".tmp", STATE); };
+// DRY_RUN changes nothing: no transaction, no verdict on disk, no alert (see server/verify-proposals.mjs: until
+// 2026-11-19 a dry run's "ok" verdicts were saved and the next real run skipped those markets).
+const saveState = () => { if (DRY) return; fs.writeFileSync(STATE + ".tmp", JSON.stringify(state, null, 1)); fs.renameSync(STATE + ".tmp", STATE); };
+const notify = DRY ? (title) => log(`  would notify: ${title}`) : sendNotify;
 
 // ---------- the token a market's quotes are for ----------
 // On the live chain the market's own token is the one quoted. On the test network markets sit on mocks; the site's

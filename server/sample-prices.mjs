@@ -9,6 +9,7 @@ import path from "node:path";
 import { readRegistry } from "./chain-tokens.mjs";
 import { utcDate, addDays } from "./prices.mjs";
 import { withRetry, guardProcess } from "./retry.mjs";
+import { siteTokenList } from "./site-tokens.mjs";
 guardProcess();
 
 //        TOKENS_API=<site>/api/stocks — sample the site's listed on-chain tokens instead of the local templates and
@@ -22,8 +23,11 @@ if (process.env.TOKENS_FILE) {
   let list = null; try { list = JSON.parse(fs.readFileSync(process.env.TOKENS_FILE, "utf8")).tokens; } catch (e) { if (e?.code !== "ENOENT") throw e; }
   for (const t of list ?? []) if (t.mint) mints.add(t.mint);
 } else if (process.env.TOKENS_API) {
-  const { stocks } = await (await fetch(process.env.TOKENS_API, { signal: AbortSignal.timeout(15_000) })).json();
-  for (const s of stocks) if (s.kind === "day") for (const t of s.tokens) if (t.mainnetMint) mints.add(t.mainnetMint);
+  // an unreachable site falls back to the list it last gave (site-tokens.mjs): the prices never came from it
+  const tl = await siteTokenList({ url: process.env.TOKENS_API, cacheFile: path.join(DATA, "site-tokens.json"),
+    pick: (stocks) => stocks.filter((s) => s.kind === "day").flatMap((s) => (s.tokens ?? []).map((t) => t.mainnetMint).filter(Boolean)) });
+  if (tl.fromCache) console.log(new Date().toISOString(), `site token list unavailable (${tl.siteError}); using the copy from ${Math.round((now - tl.cachedAt) / 60)} min ago`);
+  for (const m of tl.list) if (typeof m === "string" && m) mints.add(m);
 } else {
   const tpl = JSON.parse(fs.readFileSync(process.env.STOCKS ?? new URL("./stock-templates.json", import.meta.url), "utf8"));
   const reg = readRegistry(DATA);

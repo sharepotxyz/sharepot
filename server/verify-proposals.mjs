@@ -16,7 +16,7 @@ import anchor from "@coral-xyz/anchor";
 import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import idlJson from "../idl/sharepot.json" with { type: "json" };
 import { closeMove, chainMove, chainClose, parseMetric, movePpm, bucketOf, utcMidnight, addDays } from "./prices.mjs";
-import { notify } from "./notify.mjs";
+import { notify as sendNotify } from "./notify.mjs";
 import { sendSigned } from "./tx.mjs";
 import { unverifiedAction, comparisonAction, reportAfterFor, voidMarginFor, BOUNDARY_PPM as DEFAULT_BOUNDARY_PPM } from "./verify-policy.mjs";
 
@@ -44,7 +44,11 @@ process.on("unhandledRejection", (e) => log(`unhandled rejection (ignored): ${St
 fs.mkdirSync(DATA, { recursive: true });
 const STATE = path.join(DATA, "verified.json");
 const state = (() => { try { return JSON.parse(fs.readFileSync(STATE, "utf8")); } catch { return {}; } })();
-const saveState = () => { fs.writeFileSync(STATE + ".tmp", JSON.stringify(state, null, 1)); fs.renameSync(STATE + ".tmp", STATE); };
+// DRY_RUN changes nothing: no transaction, no verdict on disk, no alert. Until 2026-11-19 a dry run still saved its
+// verdicts, and the next real run skipped every market it had marked "ok" (21 that night, run with a lowered sample
+// minimum) — a dry run was a real approval. It also sent its alerts.
+const saveState = () => { if (DRY) return; fs.writeFileSync(STATE + ".tmp", JSON.stringify(state, null, 1)); fs.renameSync(STATE + ".tmp", STATE); };
+const notify = DRY ? (title) => log(`  would notify: ${title}`) : sendNotify;
 
 // ---------- mainnet mint of an on-chain token, by symbol ----------
 const tpl = JSON.parse(fs.readFileSync(process.env.STOCKS ?? new URL("./stock-templates.json", import.meta.url), "utf8"));
@@ -125,7 +129,7 @@ for (let i = 0; i < count; i += 100) {
     if (sp?.kind === "day") sampleList.set(a.mint.toBase58(), { symbol: sp.symbol, market: keys[j].toBase58() });
   });
 }
-if (CLUSTER === "mainnet") { const f = path.join(DATA, "tokens.json"), tmp = `${f}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify({ at: new Date().toISOString(), tokens: [...sampleList].map(([mint, t]) => ({ mint, ...t })) })); fs.renameSync(tmp, f); }
+if (CLUSTER === "mainnet" && !DRY) { const f = path.join(DATA, "tokens.json"), tmp = `${f}.${process.pid}.tmp`; fs.writeFileSync(tmp, JSON.stringify({ at: new Date().toISOString(), tokens: [...sampleList].map(([mint, t]) => ({ mint, ...t })) })); fs.renameSync(tmp, f); }
 log(`cluster=${CLUSTER} proposed=${proposed.length}${DRY ? " DRY RUN" : ""}`);
 let checked = 0, agreed = 0, voided = 0; const late = [];
 async function voidMarket(publicKey) {
