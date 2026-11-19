@@ -8,7 +8,7 @@
 // wallet's cash flows (in, out, still in), so they are exact and the parts' rounding lands in the price part.
 // Actions stay on the pool page.
 import type { Address } from "viem";
-import { ALL_POOLS, api, esc, poolLabel, exposures, fillOf, fmtTime, hex, levText, loadMine, loadState, netLev, pt, short, spct, tierCls, tierKey, tok, txLink, usd, type Mine, type Pool, type St } from "./perp-core";
+import { ALL_POOLS, api, esc, poolLabel, exposures, fillOf, fmtTime, hex, moveText, loadMine, loadState, netLev, pt, short, spct, tierCls, tierKey, tok, txLink, usd, waitWhy, type Mine, type Pool, type St } from "./perp-core";
 import { buildLedger, type LedgerDay, type LedgerEvent, type LedgerRow, type TierSum } from "./perp-ledger";
 import { getSession, mountShell, onHealth, onSession, oursKind } from "./perp-shell";
 
@@ -44,6 +44,8 @@ async function load() {
 /** +1.23 / −1.23 (raw units as a float), coloured. */
 const signedTok = (x: number) => { const r = BigInt(Math.round(Math.abs(x))); return `<b class="${r === 0n ? "" : x > 0 ? "gain" : "drop"}">${r === 0n ? "0" : `${x > 0 ? "+" : "−"}${tok(r)}`}</b>`; };
 const plainTok = (x: number | bigint) => tok(typeof x === "bigint" ? x : BigInt(Math.round(x)));
+/** The reason a request is still waiting, on its own line under it. */
+const why = (s: string) => (s ? `<div class="note pwhy">${esc(s)}</div>` : "");
 
 /** One pool's ledger and, per tier, the exact result from the wallet's cash flows. */
 function ledgerOf(v: PoolView, rows: Row[]) {
@@ -84,10 +86,10 @@ function render() {
       const p = v.mine.pos[t.i], ex = v.mine.exits.filter((x) => x.tier === t.i);
       if (!p.shares && !p.pending.length && !ex.length) return "";
       const lines = [
-        p.shares ? `<b>${esc(pt("me.hold"))}</b> ${money(p.tokens)} <span class="note">· ${esc(pt("pos.now", { lev: levText(netLev(t, fillOf(t, e))) }))}</span>` : "",
-        ...p.pending.map((q) => `<b>${esc(pt("me.waitIn"))}</b> ${tok(q.amount)} ${T} <span class="note">· ${esc(fmtTime(q.cutoff))}</span>`),
+        p.shares ? `<b>${esc(pt("me.hold"))}</b> ${money(p.tokens)} <span class="note">· ${esc(pt("pos.now", { lev: moveText(netLev(t, fillOf(t, e)), v.pool.symbol) }))}</span>` : "",
+        ...p.pending.map((q) => `<b>${esc(pt("me.waitIn"))}</b> ${tok(q.amount)} ${T} <span class="note">· ${esc(fmtTime(q.cutoff))}</span>${why(waitWhy(q.ep, "in", v.st.now, v.st.dispute))}`),
         ...ex.map((x) => x.ready ? `<b>${esc(pt("me.ready"))}</b> ${tok(x.tokens)} ${T} <a href="${href(v.pool)}">${esc(pt("me.withdraw"))}</a>`
-          : `<b>${esc(pt("me.waitOut"))}</b> ${esc(pt("me.about"))} ${tok(x.tokens)} ${T} <span class="note">· ${esc(fmtTime(x.cutoff))}</span>`)].filter(Boolean);
+          : `<b>${esc(pt("me.waitOut"))}</b> ${esc(pt("me.about"))} ${tok(x.tokens)} ${T} <span class="note">· ${esc(fmtTime(x.cutoff))}</span>${why(waitWhy(x.ep, "out", v.st.now, v.st.dispute))}`)].filter(Boolean);
       const r = result[t.i];
       const pnl = !r.filled ? `<span class="note">${esc(pt("me.notYet"))}</span>`
         : `${signedTok(r.total)} ${T}${px ? ` <span class="note">≈ ${r.total < 0 ? "−" : ""}${usd((Math.abs(r.total) / 1e8) * px)}</span>` : ""}

@@ -5,8 +5,8 @@
 import type { Address } from "viem";
 import type { Session } from "./wallet-evm";
 import {
-  geo, noSend, MAXU, POOLS, PROPOSED, TESTNET, abi, bindPoolTabs, pickedPool, poolTabs, rawToStr, read, erc20, errText, esc, exposures, fillOf, fmtDate, fmtTime, fundingDaily, left, levText,
-  loadMine, loadState, netLev, parseAmount, pct, price, pt, rememberExit, poolLabel, symbolList, tierCls, tokenList, tierKey, tok, txLink, usd, type Mine, type Pool, type St,
+  geo, noSend, MAXU, POOLS, PROPOSED, TESTNET, abi, bindPoolTabs, pickedPool, poolTabs, rawToStr, read, erc20, errText, esc, exposures, fillOf, fmtDate, fmtTime, fundingDaily, left,
+  loadMine, loadState, netLev, parseAmount, pct, price, pt, rememberExit, poolLabel, symbolList, tierCls, tokenList, tierKey, tok, txLink, usd, waitWhy, moveText, type Mine, type Pool, type St,
 } from "./perp-core";
 import { health, mountShell, onHealth, onSession, refreshWallet } from "./perp-shell";
 
@@ -73,6 +73,10 @@ function marketCard(s: St) {
   let status = "";
   if (s.next && s.next.state === PROPOSED) status = pt("mk.proposed", { date: esc(fmtDate(s.next.cutoff)), price: usd(Number(s.next.value) / 1e8), time: esc(fmtTime(s.next.proposedAt + s.dispute)) });
   else if (s.next && s.next.cutoff <= s.now) status = pt("mk.waiting", { date: esc(fmtDate(s.next.cutoff)) });
+  // entries waiting for a close are not in the numbers above yet: say how much, side by side (the hedge is a short)
+  const side = (long: boolean) => s.tiers.reduce((a, t) => a + (t.isLong === long ? s.waiting[t.i] ?? 0n : 0n), 0n);
+  const wl = side(true), ws = side(false);
+  const waitLine = wl + ws > 0n ? pt(e.L + e.S === 0 ? "mk.emptyWaiting" : "mk.alsoWaiting", { l: tok(wl), s: tok(ws), tok: s.pool.tokenSymbol }) : "";
   return `<section class="card pmk">
     <div class="pmkh"><h2>${esc(pt("mk.title", { sym: poolLabel(s.pool) }))}</h2>${s.paused ? `<span class="pill warnp">${esc(pt("mk.paused"))}</span>` : ""}</div>
     <dl class="pkv">
@@ -81,11 +85,11 @@ function marketCard(s: St) {
       <dt>${esc(pt("mk.funding"))}</dt><dd><b>${esc(pt("mk.fundingVal", { daily: pct(Math.abs(f), 3), yearly: pct(Math.abs(f) * 252, 1) }))}</b> · ${esc(who)}</dd>
     </dl>
     ${status ? `<div class="note pstatus">${status}</div>` : ""}
-    ${e.L + e.S === 0 ? `<div class="note">${esc(pt("mk.empty"))}</div>` : `<div class="psides">
+    ${e.L + e.S === 0 ? `<div class="note">${esc(waitLine || pt("mk.empty"))}</div>` : `<div class="psides">
       <div class="pside"><div class="psh"><span class="gain">${esc(pt("mk.long"))}</span><span>${esc(pt("mk.exposure", { usd: dollars(e.L) }))} · <b>${esc(pt("mk.filled", { pct: pct(fillL, 0) }))}</b></span></div>${bar("long", e.L, fillL)}</div>
       <div class="pside"><div class="psh"><span class="drop">${esc(pt("mk.short"))}</span><span>${esc(pt("mk.exposure", { usd: dollars(e.S) }))} · <b>${esc(pt("mk.filled", { pct: pct(fillS, 0) }))}</b></span></div>${bar("short", e.S, fillS)}
         ${s.treasuryTok > 0n ? `<div class="note">${esc(pt("mk.treasury", { usd: dollars(Number(s.treasuryTok)) }))}</div>` : ""}</div>
-    </div>${health.demoWallets.length ? `<p class="note">${pt("mk.demo", { n: health.demoWallets.length })}</p>` : ""}`}
+    </div>${waitLine ? `<p class="note">${esc(waitLine)}</p>` : ""}${health.demoWallets.length ? `<p class="note">${pt("mk.demo", { n: health.demoWallets.length })}</p>` : ""}`}
   </section>`;
 }
 
@@ -104,13 +108,17 @@ function orderCard(s: St) {
   const t = s.tiers[pick] ?? s.tiers[0];
   const amt = parseAmount(amountStr);
   const fee = amt ? (amt * BigInt(s.feeBps)) / 10_000n : 0n, net = amt ? amt - fee : 0n;
-  const e = exposures(s.tiers, net > 0n ? { tier: t.i, amount: net } : undefined);
+  // the pool at this entry's close: entries waiting for a close are in by then (before their fees: close enough here)
+  const atClose = s.tiers.map((x) => ({ ...x, held: x.held + (s.waiting[x.i] ?? 0n) }));
+  const e = exposures(atClose, net > 0n ? { tier: t.i, amount: net } : undefined);
   const f = fillOf(t, e), k = netLev(t, f), fd = fundingDaily(s.fundingBps, e);
   const crowdedLong = fd > 0, mineCrowded = t.isLong === crowdedLong, fPos = Math.abs(fd) * t.c * f;
   const funding = fd === 0 || f === 0 ? pt("ord.fundNone") : mineCrowded ? pt("ord.fundPay", { pct: pct(fPos, 3) }) : pt("ord.fundRecv", { pct: pct(fPos, 3) });
   const kFull = netLev(t, 1);   // what the tier is when fully matched: what the user picked
   const zero = kFull > 1.0001 ? pt("ord.zeroDrop", { sym: s.pool.symbol, pct: pct(1 / kFull, 0) }) : kFull < -0.0001 ? pt("ord.zeroRise", { sym: s.pool.symbol, pct: pct(1 / -kFull, 0) }) : pt("ord.zeroNever");
-  const why = f >= 0.9995 ? "" : f <= 0.0005 ? pt("ord.unmatched", { sym: s.pool.symbol }) : pt("ord.partial", { pct: pct(f, 0), sym: s.pool.symbol });
+  // unmatched tokens just hold the stock: on a short tier that is the opposite of what was picked, so it says so
+  const T = s.pool.tokenSymbol, S = s.pool.symbol;
+  const why = f >= 0.9995 ? "" : f <= 0.0005 ? pt(t.isLong ? "ord.unmatched" : "ord.unmatchedShort", { sym: S, tok: T, tier: pt(tierKey(t)) }) : pt("ord.partial", { pct: pct(f, 0), sym: S, tok: T });
   const levCls = (x: number) => (x > 0.005 ? "gain" : x < -0.005 ? "drop" : "");
   const locked = nearBell(s);
   const can = !!session && !!s.open && !s.paused && !noSend() && !s.problem && !locked;
@@ -125,9 +133,8 @@ function orderCard(s: St) {
     <label class="pamt"><span>${esc(pt("ord.amount"))} <small class="note">${mine ? esc(pt("ord.balance", { n: tok(mine.bal), tok: s.pool.tokenSymbol })) : ""}</small></span>
       <span class="pin"><input id="pamount" inputmode="decimal" autocomplete="off" placeholder="0.0" value="${esc(amountStr)}"><span class="unit">${esc(s.pool.tokenSymbol)}</span>${mine ? `<button class="ghost" id="pmax">${esc(pt("ord.max"))}</button>` : ""}</span></label>
     <dl class="pkv pprev">
-      <dt>${esc(pt("ord.target"))}</dt><dd><b class="${levCls(kFull)}">${esc(levText(kFull))}</b></dd>
-      <dt>${esc(pt("ord.fill"))}</dt><dd>${pct(f, 0)}</dd>
-      <dt>${esc(pt("ord.lev"))}</dt><dd><b class="${levCls(k)}">${esc(levText(k))}</b></dd>
+      <dt>${esc(pt("ord.target"))}</dt><dd><b class="${levCls(kFull)}">${esc(moveText(kFull, S))}</b></dd>
+      <dt>${esc(pt("ord.lev"))}</dt><dd><b class="${levCls(k)}">${esc(moveText(k, S))}</b></dd>
       <dt>${esc(pt("ord.funding"))}</dt><dd>${esc(funding)}</dd>
       <dt>${esc(pt("ord.zero"))}</dt><dd>${esc(zero)}</dd>
       <dt>${esc(pt("ord.price"))}</dt><dd>${s.open ? esc(pt("ord.priceAt", { time: fmtTime(s.open.cutoff) })) : "—"}</dd>
@@ -155,12 +162,13 @@ function positionsCard(s: St) {
     // an entry for the close still ahead can be taken back until that bell (the live pools have cancelDeposit; the
     // retired ones predate it); one rolled over from a skipped day cannot
     const canCancel = (q: { day: number; cutoff: number }) => !s.pool.retired && !!s.open && q.day === s.open.day && q.cutoff > s.now;
-    const pend = p.pending.map((q) => `<div class="ppend"><span class="note">${esc(pt("pos.pendingIn", { time: fmtTime(q.cutoff), n: tok(q.amount), tok: s.pool.tokenSymbol }))}</span>${canCancel(q)
+    const why = (r: string) => (r ? `<span class="note pwhy">${esc(r)}</span>` : "");   // a span: it also sits inside one
+    const pend = p.pending.map((q) => `<div class="ppend"><span class="note">${esc(pt("pos.pendingIn", { time: fmtTime(q.cutoff), n: tok(q.amount), tok: s.pool.tokenSymbol }))}${why(waitWhy(q.ep, "in", s.now, s.dispute))}</span>${canCancel(q)
       ? `<button class="ghost" data-cancel="${t.i}" ${busy || noSend() || !!s.problem || locked ? "disabled" : ""}>${esc(pt("pos.cancel", { n: tok(cancelRefund(s, q.amount)), tok: s.pool.tokenSymbol }))}</button>` : ""}</div>`).join("");
     const exits = ex.map((x) => x.ready
       ? `<div class="pready">${esc(pt("pos.ready", { n: tok(x.tokens), tok: s.pool.tokenSymbol }))} <button class="primary" data-claim="${x.day}:${x.tier}" ${busy || noSend() || !!s.problem ? "disabled" : ""}>${esc(pt("pos.withdraw"))}</button></div>`
-      : `<div class="note">${esc(pt("pos.pendingOut", { time: fmtTime(x.cutoff) }))}</div>`).join("");
-    const held = p.shares > 0n ? `<div class="pposv"><b>${esc(pt("pos.value", { n: tok(p.tokens), tok: s.pool.tokenSymbol, usd: usd((Number(p.tokens) / 1e8) * px) }))}</b><span class="note">${esc(pt("pos.now", { lev: levText(k) }))}</span></div>
+      : `<div class="note">${esc(pt("pos.pendingOut", { time: fmtTime(x.cutoff) }))}${why(waitWhy(x.ep, "out", s.now, s.dispute))}</div>`).join("");
+    const held = p.shares > 0n ? `<div class="pposv"><b>${esc(pt("pos.value", { n: tok(p.tokens), tok: s.pool.tokenSymbol, usd: usd((Number(p.tokens) / 1e8) * px) }))}</b><span class="note">${esc(pt("pos.now", { lev: moveText(k, s.pool.symbol) }))}</span></div>
       <div class="pexit"><input data-exitamt="${t.i}" inputmode="decimal" placeholder="${esc(pt("pos.exitAmt", { tok: s.pool.tokenSymbol }))}" value="${esc(exitStr[t.i] ?? "")}"><button data-exit="${t.i}" ${busy || !s.open || s.paused || noSend() || !!s.problem || locked ? "disabled" : ""}>${esc(pt("pos.exit"))}</button><button class="ghost" data-exitall="${t.i}" ${busy || !s.open || s.paused || noSend() || !!s.problem || locked ? "disabled" : ""}>${esc(pt("pos.exitAll"))}</button></div>` : "";
     return `<div class="pposr"><div class="pposh"><b class="tc-${tierCls(t)}">${esc(pt(tierKey(t)))}</b></div>${held}${pend}${exits}</div>`;
   }).join("");

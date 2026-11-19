@@ -139,13 +139,26 @@ export const SCHEDULED = 1, PROPOSED = 2, SETTLED = 3, SKIPPED = 4;
 export type St = {
   pool: Pool; now: number; lastScheduled: number; lastSettled: number; lastValue: bigint; dispute: number; feeBps: number; fundingBps: number; paused: boolean;
   tiers: Tier[]; hedge: number; treasuryTok: bigint; open: Ep | null; next: Ep | null; settled: Ep | null;
+  /** Per tier: tokens waiting to enter at closes not settled yet (everyone's, before fees). Not in `tiers` yet. */
+  waiting: bigint[];
   /** Set when this page is not talking to the pool it was built for (wrong chain, or the pool's token is not the one
    *  the page would ask to approve): nothing may be sent then. */
   problem: string | null;
 };
-/** An exit: `ready` once its close settled (tokens = what a claim pays); before that, tokens is an estimate at today's share value. */
-export type Exit = { day: number; tier: number; ready: boolean; tokens: bigint; cutoff: number };
-export type Mine = { bal: bigint; allowance: bigint; eth: bigint; pos: { tier: number; tokens: bigint; shares: bigint; pending: { day: number; amount: bigint; cutoff: number }[] }[]; exits: Exit[] };
+/** An exit: `ready` once its close settled (tokens = what a claim pays); before that, tokens is an estimate at today's
+ *  share value. `ep` is the close it fills at (after skipped days), for saying why it is still waiting. */
+export type Exit = { day: number; tier: number; ready: boolean; tokens: bigint; cutoff: number; ep: Ep };
+export type Mine = { bal: bigint; allowance: bigint; eth: bigint; pos: { tier: number; tokens: bigint; shares: bigint; pending: { day: number; amount: bigint; cutoff: number; ep: Ep }[] }[]; exits: Exit[] };
+
+/** Why an entry ("in") or exit ("out") is still waiting, one line: where its close is between the bell and settling.
+ *  `ep` is the close it fills at; `now` and `dispute` come from the same read as `ep`. Empty once it settled. */
+export function waitWhy(ep: Ep, dir: "in" | "out", now: number, dispute: number): string {
+  if (now < ep.cutoff) return pt(`wait.before.${dir}`);
+  if (ep.state === SCHEDULED) return pt("wait.noPrice");
+  if (ep.state !== PROPOSED) return "";
+  const end = ep.proposedAt + dispute;
+  return now < end ? pt(`wait.dispute.${dir}`, { px: usd(Number(ep.value) / 1e8), h: Math.round(dispute / 3600), time: fmtTime(end) }) : pt(`wait.settling.${dir}`);
+}
 
 export const epoch = async (pool: Pool, day: number): Promise<Ep> => { const e = await read(pool, "epochs", [BigInt(day)]); return { day, cutoff: Number(e[0]), state: Number(e[1]), proposedAt: Number(e[2]), value: e[3] as bigint, rolledTo: Number(e[5]) }; };
 /** The day a request of `day` is (or will be) filled at, following skipped days; `filled` once that day settled. */
@@ -172,14 +185,20 @@ export async function loadState(pool: Pool): Promise<St> {
   const tiers: Tier[] = tierRaw.slice(0, Number(n)).map((t: any, i) => ({ i, c: Number(t.c), isLong: t.isLong, gen: Number(t.gen), held: t.held, shares: t.shares }));
   if (tiers.length !== Number(n) || tierRaw.slice(0, Number(n)).some((t) => !t)) throw new Error("could not read the pool's tiers");
   const ls = Number(lastSettled), sched = Number(lastScheduled);
-  // Round 2: the days around now, the last settled one and the treasury's hedge shares.
+  // Round 2: the days around now — the next one to settle too: past its bell it waits for its price, and starting from
+  // the open day alone missed it (the page then showed no proposed close and an empty pool) —, the last settled one,
+  // the treasury's hedge shares, and what waits to enter at every close not settled yet (both buckets of each tier).
   const from = Math.max(Number(openEpoch), ls + 1), ahead: number[] = [];
+  if (ls + 1 < from) ahead.push(ls + 1);
   for (let d = from; d <= Math.min(sched, from + 6); d++) ahead.push(d);
-  const [eps, settled, tSh] = await Promise.all([Promise.all(ahead.map((d) => epoch(pool, d))), ls ? epoch(pool, ls) : Promise.resolve(null), rd("sharesOf", [treasury, Number(hedge)])]);
+  const waitDays: number[] = []; for (let d = ls + 1; d <= Math.min(sched, from, ls + 8); d++) waitDays.push(d);
+  const [eps, settled, tSh, waitRaw] = await Promise.all([Promise.all(ahead.map((d) => epoch(pool, d))), ls ? epoch(pool, ls) : Promise.resolve(null), rd("sharesOf", [treasury, Number(hedge)]),
+    Promise.all(waitDays.flatMap((d) => [...Array(Number(n)).keys()].flatMap((i) => [0, 1].map(async (b) => ({ i, dep: ((await rd("batch", [BigInt(d), i, b])) as any).depIn as bigint })))))]);
+  const waiting = [...Array(Number(n))].map(() => 0n); for (const w of waitRaw) waiting[w.i] += w.dep;
   const h = tiers[Number(hedge)];
   const treasuryTok = h && h.shares > 0n ? ((tSh as bigint) * h.held) / h.shares : 0n;   // = sharesToTokens, from the tier's own books
   let last = settled; for (let d = ls; last && last.state !== SETTLED && d > 1; ) last = await epoch(pool, --d);   // only after a skipped day
-  return { pool, now, problem, lastScheduled: sched, lastSettled: ls, lastValue, dispute: Number(dispute), feeBps: Number(feeBps), fundingBps: Number(fundingBps), paused, tiers, hedge: Number(hedge), treasuryTok,
+  return { pool, now, problem, lastScheduled: sched, lastSettled: ls, lastValue, dispute: Number(dispute), feeBps: Number(feeBps), fundingBps: Number(fundingBps), paused, tiers, hedge: Number(hedge), treasuryTok, waiting,
     open: eps.find((e) => e.cutoff > now) ?? null, next: eps.find((e) => e.day === ls + 1) ?? null, settled: last && last.state === SETTLED ? last : null };
 }
 
@@ -211,14 +230,14 @@ export async function loadMine(st: St, user: Address, extraExitDays: number[] = 
   const fills = new Map<number, { filled: boolean; ep: Ep }>(await Promise.all([...need].map(async (d) => [d, await fillDay(pool, d)] as [number, { filled: boolean; ep: Ep }])));
   const pos = st.tiers.map((t, k) => {
     const p = pends[k] as [bigint[], bigint[]];
-    const pending = p[0].map((d, j) => { const f = fills.get(Number(d))!; return { day: Number(d), amount: p[1][j], cutoff: f.ep.cutoff, filled: f.filled }; }).filter((x) => x.amount > 0n && !x.filled);
+    const pending = p[0].map((d, j) => { const f = fills.get(Number(d))!; return { day: Number(d), amount: p[1][j], cutoff: f.ep.cutoff, ep: f.ep, filled: f.filled }; }).filter((x) => x.amount > 0n && !x.filled);
     return { tier: t.i, tokens: toTok(t.i, shares[k]), shares: shares[k], pending };
   });
   const exits: Exit[] = await Promise.all(exitReqs.map(async ({ d, i, r }) => {
     const f = fills.get(d)!; let tokens = 0n;
     if (f.filled) { try { const sim = await pc.simulateContract({ address: P, abi, functionName: "claim", args: [user, BigInt(d), i], account: user } as any); tokens = (sim.result as any)[1]; } catch {} }
     else tokens = toTok(i, r[1] as bigint);   // an estimate at today's share value until its close
-    return { day: d, tier: i, ready: f.filled, tokens, cutoff: f.ep.cutoff };
+    return { day: d, tier: i, ready: f.filled, tokens, cutoff: f.ep.cutoff, ep: f.ep };
   }));
   exits.sort((a, b) => a.day - b.day || a.tier - b.tier);
   return { bal, allowance, eth, pos, exits };
@@ -233,7 +252,11 @@ export const exposures = (tiers: Tier[], add?: { tier: number; amount: bigint })
 export const fillOf = (t: Tier, e: { L: number; S: number; M: number }) => { const side = t.isLong ? e.L : e.S; return side > 0 ? e.M / side : 0; };
 /** Net exposure to the stock: 1 + c·f long, 1 − c·f short (negative = net short). */
 export const netLev = (t: Tier, f: number) => (t.isLong ? 1 + t.c * f : 1 - t.c * f);
-export const levText = (k: number) => (k > 0.005 ? pt("ord.levLong", { x: k.toFixed(2) }) : k < -0.005 ? pt("ord.levShort", { x: (-k).toFixed(2) }) : pt("ord.levFlat"));
+/** A net exposure said as what it does: "NVDA up 1%: you +2%; down 1%: you −2%" (rather than "2.00x long"). */
+export const moveText = (k: number, sym: string) => {
+  const x = String(Number(Math.abs(k).toFixed(2)));
+  return k > 0.005 ? pt("mv.long", { sym, x }) : k < -0.005 ? pt("mv.short", { sym, x }) : pt("mv.flat", { sym });
+};
 export const tierKey = (t: { isLong: boolean; c: number }) => `tier.${t.isLong ? "L" : "S"}${t.c}`;
 /** Colour class: long green, short red, the value-locked hedge (short, c = 1) in the accent colour. */
 export const tierCls = (t: { isLong: boolean; c: number }) => (t.isLong ? "l" : t.c === 1 ? "h" : "s");
