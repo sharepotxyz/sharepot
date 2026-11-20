@@ -257,6 +257,14 @@ export const moveText = (k: number, sym: string) => {
   const x = String(Number(Math.abs(k).toFixed(2)));
   return k > 0.005 ? pt("mv.long", { sym, x }) : k < -0.005 ? pt("mv.short", { sym, x }) : pt("mv.flat", { sym });
 };
+/** A held position right now, with the reason when only part of it is matched: the unmatched part is just the stock,
+ *  so a hedge with half a counterparty moves half as much as the stock (said, not left as a bare "+0.52%"). */
+export const nowText = (t: Tier, f: number, sym: string, tokSym: string) => {
+  const lev = moveText(netLev(t, f), sym);
+  if (f >= 0.995) return pt("pos.now", { lev });
+  if (f < 0.005) return pt("pos.nowNone", { tok: tokSym, lev });
+  return pt(t.isLong ? "pos.nowPartL" : "pos.nowPartS", { pct: pct(f, 0), tok: tokSym, lev });   // same rounding as the pool card's "matched"
+};
 export const tierKey = (t: { isLong: boolean; c: number }) => `tier.${t.isLong ? "L" : "S"}${t.c}`;
 /** Colour class: long green, short red, the value-locked hedge (short, c = 1) in the accent colour. */
 export const tierCls = (t: { isLong: boolean; c: number }) => (t.isLong ? "l" : t.c === 1 ? "h" : "s");
