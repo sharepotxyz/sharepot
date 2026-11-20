@@ -6,7 +6,7 @@ import type { Address } from "viem";
 import type { Session } from "./wallet-evm";
 import {
   geo, noSend, MAXU, POOLS, PROPOSED, TESTNET, abi, bindPoolTabs, pickedPool, poolTabs, rawToStr, read, erc20, errText, esc, exposures, fillOf, fmtDate, fmtTime, fundingDaily, left,
-  loadMine, loadState, netLev, parseAmount, pct, price, pt, rememberExit, poolLabel, symbolList, tierCls, tokenList, tierKey, tok, txLink, usd, waitWhy, moveText, nowText, type Mine, type Pool, type St,
+  loadMine, loadState, netLev, parseAmount, pct, price, pt, rememberExit, poolLabel, symbolList, tierCls, tokenList, tierKey, tok, txLink, usd, waitWhy, moveText, nowLines, type Mine, type Pool, type St,
 } from "./perp-core";
 import { health, mountShell, onHealth, onSession, refreshWallet } from "./perp-shell";
 
@@ -167,7 +167,7 @@ function positionsCard(s: St) {
     const exits = ex.map((x) => x.ready
       ? `<div class="pready">${esc(pt("pos.ready", { n: tok(x.tokens), tok: s.pool.tokenSymbol }))} <button class="primary" data-claim="${x.day}:${x.tier}" ${busy || noSend() || !!s.problem ? "disabled" : ""}>${esc(pt("pos.withdraw"))}</button></div>`
       : `<div class="note">${esc(pt("pos.pendingOut", { time: fmtTime(x.cutoff) }))}${why(waitWhy(x.ep, "out", s.now, s.dispute))}</div>`).join("");
-    const held = p.shares > 0n ? `<div class="pposv"><b>${esc(pt("pos.value", { n: tok(p.tokens), tok: s.pool.tokenSymbol, usd: usd((Number(p.tokens) / 1e8) * px) }))}</b><span class="note">${esc(nowText(t, fillOf(t, e), s.pool.symbol, s.pool.tokenSymbol))}</span></div>
+    const held = p.shares > 0n ? `<div class="pposv"><b>${esc(pt("pos.value", { n: tok(p.tokens), tok: s.pool.tokenSymbol, usd: usd((Number(p.tokens) / 1e8) * px) }))}</b>${nowLines(t, fillOf(t, e), s.pool.symbol, s.pool.tokenSymbol, p.tokens, px).map((l, _, a) => `<span class="note${a.length > 1 ? " pnowl" : ""}">${esc(l)}</span>`).join("")}</div>
       <div class="pexit"><input data-exitamt="${t.i}" inputmode="decimal" placeholder="${esc(pt("pos.exitAmt", { tok: s.pool.tokenSymbol }))}" value="${esc(exitStr[t.i] ?? "")}"><button data-exit="${t.i}" ${busy || !s.open || s.paused || noSend() || !!s.problem || locked ? "disabled" : ""}>${esc(pt("pos.exit"))}</button><button class="ghost" data-exitall="${t.i}" ${busy || !s.open || s.paused || noSend() || !!s.problem || locked ? "disabled" : ""}>${esc(pt("pos.exitAll"))}</button></div>` : "";
     return `<div class="pposr"><div class="pposh"><b class="tc-${tierCls(t)}">${esc(pt(tierKey(t)))}</b></div>${held}${pend}${exits}</div>`;
   }).join("");

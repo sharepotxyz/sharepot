@@ -64,7 +64,7 @@ button.ghost{background:transparent;border-color:transparent;color:var(--accent)
 
 .pposr{padding:12px 0;border-top:1px solid var(--line)}.pposr:first-of-type{border-top:0;padding-top:0}
 .pposh{margin-bottom:4px}
-.pposv{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline;margin-bottom:8px}
+.pposv{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline;margin-bottom:8px}.pposv .pnowl{flex-basis:100%}
 .pexit{display:flex;gap:6px;flex-wrap:wrap}
 .pexit input{flex:1 1 140px;min-width:0;font:inherit;color:var(--fg);background:var(--surface2);border:1px solid transparent;border-radius:10px;padding:8px 10px}
 .pready{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px;padding:8px 10px;border-radius:10px;background:var(--ok-bg)}

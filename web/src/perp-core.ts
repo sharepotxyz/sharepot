@@ -257,13 +257,22 @@ export const moveText = (k: number, sym: string) => {
   const x = String(Number(Math.abs(k).toFixed(2)));
   return k > 0.005 ? pt("mv.long", { sym, x }) : k < -0.005 ? pt("mv.short", { sym, x }) : pt("mv.flat", { sym });
 };
-/** A held position right now, with the reason when only part of it is matched: the unmatched part is just the stock,
- *  so a hedge with half a counterparty moves half as much as the stock (said, not left as a bare "+0.52%"). */
-export const nowText = (t: Tier, f: number, sym: string, tokSym: string) => {
+/** A held position right now. Fully matched, or not at all: one line. Partly matched: the effective (matched) part and
+ *  the rest, each in tokens and dollars, then what the two make together — a hedge half matched has only half its value
+ *  locked, and says how much. The parts add up to the "held" amount exactly as shown: tokens split at the 4 decimals
+ *  shown, dollars in whole cents. Plain text; the caller escapes. */
+export const nowLines = (t: Tier, f: number, sym: string, tokSym: string, tokens: bigint, px: number): string[] => {
   const lev = moveText(netLev(t, f), sym);
-  if (f >= 0.995) return pt("pos.now", { lev });
-  if (f < 0.005) return pt("pos.nowNone", { tok: tokSym, lev });
-  return pt(t.isLong ? "pos.nowPartL" : "pos.nowPartS", { pct: pct(f, 0), tok: tokSym, lev });   // same rounding as the pool card's "matched"
+  if (f >= 0.995) return [pt("pos.now", { lev })];
+  if (f < 0.005) return [pt("pos.nowNone", { tok: tokSym, lev })];
+  const U = 10_000n;   // 1e8 raw units a token, 4 decimals shown
+  const all = ((tokens + U / 2n) / U) * U, eff = BigInt(Math.round((Number(tokens) * f) / 1e4)) * U;
+  const allC = Math.round((Number(tokens) / 1e8) * px * 100), effC = Math.round((Number(eff) / 1e8) * px * 100);
+  return [
+    pt("pos.eff", { n: tok(eff), tok: tokSym, usd: usd(effC / 100), pct: pct(f, 0), full: moveText(netLev(t, 1), sym) }),   // pct: same rounding as the pool card
+    pt(t.isLong ? "pos.restL" : "pos.restS", { n: tok(all - eff), tok: tokSym, usd: usd((allC - effC) / 100), sym }),
+    pt("pos.sum", { lev }),
+  ];
 };
 export const tierKey = (t: { isLong: boolean; c: number }) => `tier.${t.isLong ? "L" : "S"}${t.c}`;
 /** Colour class: long green, short red, the value-locked hedge (short, c = 1) in the accent colour. */

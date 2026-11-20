@@ -8,7 +8,7 @@
 // wallet's cash flows (in, out, still in), so they are exact and the parts' rounding lands in the price part.
 // Actions stay on the pool page.
 import type { Address } from "viem";
-import { ALL_POOLS, api, esc, poolLabel, exposures, fillOf, fmtTime, hex, loadMine, loadState, nowText, pt, short, spct, tierCls, tierKey, tok, txLink, usd, waitWhy, type Mine, type Pool, type St } from "./perp-core";
+import { ALL_POOLS, api, esc, poolLabel, exposures, fillOf, fmtTime, hex, loadMine, loadState, nowLines, pt, short, spct, tierCls, tierKey, tok, txLink, usd, waitWhy, type Mine, type Pool, type St } from "./perp-core";
 import { buildLedger, type LedgerDay, type LedgerEvent, type LedgerRow, type TierSum } from "./perp-ledger";
 import { getSession, mountShell, onHealth, onSession, oursKind } from "./perp-shell";
 
@@ -85,8 +85,10 @@ function render() {
     return v.st.tiers.map((t) => {
       const p = v.mine.pos[t.i], ex = v.mine.exits.filter((x) => x.tier === t.i);
       if (!p.shares && !p.pending.length && !ex.length) return "";
+      const now = p.shares ? nowLines(t, fillOf(t, e), v.pool.symbol, v.pool.tokenSymbol, p.tokens, px) : [];   // partly matched: effective part, rest, together
       const lines = [
-        p.shares ? `<b>${esc(pt("me.hold"))}</b> ${money(p.tokens)} <span class="note">· ${esc(nowText(t, fillOf(t, e), v.pool.symbol, v.pool.tokenSymbol))}</span>` : "",
+        p.shares ? `<b>${esc(pt("me.hold"))}</b> ${money(p.tokens)}${now.length === 1 ? ` <span class="note">· ${esc(now[0])}</span>` : ""}` : "",
+        ...(now.length > 1 ? now.map((l) => `<span class="note">${esc(l)}</span>`) : []),
         ...p.pending.map((q) => `<b>${esc(pt("me.waitIn"))}</b> ${tok(q.amount)} ${T} <span class="note">· ${esc(fmtTime(q.cutoff))}</span>${why(waitWhy(q.ep, "in", v.st.now, v.st.dispute))}`),
         ...ex.map((x) => x.ready ? `<b>${esc(pt("me.ready"))}</b> ${tok(x.tokens)} ${T} <a href="${href(v.pool)}">${esc(pt("me.withdraw"))}</a>`
           : `<b>${esc(pt("me.waitOut"))}</b> ${esc(pt("me.about"))} ${tok(x.tokens)} ${T} <span class="note">· ${esc(fmtTime(x.cutoff))}</span>${why(waitWhy(x.ep, "out", v.st.now, v.st.dispute))}`)].filter(Boolean);
