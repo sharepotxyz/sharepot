@@ -6,9 +6,10 @@ import type { Address } from "viem";
 import type { Session } from "./wallet-evm";
 import {
   geo, noSend, MAXU, POOLS, PROPOSED, TESTNET, abi, bindPoolTabs, pickedPool, poolTabs, rawToStr, read, erc20, errText, esc, exposures, fillOf, fmtDate, fmtTime, fundingDaily, left,
-  loadMine, loadState, netLev, parseAmount, pct, price, pt, rememberExit, poolLabel, symbolList, tierCls, tokenList, tierKey, tok, txLink, usd, waitWhy, moveText, nowLines, type Mine, type Pool, type St,
+  loadMine, loadState, netLev, parseAmount, pct, price, pt, rememberExit, poolLabel, symbolList, tierCls, tokenList, tierKey, tok, txLink, usd, waitWhy, type Mine, type Pool, type St,
 } from "./perp-core";
 import { health, mountShell, onHealth, onSession, refreshWallet } from "./perp-shell";
+import { balanceChart, effBlock, scenarioChart, tierGlyph } from "./perp-viz";
 
 let session: Session | null = null;
 
@@ -66,9 +67,7 @@ function switchPool(p: Pool) {
 
 function marketCard(s: St) {
   const e = exposures(s.tiers), px = price(s), f = fundingDaily(s.fundingBps, e);
-  const fillL = e.L ? e.M / e.L : 0, fillS = e.S ? e.M / e.S : 0, maxE = Math.max(e.L, e.S, 1);
   const who = e.L + e.S === 0 || e.M === 0 ? pt("mk.noFundingEmpty") : f > 0 ? pt("mk.longsPay") : f < 0 ? pt("mk.shortsPay") : pt("mk.noFunding");
-  const bar = (cls: string, x: number, fill: number) => `<div class="pbar ${cls}"><i style="width:${((x / maxE) * 100).toFixed(1)}%"></i><b style="width:${(((x * fill) / maxE) * 100).toFixed(1)}%"></b></div>`;
   const dollars = (x: number) => usd((x / 1e8) * px);
   let status = "";
   if (s.next && s.next.state === PROPOSED) status = pt("mk.proposed", { date: esc(fmtDate(s.next.cutoff)), price: usd(Number(s.next.value) / 1e8), time: esc(fmtTime(s.next.proposedAt + s.dispute)) });
@@ -76,20 +75,25 @@ function marketCard(s: St) {
   // entries waiting for a close are not in the numbers above yet: say how much, side by side (the hedge is a short)
   const side = (long: boolean) => s.tiers.reduce((a, t) => a + (t.isLong === long ? s.waiting[t.i] ?? 0n : 0n), 0n);
   const wl = side(true), ws = side(false);
-  const waitLine = wl + ws > 0n ? pt(e.L + e.S === 0 ? "mk.emptyWaiting" : "mk.alsoWaiting", { l: tok(wl), s: tok(ws), tok: s.pool.tokenSymbol }) : "";
+  const now = Date.now() / 1000;
+  // three tiles (they wrap, never squeeze): the next close, the last settled close, the funding rate
+  const tile = (label: string, value: string, sub: string) => `<div class="ptile"><span>${esc(label)}</span><b>${esc(value)}</b>${sub ? `<small>${esc(sub)}</small>` : ""}</div>`;
+  const tiles = `<div class="ptiles">
+    ${!s.open ? tile(pt("mk.nextClose"), pt("mk.noneScheduled"), "") : tile(pt("mk.nextClose"), s.open.cutoff > now ? left(s.open.cutoff, now) : fmtTime(s.open.cutoff), s.open.cutoff > now ? fmtTime(s.open.cutoff) : "")}
+    ${s.settled ? tile(pt("mk.lastClose"), usd(px), fmtDate(s.settled.cutoff)) : tile(pt("mk.lastClose"), "—", pt("mk.noCloseYet"))}
+    ${tile(pt("mk.funding"), pt("mk.fundDay", { pct: pct(Math.abs(f), 3) }), pt("mk.fundYear", { who, pct: pct(Math.abs(f) * 252, 1) }))}
+  </div>`;
+  const chips = [
+    s.treasuryTok > 0n ? `<span class="pchip">${esc(pt("mk.chipTreasury", { usd: dollars(Number(s.treasuryTok)) }))}</span>` : "",
+    wl + ws > 0n && e.L + e.S > 0 ? `<span class="pchip">${esc(pt("mk.chipWaiting", { l: tok(wl), s: tok(ws), tok: s.pool.tokenSymbol }))}</span>` : "",
+    health.demoWallets.length ? `<span class="pchip">${pt("mk.chipDemo", { n: health.demoWallets.length })}</span>` : "",
+  ].filter(Boolean).join("");
   return `<section class="card pmk">
     <div class="pmkh"><h2>${esc(pt("mk.title", { sym: poolLabel(s.pool) }))}</h2>${s.paused ? `<span class="pill warnp">${esc(pt("mk.paused"))}</span>` : ""}</div>
-    <dl class="pkv">
-      <dt>${esc(pt("mk.nextClose"))}</dt><dd>${!s.open ? esc(pt("mk.noneScheduled")) : s.open.cutoff > Date.now() / 1000 ? esc(pt("mk.nextCloseVal", { time: fmtTime(s.open.cutoff), left: left(s.open.cutoff, Date.now() / 1000) })) : esc(fmtTime(s.open.cutoff))}</dd>
-      <dt>${esc(pt("mk.lastClose"))}</dt><dd>${s.settled ? esc(pt("mk.lastCloseVal", { price: usd(px), date: fmtDate(s.settled.cutoff) })) : esc(pt("mk.noCloseYet"))}</dd>
-      <dt>${esc(pt("mk.funding"))}</dt><dd><b>${esc(pt("mk.fundingVal", { daily: pct(Math.abs(f), 3), yearly: pct(Math.abs(f) * 252, 1) }))}</b> · ${esc(who)}</dd>
-    </dl>
+    ${tiles}
     ${status ? `<div class="note pstatus">${status}</div>` : ""}
-    ${e.L + e.S === 0 ? `<div class="note">${esc(waitLine || pt("mk.empty"))}</div>` : `<div class="psides">
-      <div class="pside"><div class="psh"><span class="gain">${esc(pt("mk.long"))}</span><span>${esc(pt("mk.exposure", { usd: dollars(e.L) }))} · <b>${esc(pt("mk.filled", { pct: pct(fillL, 0) }))}</b></span></div>${bar("long", e.L, fillL)}</div>
-      <div class="pside"><div class="psh"><span class="drop">${esc(pt("mk.short"))}</span><span>${esc(pt("mk.exposure", { usd: dollars(e.S) }))} · <b>${esc(pt("mk.filled", { pct: pct(fillS, 0) }))}</b></span></div>${bar("short", e.S, fillS)}
-        ${s.treasuryTok > 0n ? `<div class="note">${esc(pt("mk.treasury", { usd: dollars(Number(s.treasuryTok)) }))}</div>` : ""}</div>
-    </div>${waitLine ? `<p class="note">${esc(waitLine)}</p>` : ""}${health.demoWallets.length ? `<p class="note">${pt("mk.demo", { n: health.demoWallets.length })}</p>` : ""}`}
+    ${e.L + e.S === 0 ? `<div class="note">${esc(wl + ws > 0n ? pt("mk.emptyWaiting", { l: tok(wl), s: tok(ws), tok: s.pool.tokenSymbol }) : pt("mk.empty"))}</div>` : balanceChart(e.L, e.S, e.M, dollars)}
+    ${chips ? `<div class="pchips">${chips}</div>` : ""}
   </section>`;
 }
 
@@ -118,8 +122,8 @@ function orderCard(s: St) {
   const zero = kFull > 1.0001 ? pt("ord.zeroDrop", { sym: s.pool.symbol, pct: pct(1 / kFull, 0) }) : kFull < -0.0001 ? pt("ord.zeroRise", { sym: s.pool.symbol, pct: pct(1 / -kFull, 0) }) : pt("ord.zeroNever");
   // unmatched tokens just hold the stock: on a short tier that is the opposite of what was picked, so it says so
   const T = s.pool.tokenSymbol, S = s.pool.symbol;
-  const why = f >= 0.9995 ? "" : f <= 0.0005 ? pt(t.isLong ? "ord.unmatched" : "ord.unmatchedShort", { sym: S, tok: T, tier: pt(tierKey(t)) }) : pt("ord.partial", { pct: pct(f, 0), sym: S, tok: T });
-  const levCls = (x: number) => (x > 0.005 ? "gain" : x < -0.005 ? "drop" : "");
+  const why = f >= 0.9995 ? "" : f <= 0.0005 ? pt(t.isLong ? "ord.unmatched" : "ord.unmatchedShort", { sym: S, tok: T, tier: pt(tierKey(t)) }) : pt("ord.partialShort", { pct: pct(f, 0), tok: T });
+  const tile = (label: string, value: string) => `<div class="ptile"><span>${esc(label)}</span><b>${esc(value)}</b></div>`;
   const locked = nearBell(s);
   const can = !!session && !!s.open && !s.paused && !noSend() && !s.problem && !locked;
   const over = !!(amt && mine && amt > mine.bal);
@@ -129,19 +133,16 @@ function orderCard(s: St) {
   const btn = !session ? pt("ord.connect") : !s.open ? pt("ord.noOpen") : locked ? pt("ord.locked") : needApprove ? pt("ord.approve", { tok: s.pool.tokenSymbol }) : pt("ord.submit");
   return `<section class="card pord">
     <h2>${esc(pt("ord.title"))}</h2>
-    <div class="ptiers" role="radiogroup">${s.tiers.map((x) => `<button role="radio" aria-checked="${x.i === t.i}" class="ptier ${tierCls(x)}${x.i === t.i ? " on" : ""}" data-tier="${x.i}"><b>${esc(pt(tierKey(x)))}</b><small>${esc(pt(tierKey(x) + ".d"))}</small></button>`).join("")}</div>
+    <div class="ptiers" role="radiogroup">${s.tiers.map((x) => `<button role="radio" aria-checked="${x.i === t.i}" class="ptier ${tierCls(x)}${x.i === t.i ? " on" : ""}" data-tier="${x.i}" title="${esc(pt(tierKey(x) + ".d"))}">${tierGlyph(x)}<b>${esc(pt(tierKey(x)))}</b></button>`).join("")}</div>
+    <div class="ptierd">${esc(pt(tierKey(t) + ".d"))}</div>
     <label class="pamt"><span>${esc(pt("ord.amount"))} <small class="note">${mine ? esc(pt("ord.balance", { n: tok(mine.bal), tok: s.pool.tokenSymbol })) : ""}</small></span>
       <span class="pin"><input id="pamount" inputmode="decimal" autocomplete="off" placeholder="0.0" value="${esc(amountStr)}"><span class="unit">${esc(s.pool.tokenSymbol)}</span>${mine ? `<button class="ghost" id="pmax">${esc(pt("ord.max"))}</button>` : ""}</span></label>
-    <dl class="pkv pprev">
-      <dt>${esc(pt("ord.target"))}</dt><dd><b class="${levCls(kFull)}">${esc(moveText(kFull, S))}</b></dd>
-      <dt>${esc(pt("ord.lev"))}</dt><dd><b class="${levCls(k)}">${esc(moveText(k, S))}</b></dd>
-      <dt>${esc(pt("ord.funding"))}</dt><dd>${esc(funding)}</dd>
-      <dt>${esc(pt("ord.zero"))}</dt><dd>${esc(zero)}</dd>
-      <dt>${esc(pt("ord.price"))}</dt><dd>${s.open ? esc(pt("ord.priceAt", { time: fmtTime(s.open.cutoff) })) : "—"}</dd>
-      <dt>${esc(pt("ord.fee"))}</dt><dd>${esc(pt("ord.feeVal", { pct: pct(s.feeBps / 1e4, 1), n: tok(fee, 8), tok: s.pool.tokenSymbol }))}</dd>
-    </dl>
-    ${why ? `<div class="note pwarn">${esc(why)}</div>` : ""}
-    ${Math.abs(k) > 1.05 ? `<div class="note">${esc(pt("ord.decay"))}</div>` : ""}
+    <div class="pprev">
+      ${scenarioChart(S, k, kFull, net > 0n ? (Number(net) / 1e8) * price(s) : 0)}
+      ${why ? `<div class="note pwarn">${esc(why)}</div>` : ""}
+      <div class="ptiles sm">${tile(pt("ord.funding"), funding)}${tile(pt("ord.zero"), zero)}${tile(pt("ord.fee"), pt("ord.feeVal", { pct: pct(s.feeBps / 1e4, 1), n: tok(fee, 8), tok: s.pool.tokenSymbol }))}</div>
+      ${s.open ? `<div class="note">${esc(pt("ord.priceShort", { time: fmtTime(s.open.cutoff) }))}${Math.abs(k) > 1.05 ? ` · <span class="pinfo" title="${esc(pt("ord.decay"))}">${esc(pt("ord.decayShort"))} ⓘ</span>` : ""}</div>` : ""}
+    </div>
     ${locked && s.open ? `<div class="note pwarn">${esc(pt("ord.lockedNote", { time: fmtTime(s.open.cutoff) }))}</div>` : ""}
     ${over ? `<div class="note warn">${esc(pt("ord.tooBig"))}</div>` : ""}
     ${toFaucet ? `<div class="note">${pt("ord.toFaucet", { tok: esc(s.pool.tokenSymbol) })}</div>` : ""}
@@ -167,7 +168,7 @@ function positionsCard(s: St) {
     const exits = ex.map((x) => x.ready
       ? `<div class="pready">${esc(pt("pos.ready", { n: tok(x.tokens), tok: s.pool.tokenSymbol }))} <button class="primary" data-claim="${x.day}:${x.tier}" ${busy || noSend() || !!s.problem ? "disabled" : ""}>${esc(pt("pos.withdraw"))}</button></div>`
       : `<div class="note">${esc(pt("pos.pendingOut", { time: fmtTime(x.cutoff) }))}${why(waitWhy(x.ep, "out", s.now, s.dispute))}</div>`).join("");
-    const held = p.shares > 0n ? `<div class="pposv"><b>${esc(pt("pos.value", { n: tok(p.tokens), tok: s.pool.tokenSymbol, usd: usd((Number(p.tokens) / 1e8) * px) }))}</b>${nowLines(t, fillOf(t, e), s.pool.symbol, s.pool.tokenSymbol, p.tokens, px).map((l, _, a) => `<span class="note${a.length > 1 ? " pnowl" : ""}">${esc(l)}</span>`).join("")}</div>
+    const held = p.shares > 0n ? `<div class="pposv"><b>${esc(pt("pos.value", { n: tok(p.tokens), tok: s.pool.tokenSymbol, usd: usd((Number(p.tokens) / 1e8) * px) }))}</b></div>${effBlock(t, fillOf(t, e), p.tokens, px, s.pool.symbol, s.pool.tokenSymbol)}
       <div class="pexit"><input data-exitamt="${t.i}" inputmode="decimal" placeholder="${esc(pt("pos.exitAmt", { tok: s.pool.tokenSymbol }))}" value="${esc(exitStr[t.i] ?? "")}"><button data-exit="${t.i}" ${busy || !s.open || s.paused || noSend() || !!s.problem || locked ? "disabled" : ""}>${esc(pt("pos.exit"))}</button><button class="ghost" data-exitall="${t.i}" ${busy || !s.open || s.paused || noSend() || !!s.problem || locked ? "disabled" : ""}>${esc(pt("pos.exitAll"))}</button></div>` : "";
     return `<div class="pposr"><div class="pposh"><b class="tc-${tierCls(t)}">${esc(pt(tierKey(t)))}</b></div>${held}${pend}${exits}</div>`;
   }).join("");
@@ -180,7 +181,7 @@ function render() {
   const root = document.getElementById("perp")!;
   const keepFocus = document.activeElement instanceof HTMLInputElement ? { id: document.activeElement.id, ex: document.activeElement.dataset.exitamt, pos: document.activeElement.selectionStart } : null;
   // the hero names every stock (the site is not one stock's); the tabs under it pick the pool shown below
-  const hero = `<section class="phero"><h1>${pt("hero.h1", { sym: esc(symbolList("disjunction")) })}</h1><p>${esc(pt("hero.p", { tok: tokenList() }))}</p>${geo.blocked ? `<div class="note warn">${pt("rules.7", { sym: esc(symbolList()) })}</div>` : ""}</section>`;
+  const hero = `<section class="phero"><h1>${pt("hero.h1", { sym: esc(symbolList("disjunction")) })}</h1><ol class="psteps">${[["hero.s1", tokenList()], ["hero.s2", pt("hero.s2d")], ["hero.s3", pt("hero.s3d")]].map(([k, d], i) => `<li><i>${i + 1}</i><b>${esc(pt(k))}</b><small>${esc(d)}</small></li>`).join("")}</ol>${geo.blocked ? `<div class="note warn">${pt("rules.7", { sym: esc(symbolList()) })}</div>` : ""}</section>`;
   if (!pool) { root.innerHTML = hero + `<div class="note">Not deployed on this network yet.</div>`; return; }
   const tabs = poolTabs(pool, (p) => `<span class="pstockpx">${closes[p.symbol] ? usd(closes[p.symbol]!) : closes[p.symbol] === null ? esc(pt("tab.noClose")) : "…"}</span>`);
   if (!st) { root.innerHTML = hero + tabs + `<div class="note">${loadErr ? esc(pt("err", { err: loadErr })) : "…"}</div>`; bindPoolTabs(switchPool); return; }
