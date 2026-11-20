@@ -60,8 +60,10 @@ export async function api<T = any>(path: string): Promise<T> {
 /** One live pool per stock (config.ts PERP.pools, from chains.json), in the order the site shows them. */
 export type Pool = PerpPool;
 export const POOLS: Pool[] = PERP.pools.filter((p) => !p.retired);
-/** Every pool, the retired ones too (older pools of a stock: their holders still exit and withdraw there). */
-export const ALL_POOLS: Pool[] = PERP.pools;
+/** Every pool the site shows. Since 2026-11-20 that is the live ones only: on the test network the retired pools (older
+ *  pools of a stock) are not shown anywhere (My activity, ?pool=<address>, the docs' contract list). They stay in
+ *  chains.json, where the daily job still settles them; to show them again: `= PERP.pools`. */
+export const ALL_POOLS: Pool[] = POOLS;
 /** "NVDA", or "NVDA (old pool)" for a retired one. */
 export const poolLabel = (p: Pool) => (p.retired ? pt("pool.old", { sym: p.symbol }) : p.symbol);
 const NAMES: Record<string, string> = { NVDA: "NVIDIA", TSLA: "Tesla", META: "Meta" };
