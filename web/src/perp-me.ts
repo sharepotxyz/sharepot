@@ -3,7 +3,8 @@
 //   * My positions: one row per stock and tier the wallet is in — what it holds (and its leverage now), entries and
 //     exits waiting for a close, exits ready to withdraw — and the result of that tier: price moves + funding − fees.
 //   * History: the wallet's requests, take-backs and withdrawals, and what each close did to it: its share of the
-//     price move and of the funding, its entries and exits filled.
+//     price move and of the funding, its entries and exits filled. A search box (any word the row shows, a date as
+//     11/18, a tx hash) and chips (stock; my requests / fills / daily closes) narrow it down.
 // The per-day parts come from perp-ledger.ts (public settled days + the wallet's own events); the totals are the
 // wallet's cash flows (in, out, still in), so they are exact and the parts' rounding lands in the price part.
 // Actions stay on the pool page.
@@ -22,6 +23,25 @@ const fromUrl = new URLSearchParams(location.search).get("address");
 const viewing = (): string | null => (hex(fromUrl, 40) ? fromUrl : getSession()?.address ?? null);
 let views: PoolView[] | null = null, act: Act | null = null, err = "", loading = false, showAll = false;
 const SHOWN = 20;   // history rows before "show all"
+
+// ---- the history's search box and chips: what they hold lives across the minute's reloads
+/** Which chip a history row falls under: the wallet's own requests, the fills at a close, or a close's moves. */
+type Cat = "mine" | "fill" | "close";
+const CATS: Cat[] = ["mine", "fill", "close"];
+/** One history row; `hay` is its searchable text (what it shows, its date as 11/18 and 2026-11-18, its tx hash). */
+type H = { ts: number; order: number; v: PoolView; tier: number; what: string; detail: string; tx: string | null; cat: Cat; hay: string };
+let hist: H[] = [], q = "", fPool = "", fCat: Cat | "" = "";
+/** Lower case, the minus sign as "-", one space: so "-1.2" finds "−1.2". */
+const norm = (s: string) => s.toLowerCase().replace(/−/g, "-").replace(/\s+/g, " ").trim();
+/** The text of a bit of this page's markup. */
+const plain = (html: string) => html.replace(/<[^>]*>/g, " ").replace(/&(amp|lt|gt|quot|#39);/g, (_m, e: string) => ({ amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'" }[e] as string));
+const dateKeys = (ts: number) => { const d = new Date(ts * 1000), m = d.getMonth() + 1, dd = d.getDate(), p = (x: number) => String(x).padStart(2, "0"); return `${m}/${dd} ${p(m)}/${p(dd)} ${d.getFullYear()}-${p(m)}-${p(dd)}`; };
+const poolKey = (v: PoolView) => v.pool.address.toLowerCase();
+const terms = () => norm(q).split(" ").filter(Boolean);
+/** Does the row pass the box and the chips (all but one chip row, to count what that row's chips would show)? */
+const passes = (h: H, t: string[], skip?: "pool" | "cat") =>
+  (skip === "pool" || !fPool || poolKey(h.v) === fPool) && (skip === "cat" || !fCat || h.cat === fCat) && t.every((w) => h.hay.includes(w));
+const label = (v: PoolView, tier: number) => { const t = v.st.tiers[tier]; return `${esc(poolLabel(v.pool))} · <b class="tc-${t ? tierCls(t) : ""}">${esc(t ? pt(tierKey(t)) : `#${tier}`)}</b>`; };
 
 async function load() {
   const who = viewing();
@@ -70,12 +90,11 @@ function render() {
   const root = document.getElementById("perp")!;
   const who = viewing();
   const kind = who ? oursKind(who) : null;
-  const head = `<section class="phero"><h1>${esc(pt("me.title"))}</h1>${who ? `<p>${esc(pt(fromUrl ? "me.viewing" : "me.yours", { addr: short(who) }))}</p>` : ""}${kind ? `<div class="card pwarn">${esc(pt(kind === "bot" ? "me.isBot" : "me.isTreasury"))}</div>` : ""}</section>`;
+  const head = `<section class="phero" id="pmehead"><h1>${esc(pt("me.title"))}</h1>${who ? `<p>${esc(pt(fromUrl ? "me.viewing" : "me.yours", { addr: short(who) }))}</p>` : ""}${kind ? `<div class="card pwarn">${esc(pt(kind === "bot" ? "me.isBot" : "me.isTreasury"))}</div>` : ""}</section>`;
   if (!who) { root.innerHTML = head + `<div class="card"><p class="note">${esc(pt("me.connect"))}</p></div>`; return; }
   if (!act || !views) { root.innerHTML = head + `<div class="note">${err ? esc(pt("err", { err })) : "…"}</div>`; return; }
   const rows = act.rows.filter((r) => r.ev !== "EntryBooked" && !(r.ev === "Claimed" && (!r.tokens || r.tokens === "0")));   // bookings are the contract's bookkeeping
   const books = views.map((v) => ({ v, ...ledgerOf(v, act!.rows) }));
-  const label = (v: PoolView, tier: number) => { const t = v.st.tiers[tier]; return `${esc(poolLabel(v.pool))} · <b class="tc-${t ? tierCls(t) : ""}">${esc(t ? pt(tierKey(t)) : `#${tier}`)}</b>`; };
   // a retired pool's link opens that pool by address: there its holders exit and withdraw
   const href = (p: Pool) => (p.retired ? `/?pool=${esc(p.address)}` : `/?s=${esc(p.symbol)}`);
 
@@ -98,13 +117,13 @@ function render() {
       return `<tr><td class="nw"><a class="pmepos" href="${href(v.pool)}">${label(v, t.i)}</a></td><td>${lines.map((l) => `<div>${l}</div>`).join("")}</td><td${r.filled ? ` data-l="${esc(pt("me.colPnl"))}"` : ' class="nopnl"'}>${pnl}</td></tr>`;
     }).filter(Boolean);
   });
-  const positions = `<section class="card"><h2>${esc(pt("me.pos"))}</h2>${posRows.length ? `<div class="ptbl"><table class="tbl pmetbl"><thead><tr><th>${esc(pt("me.colPos"))}</th><th>${esc(pt("me.colNow"))}</th><th>${esc(pt("me.colPnl"))}</th></tr></thead><tbody>${posRows.join("")}</tbody></table></div>
+  const positions = `<section class="card" id="pmepos"><h2>${esc(pt("me.pos"))}</h2>${posRows.length ? `<div class="ptbl"><table class="tbl pmetbl"><thead><tr><th>${esc(pt("me.colPos"))}</th><th>${esc(pt("me.colNow"))}</th><th>${esc(pt("me.colPnl"))}</th></tr></thead><tbody>${posRows.join("")}</tbody></table></div>
     <p class="note">${esc(pt("me.pnlNote"))}</p>` : `<p class="note">${esc(pt("me.none"))}</p>`}</section>`;
 
   // ---- history: the wallet's own requests and what each close did to it, newest first
-  type H = { ts: number; order: number; v: PoolView; tier: number; what: string; detail: string; tx: string | null };
   const byPool = new Map(views.map((v) => [v.pool.address.toLowerCase(), v]));
-  const hist: H[] = [];
+  hist = [];
+  const add = (h: Omit<H, "hay">) => hist.push({ ...h, hay: norm([fmtTime(h.ts), dateKeys(h.ts), h.v.pool.tokenSymbol, plain(label(h.v, h.tier)), plain(h.what), plain(h.detail), h.tx ?? ""].join(" ")) });
   for (const r of rows) {
     const v = byPool.get(r.pool); if (!v) continue;
     const T = esc(v.pool.tokenSymbol), n = (x: string | null) => tok(BigInt(x ?? "0"));
@@ -112,25 +131,86 @@ function render() {
       : r.ev === "DepositCancelled" ? pt("me.d.cancel", { n: `${n(r.tokens)} ${T}`, fee: plainTok(BigInt(r.amount ?? "0") - BigInt(r.tokens ?? "0")) })
       : r.ev === "RedeemRequested" ? esc(pt("me.d.exitAsk"))
       : r.ev === "Claimed" ? pt("me.d.claim", { n: `${n(r.tokens)} ${T}` }) : "";
-    hist.push({ ts: r.ts, order: 0, v, tier: r.tier, what: esc(pt(`me.ev.${r.ev}`)), detail, tx: r.tx });
+    add({ ts: r.ts, order: 0, v, tier: r.tier, what: esc(pt(`me.ev.${r.ev}`)), detail, tx: r.tx, cat: "mine" });
   }
   for (const { v, rows: lr } of books) for (const x of lr as LedgerRow[]) {
     const T = esc(v.pool.tokenSymbol);
     // at one close: its moves first, then the exits, then the entries (newest first lists them the other way round)
-    if (x.kind === "settle") hist.push({ ts: x.ts, order: 1, v, tier: x.tier, what: esc(pt("me.ev.settle")),
-      detail: `${pt("me.d.close", { sym: esc(v.pool.symbol), move: `<b class="${x.move > 0 ? "gain" : x.move < 0 ? "drop" : ""}">${esc(spct(x.move))}</b>` })} · ${pt("me.d.parts", { p: signedTok(x.price), f: signedTok(x.funding) })} ${T}`, tx: x.tx });
-    else hist.push({ ts: x.ts, order: x.kind === "exited" ? 2 : 3, v, tier: x.tier, what: esc(pt(`me.ev.${x.kind}`)),
-      detail: pt(x.kind === "entered" ? "me.d.entered" : "me.d.exited", { n: `${plainTok(x.tokens)} ${T}`, fee: plainTok(x.fee) }), tx: x.tx });
+    if (x.kind === "settle") add({ ts: x.ts, order: 1, v, tier: x.tier, what: esc(pt("me.ev.settle")),
+      detail: `${pt("me.d.close", { sym: esc(v.pool.symbol), move: `<b class="${x.move > 0 ? "gain" : x.move < 0 ? "drop" : ""}">${esc(spct(x.move))}</b>` })} · ${pt("me.d.parts", { p: signedTok(x.price), f: signedTok(x.funding) })} ${T}`, tx: x.tx, cat: "close" });
+    else add({ ts: x.ts, order: x.kind === "exited" ? 2 : 3, v, tier: x.tier, what: esc(pt(`me.ev.${x.kind}`)),
+      detail: pt(x.kind === "entered" ? "me.d.entered" : "me.d.exited", { n: `${plainTok(x.tokens)} ${T}`, fee: plainTok(x.fee) }), tx: x.tx, cat: "fill" });
   }
   hist.sort((a, b) => b.ts - a.ts || b.order - a.order);
-  const shown = showAll ? hist : hist.slice(0, SHOWN);
-  const history = `<section class="card"><h2>${esc(pt("me.log"))}</h2>${hist.length ? `<div class="ptbl"><table class="tbl pmetbl"><thead><tr><th>${esc(pt("me.when"))}</th><th>${esc(pt("me.colPos"))}</th><th>${esc(pt("me.what"))}</th><th>${esc(pt("me.colDetail"))}</th><th></th></tr></thead><tbody>
-    ${shown.map((h) => `<tr><td class="nw when">${esc(fmtTime(h.ts))}</td><td class="nw">${label(h.v, h.tier)}</td><td class="nw">${h.what}</td><td>${h.detail}</td><td>${h.tx ? txLink(h.tx) : ""}</td></tr>`).join("")}
-    </tbody></table></div>${hist.length > shown.length ? `<p><button class="ghost" id="pmemore">${esc(pt("me.more", { n: hist.length }))}</button></p>` : ""}` : `<p class="note">${esc(pt("me.noRows"))}</p>`}
-    ${act.indexedAt ? `<p class="note">${esc(pt("me.indexed", { time: fmtTime(act.indexedAt) }))}</p>` : ""}</section>`;
+  if (fPool && !hist.some((h) => poolKey(h.v) === fPool)) fPool = "";   // a stock this wallet has no rows in
+  const idx = `<p class="note" id="pmeidx">${act.indexedAt ? esc(pt("me.indexed", { time: fmtTime(act.indexedAt) })) : ""}</p>`;
+  const bar = `<div class="pmefbar"><label class="pmeq"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>`
+    + `<input type="search" id="pmeq" value="${esc(q)}" placeholder="${esc(pt("me.f.q"))}" aria-label="${esc(pt("me.f.q"))}" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search"></label>`
+    + `<div id="pmechips">${chipsHtml()}</div></div>`;
+  const history = `<section class="card" id="pmehist"><h2>${esc(pt("me.log"))}</h2>${hist.length ? `${bar}<div id="pmehbody">${histBody()}</div>` : `<p class="note">${esc(pt("me.noRows"))}</p>`}${idx}</section>`;
+  const busy = `<p class="note" id="pmeload"${loading ? "" : " hidden"}>…</p>`;
 
-  root.innerHTML = head + `<div class="pme">${positions}${history}</div>` + (loading ? `<p class="note">…</p>` : "");
-  const more = document.getElementById("pmemore"); if (more) more.onclick = () => { showAll = true; render(); };
+  // a reload (every minute) leaves the search box itself in place, so its focus, its caret, a word half typed with
+  // an input method and the phone's keyboard survive it: only what is around the box is swapped
+  if (hist.length && document.getElementById("pmeq") && document.getElementById("pmehbody")) {
+    for (const [id, html] of [["pmehead", head], ["pmepos", positions], ["pmeidx", idx], ["pmeload", busy]]) { const el = document.getElementById(id); if (el) el.outerHTML = html; }
+    refreshHist();
+    return;
+  }
+  root.innerHTML = head + `<div class="pme">${positions}${history}</div>` + busy;
+  bindHist();
+}
+
+/** The chips: one row per stock (when there are two or more), one per kind of row; each says how many rows it would show. */
+function chipsHtml() {
+  const t = terms();
+  const chip = (attr: "fpool" | "fcat", val: string, on: boolean, text: string, n: number, title = "") =>
+    `<button type="button" class="pfchip${on ? " on" : ""}${n ? "" : " zero"}" data-${attr}="${esc(val)}" aria-pressed="${on}"${title ? ` title="${esc(title)}"` : ""}>${esc(text)} <span>${n}</span></button>`;
+  const pools = ALL_POOLS.filter((p) => hist.some((h) => h.v.pool.address === p.address));
+  const forPool = hist.filter((h) => passes(h, t, "pool")), forCat = hist.filter((h) => passes(h, t, "cat"));
+  const poolRow = pools.length < 2 ? "" : `<div class="pfrow">${chip("fpool", "", !fPool, pt("me.f.allPools"), forPool.length)}${pools.map((p) => {
+    const k = p.address.toLowerCase();
+    return chip("fpool", k, fPool === k, poolLabel(p), forPool.filter((h) => poolKey(h.v) === k).length);
+  }).join("")}</div>`;
+  const catRow = `<div class="pfrow">${chip("fcat", "", !fCat, pt("me.f.allCats"), forCat.length)}${CATS.map((c) =>
+    chip("fcat", c, fCat === c, pt(`me.f.${c}`), forCat.filter((h) => h.cat === c).length, pt(`me.f.${c}.d`))).join("")}</div>`;
+  return poolRow + catRow;
+}
+
+/** The rows that pass the box and the chips, newest first; the first 20 until "show all". */
+function histBody() {
+  const t = terms(), hits = hist.filter((h) => passes(h, t)), shown = showAll ? hits : hits.slice(0, SHOWN);
+  const filtered = hits.length !== hist.length || !!fPool || !!fCat || t.length > 0;
+  const clear = `<button type="button" class="ghost pfclear" data-act="clear">${esc(pt("me.f.clear"))}</button>`;
+  const count = `<p class="note pfcount">${esc(filtered ? pt("me.f.count", { n: hits.length, all: hist.length }) : pt("me.f.total", { all: hist.length }))}${filtered ? ` ${clear}` : ""}</p>`;
+  if (!hits.length) return count + `<p class="note">${esc(pt("me.f.none"))}</p>`;
+  return count + `<div class="ptbl"><table class="tbl pmetbl"><thead><tr><th>${esc(pt("me.when"))}</th><th>${esc(pt("me.colPos"))}</th><th>${esc(pt("me.what"))}</th><th>${esc(pt("me.colDetail"))}</th><th></th></tr></thead><tbody>
+    ${shown.map((h) => `<tr><td class="nw when">${esc(fmtTime(h.ts))}</td><td class="nw">${label(h.v, h.tier)}</td><td class="nw">${h.what}</td><td>${h.detail}</td><td>${h.tx ? txLink(h.tx) : ""}</td></tr>`).join("")}
+    </tbody></table></div>${hits.length > shown.length ? `<p><button type="button" class="ghost" data-act="more">${esc(pt("me.more", { n: hits.length }))}</button></p>` : ""}`;
+}
+
+function refreshHist() {
+  const chips = document.getElementById("pmechips"), body = document.getElementById("pmehbody");
+  if (chips) chips.innerHTML = chipsHtml();
+  if (body) body.innerHTML = histBody();
+}
+
+/** Wires the box and (by delegation, so a refresh needs no rewiring) the chips, "show all" and "clear". */
+function bindHist() {
+  const sec = document.getElementById("pmehist"), box = document.getElementById("pmeq") as HTMLInputElement | null;
+  if (!sec || !box) return;
+  box.oninput = () => { q = box.value; refreshHist(); };
+  box.onkeydown = (e) => { if (e.key === "Escape" && box.value) { e.preventDefault(); box.value = q = ""; refreshHist(); } };
+  sec.onclick = (e) => {
+    const b = (e.target as Element).closest<HTMLButtonElement>("button");
+    if (!b || !sec.contains(b)) return;
+    if (b.dataset.fpool != null) fPool = b.dataset.fpool;
+    else if (b.dataset.fcat != null) fCat = b.dataset.fcat as Cat | "";
+    else if (b.dataset.act === "more") showAll = true;
+    else if (b.dataset.act === "clear") { q = fPool = fCat = ""; box.value = ""; }
+    else return;
+    refreshHist();
+  };
 }
 
 mountShell("me");
