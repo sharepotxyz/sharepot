@@ -5,7 +5,7 @@
 import type { Address } from "viem";
 import type { Session } from "./wallet-evm";
 import {
-  geo, noSend, LOCALE, MAXU, POOLS, PROPOSED, TESTNET, abi, bindPoolTabs, pickedPool, poolTabs, rawToStr, read, erc20, errText, esc, exposures, fillOf, fmtDate, fmtTime, fundingDaily, left,
+  geo, noSend, LOCALE, MAXU, MIN_AMOUNT, amountProblem, POOLS, PROPOSED, TESTNET, abi, bindPoolTabs, pickedPool, poolTabs, rawToStr, read, erc20, errText, esc, exposures, fillOf, fmtDate, fmtTime, fundingDaily, left,
   loadMine, loadState, netLev, parseAmount, pct, price, pt, rememberExit, poolLabel, symbolList, tierCls, tokenList, tierKey, tok, txLink, usd, waitWhy, type Mine, type Pool, type St,
 } from "./perp-core";
 import { health, mountShell, onHealth, onSession, refreshWallet } from "./perp-shell";
@@ -130,7 +130,7 @@ function orderCard(s: St) {
   const why = f >= 0.9995 ? "" : f <= 0.0005 ? pt(t.isLong ? "ord.unmatched" : "ord.unmatchedShort", { sym: S, tok: T, tier: pt(tierKey(t)) }) : pt("ord.partialShort", { pct: pct(f, 0), tok: T });
   // a Short or Hedge entry the long side cannot cover is, for now, mostly the stock itself: say that first and plainly
   const actsLong = !t.isLong && f < 0.9995 && k > 0.05;
-  const badAmt = amountStr.trim() !== "" && !amt;
+  const badAmt = amountProblem(amountStr);
   const tile = (label: string, value: string) => `<div class="ptile"><span>${esc(label)}</span><b>${esc(value)}</b></div>`;
   const locked = nearBell(s);
   const can = !!session && !!s.open && !s.paused && !noSend() && !s.problem && !locked;
@@ -144,8 +144,8 @@ function orderCard(s: St) {
     <div class="ptiers" role="radiogroup">${s.tiers.map((x) => `<button role="radio" aria-checked="${x.i === t.i}" class="ptier ${tierCls(x)}${x.i === t.i ? " on" : ""}" data-tier="${x.i}" title="${esc(pt(tierKey(x) + ".d"))}">${tierGlyph(x)}<b>${esc(pt(tierKey(x)))}</b></button>`).join("")}</div>
     <div class="ptierd">${esc(pt(tierKey(t) + ".d"))}</div>
     <label class="pamt"><span>${esc(pt("ord.amount"))} <small class="note">${mine ? esc(pt("ord.balance", { n: tok(mine.bal), tok: s.pool.tokenSymbol })) : ""}</small></span>
-      <span class="pin"><input id="pamount" inputmode="decimal" autocomplete="off" placeholder="0.0" value="${esc(amountStr)}"><span class="unit">${esc(s.pool.tokenSymbol)}</span>${mine ? `<button class="ghost" id="pmax">${esc(pt("ord.max"))}</button>` : ""}</span></label>
-    ${badAmt ? `<div class="note warn">${esc(pt("ord.badAmt"))}</div>` : ""}
+      <span class="pin"><input id="pamount" inputmode="decimal" autocomplete="off" placeholder="${esc(pt("ord.minPh", { min: rawToStr(MIN_AMOUNT) }))}" value="${esc(amountStr)}"><span class="unit">${esc(s.pool.tokenSymbol)}</span>${mine ? `<button class="ghost" id="pmax">${esc(pt("ord.max"))}</button>` : ""}</span></label>
+    ${badAmt ? `<div class="note warn">${esc(pt(badAmt, { tok: s.pool.tokenSymbol, min: rawToStr(MIN_AMOUNT) }))}</div>` : ""}
     ${actsLong ? `<div class="note warn pacts"><b>${esc(pt("ord.actsLong", { tier: pt(tierKey(t)), sym: S, x: k.toFixed(2) }))}</b> ${esc(pt("ord.actsLongWhy", { pct: pct(f, 0), tok: T, tier: pt(tierKey(t)) }))}</div>` : ""}
     <div class="pprev">
       ${scenarioChart(S, k, kFull, net > 0n ? (Number(net) / 1e8) * price(s) : 0)}
@@ -156,7 +156,7 @@ function orderCard(s: St) {
     ${locked && s.open ? `<div class="note pwarn">${esc(pt("ord.lockedNote", { time: fmtTime(s.open.cutoff) }))}</div>` : ""}
     ${over ? `<div class="note warn">${esc(pt("ord.tooBig"))}</div>` : ""}
     ${toFaucet ? `<div class="note">${pt("ord.toFaucet", { tok: esc(s.pool.tokenSymbol) })}</div>` : ""}
-    <button class="primary big" id="penter" ${can && !busy && !over && !!amt ? "" : "disabled"}>${esc(btn)}</button>
+    <button class="primary big" id="penter" ${can && !busy && !over && !!amt && !badAmt ? "" : "disabled"}>${esc(btn)}</button>
     ${msgs.enter ? `<div class="note pmsg">${msgs.enter}</div>` : ""}
   </section>`;
 }
@@ -257,7 +257,8 @@ function bind() {
     if (nearBell(s)) throw new Error(pt("ord.locked"));
     let shares = p.shares;
     if (!all) {
-      const a = parseAmount(exitStr[tier] ?? ""); if (!a) throw new Error(pt("ord.zeroAmt"));
+      const why = amountProblem(exitStr[tier] ?? ""), a = parseAmount(exitStr[tier] ?? "");
+      if (why || !a) throw new Error(pt(why ?? "ord.zeroAmt", { tok: s.pool.tokenSymbol, min: rawToStr(MIN_AMOUNT) }));
       if (a > p.tokens) throw new Error(pt("pos.exitTooBig"));
       const now = await read(s.pool, "tierInfo", [tier]);   // a close may have settled since the page last refreshed
       shares = now.held > 0n ? (a * now.shares) / now.held : 0n;

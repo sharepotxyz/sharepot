@@ -42,10 +42,22 @@ export const tok = (raw: bigint, dp = 4) => (Number(raw) / 1e8).toLocaleString("
 /** A positive amount written with digits and at most one dot; anything else (a comma included: "10,5" is 10.5 in much of
  *  the world and 105 in the rest, and a wrong guess sends ten times the amount; "1e3", "-5", "abc") is null. */
 export function parseAmount(s: string): bigint | null {
-  const m = s.trim().match(/^(\d*)(?:\.(\d{0,8})\d*)?$/);
+  const m = s.trim().match(/^(\d*)(?:\.(\d{0,8}))?$/);   // more than 8 decimals is refused, not cut silently
   if (!m || (!m[1] && !m[2])) return null;
   const v = BigInt(m[1] || "0") * ONE + BigInt((m[2] ?? "").padEnd(DEC, "0") || "0");
   return v > 0n ? v : null;
+}
+/** The smallest amount the site sends (the contract takes any amount > 0): below it the 0.1 % fee rounds to nothing and
+ *  the entry is dust. */
+export const MIN_AMOUNT = ONE / 100n;
+/** Why an amount typed into a box cannot be sent, as a string key (ord.badAmt / ord.amtDecimals / ord.amtMin), or null. */
+export function amountProblem(s: string): string | null {
+  const t = s.trim();
+  if (!t) return null;
+  if (!/^\d*(\.\d*)?$/.test(t) || t === ".") return "ord.badAmt";   // a comma, a sign, a letter, an exponent
+  const [i, f = ""] = t.split("."), v = parseAmount(`${i}.${f.slice(0, DEC)}`);   // too small says so first, whatever its digits
+  if (!v || v < MIN_AMOUNT) return "ord.amtMin";
+  return f.length > DEC ? "ord.amtDecimals" : null;
 }
 export const hex = (s: unknown, n: number) => typeof s === "string" && new RegExp(`^0x[0-9a-fA-F]{${n}}$`).test(s);
 export const short = (a: string) => a.slice(0, 6) + "…" + a.slice(-4);

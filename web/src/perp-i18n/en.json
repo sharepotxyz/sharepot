@@ -330,5 +330,8 @@
   "h.bad": "Couldn't read the daily closes just now. It retries on its own every minute.",
   "me.posErr": "Couldn't read your positions from Base Sepolia just now. It retries on its own every minute.",
   "me.histErr": "Couldn't read your history just now, so results are not shown; the positions above are read straight from the chain. It retries on its own every minute.",
-  "me.histStale": "The latest history read failed; showing the last one."
+  "me.histStale": "The latest history read failed; showing the last one.",
+  "ord.amtMin": "The smallest amount is {min} {tok}.",
+  "ord.amtDecimals": "At most 8 decimal places: {tok} has no smaller unit.",
+  "ord.minPh": "min {min}"
 }
