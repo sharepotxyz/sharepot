@@ -50,6 +50,17 @@ const PPM = 1_000_000n;
 const AHEAD_DAYS = Number(process.env.PERP_AHEAD_DAYS ?? 14);
 const PROPOSE_DELAY = Number(process.env.PERP_PROPOSE_DELAY_SECS ?? 1800);
 const CHAINLINK_MAX_BPS = Number(process.env.PERP_CHAINLINK_MAX_BPS ?? 100);
+// The feed updates on a 0.5 % move or a heartbeat, so a quiet stock leaves it untouched for a day or more (27.6 h seen
+// mid-week; a weekend adds two days): only a last update older than this before the close means a dead feed, and a dead
+// feed is no second source (audit 11-22 F003; widened in the second review)
+const CHAINLINK_MAX_AGE_SECS = Number(process.env.PERP_CHAINLINK_MAX_AGE_SECS ?? 100 * 3600);
+// The second source sees only the day's close; a dividend (Yahoo alone) adds to the move, so a large one waits for a
+// human (these stocks pay well under 1 % a quarter)
+const MAX_DIVIDEND_YIELD = Number(process.env.PERP_MAX_DIVIDEND_PCT ?? 2) / 100;
+// The guardian rejects a proposal it still cannot recompute this close to the end of its dispute window
+const REJECT_UNVERIFIED_SECS = Number(process.env.PERP_REJECT_UNVERIFIED_SECS ?? 3600);
+// A pool whose tick keeps failing is as stuck as a held day: Telegram after this long failing in a row
+const FAIL_ALERT_SECS = Number(process.env.PERP_FAIL_ALERT_SECS ?? 3600);
 const HOLD_ALERT_SECS = 2 * 3600; // a day still unproposed this long after its bell is worth a human look
 const log = (pool, ...a) => console.log(new Date().toISOString(), `[perp ${CHAIN_KEY}${pool ? " " + pool.label : ""}]`, ...a);
 
@@ -177,7 +188,7 @@ async function gapMove(symbol, fromDate, toDate, now) {
  * the first settlement). { ok: true, value (bigint, 8 decimals), doc } or { ok: false, reason, alert }.
  * `doc` is the evidence: every session's close detail and the raw source responses; its sha256 goes on-chain.
  */
-export async function valueFor(pool, date, lastValue, lastDate, now) {
+export async function valueFor(pool, date, lastValue, lastDate, now, { knownCloses = null } = {}) {
   const SYMBOL = pool.symbol;
   const evidence = [], details = [];
   let value;
@@ -206,10 +217,33 @@ export async function valueFor(pool, date, lastValue, lastDate, now) {
     }
   }
   const last = details[details.length - 1];
+  // Inputs the second source never sees (audit 11-22 F003): the move is (close + dividend) / previous close, and only the
+  // close is checked against Nasdaq or Chainlink. The previous close must be the one this host recorded when that day
+  // settled — Yahoo rewriting it (a split, a data error) waits for a human — and a dividend over the cap waits too.
+  const prev = details[0];
+  if (knownCloses && lastDate && knownCloses[lastDate] != null && prev?.prevClose != null && Math.abs(prev.prevClose - knownCloses[lastDate]) > 0.005) {
+    // Yahoo restates every earlier close on the new share basis from a split's day on: the split it reports for this
+    // session explains the difference exactly (10:1 → the old close is a tenth), and then the day goes ahead
+    const m = String(prev.split ?? "").match(/^(\d+(?:\.\d+)?)[:/](\d+(?:\.\d+)?)$/), ratio = m ? Number(m[1]) / Number(m[2]) : NaN;
+    const bySplit = Number.isFinite(ratio) && ratio > 0 && Math.abs(prev.prevClose * ratio - knownCloses[lastDate]) <= 0.005 * Math.max(1, ratio);
+    if (!bySplit) return { ok: false, alert: true, reason: `Yahoo now gives ${prev.prevClose} for the ${lastDate} close, but ${knownCloses[lastDate]} was recorded when that day settled, and no split on ${date} explains it: holding until Yahoo agrees again (a human who has checked the right close can write it into closes.json in this pool's data folder on both hosts)` };
+  }
+  for (const d of details) for (const step of d.gapSteps ?? [d]) {
+    if (!Number.isFinite(step.dividend) || step.dividend < 0 || !(step.close > 0)) {
+      return { ok: false, alert: true, reason: `${step.date}: Yahoo reports a dividend of ${step.dividend} on a close of ${step.close} — not a usable number: holding for a human` };
+    }
+    if (step.dividend > 0 && step.dividend / step.close > MAX_DIVIDEND_YIELD) {
+      return { ok: false, alert: true, reason: `${step.date}: Yahoo reports a dividend of ${step.dividend}, ${((step.dividend / step.close) * 100).toFixed(2)} % of the close — over the ${MAX_DIVIDEND_YIELD * 100} % this job takes without a human (if it is real, raise PERP_MAX_DIVIDEND_PCT on both hosts for that day)` };
+    }
+  }
   let chainlink = null, chainlinkOk = false;
   try {
     const cal = await sessions(date, date);
     const cl = await chainlinkAt(pool, cal[0].close);
+    if (cl && cal[0].close - cl.updatedAt > CHAINLINK_MAX_AGE_SECS) {
+      chainlink = { feed: pool.feed, price: cl.price.toString(), updatedAt: cl.updatedAt, stale: true };
+      throw new Error(`the feed's last update before the close is ${((cal[0].close - cl.updatedAt) / 3600).toFixed(1)} h old (stuck)`);
+    }
     if (cl) {
       const mult = cl.multiplier && cl.multiplier > 0n ? cl.multiplier : 10n ** 18n;   // a 0 multiplier is a bad read, not a price
       const expected = BigInt(Math.round(last.close * 10_000)) * (SCALE / 10_000n) * mult / 10n ** 18n;
@@ -223,7 +257,7 @@ export async function valueFor(pool, date, lastValue, lastDate, now) {
       chainlinkOk = true;
     }
   } catch (e) {
-    chainlink = { error: firstLine(e).replace(/https?:\/\/\S+/g, "<url>") };   // this text is hashed on-chain forever: no URLs in it
+    chainlink = { ...(chainlink ?? {}), error: firstLine(e).replace(/https?:\/\/\S+/g, "<url>") };   // this text is hashed on-chain forever: no URLs in it
   }
   // Two sources must agree before a value goes on-chain: Yahoo's close plus Nasdaq's official close to the cent, or plus
   // Chainlink within the limit. Yahoo alone (Nasdaq silent past its grace period and Chainlink unavailable) holds the day.
@@ -254,6 +288,47 @@ export const poolDir = (pool, dataDir) => {
   return d;
 };
 const writeAtomic = (file, text) => { const tmp = `${file}.tmp${process.pid}`; fs.writeFileSync(tmp, text); fs.renameSync(tmp, file); };
+
+/** The close of each session this host proposed or verified (NY date → close), from its evidence files and closes.json:
+ *  valueFor holds a day whose previous close Yahoo now reports differently (audit 11-22 F003). */
+export function knownCloses(pool, dataDir) {
+  const dir = poolDir(pool, dataDir), out = {};
+  for (const f of fs.readdirSync(dir)) {
+    if (!/^evidence-\d+\.json$/.test(f)) continue;
+    try { const d = JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")); const last = d.sessions?.[d.sessions.length - 1]; if (d.date && last?.close != null) out[d.date] = last.close; } catch {}
+  }
+  try { Object.assign(out, JSON.parse(fs.readFileSync(path.join(dir, "closes.json"), "utf8"))); } catch {}
+  return out;
+}
+function recordClose(pool, dataDir, date, doc) {
+  const last = doc?.sessions?.[doc.sessions.length - 1];
+  if (last?.close == null) return;
+  const f = path.join(poolDir(pool, dataDir), "closes.json");
+  let m = {}; try { m = JSON.parse(fs.readFileSync(f, "utf8")); } catch {}
+  m[date] = last.close;
+  writeAtomic(f, JSON.stringify(Object.fromEntries(Object.keys(m).sort().slice(-90).map((k) => [k, m[k]]))));
+}
+/** A day the operator could legitimately have scheduled: an NYSE session after the last settled one, its cutoff that
+ *  session's close. Anything else can never be right, whatever the sources say (audit 11-22 F002). */
+async function realSession(date, cutoff, lastDate) {
+  const [cal] = await sessions(date, date);
+  if (!cal) return `${date} is not an NYSE session`;
+  if (cal.close !== cutoff) return `its cutoff ${new Date(cutoff * 1000).toISOString()} is not the ${date} close (${new Date(cal.close * 1000).toISOString()})`;
+  if (lastDate && date <= lastDate) return `${date} is not after the last settled session ${lastDate}`;
+  return null;
+}
+/** Consecutive failed ticks of one pool in one mode (RPC or a source down, a bug): after FAIL_ALERT_SECS in a row one
+ *  Telegram every 6 h; the streak ends on the first good tick (audit 11-22 F001: a failure used to be a log line only). */
+function failStreak(pool, dataDir, mode, err) {
+  const f = path.join(poolDir(pool, dataDir), `failing-${mode}.json`);
+  if (!err) { try { fs.unlinkSync(f); } catch {} return; }
+  let st = null; try { st = JSON.parse(fs.readFileSync(f, "utf8")); } catch {}
+  const now = Math.floor(Date.now() / 1000);
+  if (!st?.since) st = { since: now };
+  st.last = firstLine(err).replace(/https?:\/\/\S+/g, "<url>");
+  writeAtomic(f, JSON.stringify(st));
+  if (now - st.since >= FAIL_ALERT_SECS) notify(`${title(pool)}: ${mode} failing for ${Math.round((now - st.since) / 60)} min`, `${st.last}\n(看 log:VPS ~/logs/perp-base-sepolia.log 或東京 /root/stocklana/logs/verify-cron-perp.log)`, `perp-failing-${mode}-${pool.label}`, 360);
+}
 const title = (pool) => `Perp ${CHAIN_KEY} ${pool.label}`;
 
 // ---------------------------------------------------------------- steps
@@ -277,7 +352,14 @@ async function advance(pool, wallet, st, now, dataDir) {
   const date = nyDate(e.cutoff);
   if (e.state === State.Scheduled) {
     if (now < e.cutoff + PROPOSE_DELAY) return `day ${day} (${date}) closes at ${new Date(e.cutoff * 1000).toISOString()}`;
-    const r = await valueFor(pool, date, st.lastValue, await lastSettledDate(pool, st), now);
+    const lastDate = await lastSettledDate(pool, st), fake = await realSession(date, e.cutoff, lastDate);
+    if (fake) {   // a calendar change or a bad schedule: proposing would only be rejected by the guardian, every tick
+      notify(`${title(pool)}: day ${day} (${date}) is not a real session`, `${fake}. Nothing is proposed for it; skip it: PERP_SYMBOL=${pool.symbol} node server/evm/perp.mjs skip ${day}`, `perp-fake-${pool.label}-${day}`, 360);
+      return `day ${day} (${date}) held: not a real session (${fake})`;
+    }
+    let r;
+    try { r = await valueFor(pool, date, st.lastValue, lastDate, now, { knownCloses: knownCloses(pool, dataDir) }); }
+    catch (err) { r = { ok: false, reason: `the price sources failed: ${firstLine(err).replace(/https?:\/\/\S+/g, "<url>")}` }; }
     if (!r.ok) {
       const late = now - e.cutoff > HOLD_ALERT_SECS;
       if (r.alert || late) notify(`${title(pool)}: day ${day} (${date}) held`, r.reason, `perp-hold-${pool.label}-${day}`, 360);
@@ -325,26 +407,47 @@ async function verify(pool, dataDir) {
   if (day > st.lastScheduled) return "nothing scheduled";
   const e = await readEpoch(pool, day);
   if (e.state !== State.Proposed) return `day ${day} not proposed (state ${e.state})`;
-  const date = nyDate(e.cutoff);
-  const r = await valueFor(pool, date, st.lastValue, await lastSettledDate(pool, st), now);
+  const date = nyDate(e.cutoff), lastDate = await lastSettledDate(pool, st);
   const deadline = new Date((e.proposedAt + st.disputeWindowSecs) * 1000).toISOString();
   const key = `perp-verify-${pool.label}-${day}`;
+  const keyFile = process.env.PERP_GUARDIAN_KEY_FILE;
+  const reject = async (why) => {
+    let tx;
+    try { tx = await send(pool, walletFor(keyFile), "reject", [BigInt(day)]); }
+    catch (err) {   // the window may be closing: a human has to know now, not after the failure streak's hour
+      notify(`${title(pool)}: day ${day} (${date}) could NOT be rejected`, `${why}; the reject failed: ${firstLine(err).replace(/https?:\/\/\S+/g, "<url>")}. Reject it by hand before ${deadline}.`, `perp-rejectfail-${pool.label}-${day}`, 30);
+      throw err;
+    }
+    notify(`${title(pool)}: day ${day} (${date}) rejected`, `${why}; rejected on-chain (${tx}). The operator proposes again on its next run.`, `perp-reject-${pool.label}-${day}`, 30);
+    return `day ${day} ${why} → rejected (${tx})`;
+  };
+  // a day no honest operator could have scheduled: rejected at once, without asking the sources (audit 11-22 F002)
+  const fake = await realSession(date, e.cutoff, lastDate);
+  if (fake) {
+    if (keyFile) return reject(`proposed ${Number(e.value) / 1e8} for a day that is not a real session: ${fake}`);
+    notify(`${title(pool)}: day ${day} (${date}) is not a real session — reject it`, `${fake}; proposed ${Number(e.value) / 1e8}; reject before ${deadline}`, key, 30);
+    return `day ${day} NOT A SESSION: ${fake}`;
+  }
+  let r;
+  try { r = await valueFor(pool, date, st.lastValue, lastDate, now, { knownCloses: knownCloses(pool, dataDir) }); }
+  catch (err) { r = { ok: false, reason: `the price sources failed: ${firstLine(err).replace(/https?:\/\/\S+/g, "<url>")}` }; }
   if (!r.ok) {
     const seen = readVerified(pool, dataDir);
     if (!r.alert && sameProposal(seen, e)) return `day ${day} (${date}) not recomputable right now (${r.reason}); this proposal already matched at ${seen.at}: not alerting`;
-    notify(`${title(pool)}: cannot verify day ${day} (${date})`, `${r.reason}\nproposed ${Number(e.value) / 1e8}; reject before ${deadline} if in doubt`, key, 60);
+    // never checked, and the window is about to close: a value nobody could confirm does not settle (fail closed)
+    if (keyFile && !sameProposal(seen, e) && now >= e.proposedAt + st.disputeWindowSecs - REJECT_UNVERIFIED_SECS) {
+      return reject(`proposed ${Number(e.value) / 1e8} but this host could not recompute it before the dispute window's last hour (${r.reason})`);
+    }
+    const selfReject = keyFile && !sameProposal(seen, e) ? " (this host rejects it itself in the window's last hour if it still cannot)" : "";
+    notify(`${title(pool)}: cannot verify day ${day} (${date})`, `${r.reason}\nproposed ${Number(e.value) / 1e8}; reject before ${deadline} if in doubt${selfReject}`, `${key}-${e.proposedAt}`, 360);
     return `day ${day} unverifiable: ${r.reason}`;
   }
   if (r.value !== e.value) {
-    const keyFile = process.env.PERP_GUARDIAN_KEY_FILE;
-    if (keyFile) {
-      const tx = await send(pool, walletFor(keyFile), "reject", [BigInt(day)]);
-      notify(`${title(pool)}: day ${day} (${date}) rejected`, `proposed ${e.value} but the sources give ${r.value}; rejected on-chain (${tx}). The operator proposes again on its next run.`, key, 30);
-      return `day ${day} MISMATCH: proposed ${e.value}, recomputed ${r.value} → rejected (${tx})`;
-    }
+    if (keyFile) return reject(`MISMATCH: proposed ${e.value}, recomputed ${r.value}`);
     notify(`${title(pool)}: day ${day} (${date}) WRONG — reject it`, `proposed ${e.value} but the sources give ${r.value}; reject before ${deadline}`, key, 30);
     return `day ${day} MISMATCH: proposed ${e.value}, recomputed ${r.value}`;
   }
+  recordClose(pool, dataDir, date, r.doc);
   writeAtomic(verifiedFile(pool, dataDir), JSON.stringify({ day, proposedAt: e.proposedAt, value: e.value.toString(), at: new Date().toISOString() }));
   return `day ${day} (${date}) verified ${Number(e.value) / 1e8}`;
 }
@@ -414,11 +517,28 @@ async function main() {
     try {
       if (mode === "verify") log(pool, await verify(pool, dataDir));
       else await runPool(pool, wallet, dataDir);
-    } catch (e) { failed++; log(pool, `FAILED: ${firstLine(e)}`); }
+      failStreak(pool, dataDir, mode, null);
+    } catch (e) { failed++; log(pool, `FAILED: ${firstLine(e)}`); try { failStreak(pool, dataDir, mode, e); } catch {} }
   }
-  if (failed) throw new Error(`${failed} of ${pools.length} pool(s) failed`);
+  if (failed) throw Object.assign(new Error(`${failed} of ${pools.length} pool(s) failed`), { perPool: true });   // each pool's own streak alerts
+}
+
+/** The whole run failing before any pool (a key file, chains.json, the RPC): the same 1 h streak, one file per mode
+ *  (audit 11-22 second review R8). A run whose only failures are pools' own is not counted here: their streaks alert. */
+function runStreak(err) {
+  const dir = path.join(process.env.DATA_DIR ?? path.join(process.cwd(), "data"), "perp", CHAIN_KEY);
+  const f = path.join(dir, `failing-run-${process.argv[2] ?? "run"}.json`);
+  if (!err || err.perPool) { try { fs.unlinkSync(f); } catch {} return; }
+  fs.mkdirSync(dir, { recursive: true });
+  let st = null; try { st = JSON.parse(fs.readFileSync(f, "utf8")); } catch {}
+  const now = Math.floor(Date.now() / 1000);
+  if (!st?.since) st = { since: now };
+  st.last = firstLine(err).replace(/https?:\/\/\S+/g, "<url>");
+  writeAtomic(f, JSON.stringify(st));
+  if (now - st.since >= FAIL_ALERT_SECS) notify(`Perp ${CHAIN_KEY}: every ${process.argv[2] ?? "run"} failing for ${Math.round((now - st.since) / 60)} min`, st.last, `perp-failing-run-${process.argv[2] ?? "run"}`, 360);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  main().then(async () => { await notifyFlush(); process.exit(0); }, async (e) => { log(null, `FAILED: ${firstLine(e)}`); await notifyFlush(); process.exit(1); });
+  main().then(async () => { try { runStreak(null); } catch {} await notifyFlush(); process.exit(0); },
+    async (e) => { log(null, `FAILED: ${firstLine(e)}`); try { runStreak(e); } catch {} await notifyFlush(); process.exit(1); });
 }

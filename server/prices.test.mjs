@@ -39,8 +39,9 @@ test("closes differ inside one range: settles on the primary and says so", async
   assert.equal(ev.ok, true); assert.equal(ev.detail.crossCheck.sameRange, true); assert.equal(ev.detail.crossCheck.agreed, false);
 });
 test("closes in different ranges: held as a disagreement, never proposed", async () => {
-  // a bend of 5 % of the close, in whichever direction leaves the day's range (the day's own move decides)
-  const far = agreed.value > -12_500 ? -agreed.detail.close * 0.05 : agreed.detail.close * 0.05;
+  // a bend that always leaves the day's range: down 5 % of the close from any range but the lowest; from the lowest
+  // (a big drop) up to about +1 %, a range above it — a fixed +5 % stayed inside it on a −7.6 % day (TSLA, 2026-11-20)
+  const far = agreed.value > -12_500 ? -agreed.detail.close * 0.05 : agreed.detail.close * (-agreed.value / 1e6 + 0.01);
   bendNasdaq(far); const ev = await closeMove("TSLA", DAY, NOW, THR); globalThis.fetch = realFetch;
   assert.equal(ev.ok, false); assert.equal(ev.disagree, true); assert.match(ev.reason, /different ranges/);
 });
