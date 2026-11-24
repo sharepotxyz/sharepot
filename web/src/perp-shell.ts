@@ -2,8 +2,8 @@
 // four pages, the chain switch, language, network badge, wallet), the ☰ menu on narrow screens, the footer (contracts,
 // source verification, links) and the feedback button. Pages call mountShell(<their name>) and listen with onSession.
 import { connectWallet, devWallet, listWallets, type Session } from "./wallet-evm";
-import { LANGS, setLang } from "./i18n";
-import { POOLS, PL, TESTNET, addrLink, erc20, errText, esc, geo, noSend, pc, pt, tok, txLink } from "./perp-core";
+import { setLang } from "./i18n";
+import { PLANGS, POOLS, PL, TESTNET, addrLink, erc20, errText, esc, geo, noSend, pc, pt, tok, txLink } from "./perp-core";
 import { ICON_BASE, ICON_GLOBE, ICON_ROBINHOOD, iconSolana } from "./perp-icons";
 
 const LOGO = `<svg viewBox="0 0 64 64" aria-hidden="true"><rect width="64" height="64" rx="16" fill="#5b4bdb"/><g fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round"><path d="M24 23c-4-4 4-7 0-11"/><path d="M40 23c-4-4 4-7 0-11"/></g><rect x="6" y="30" width="52" height="8" rx="4" fill="#fff"/><path d="M12 30h40v8a16 16 0 0 1-16 16h-8a16 16 0 0 1-16-16z" fill="#fff"/><path d="M17 36h13v13.5a11 11 0 0 1-13-11z" fill="#ffd166"/><path d="M47 36H34v13.5a11 11 0 0 0 13-11z" fill="#f2545b"/></svg>`;
@@ -111,7 +111,7 @@ function renderWallet() {
 }
 
 // ---------------------------------------------------------------- top bar
-const langOptions = () => LANGS.map(([k, n]) => `<option value="${k}"${k === PL ? " selected" : ""}>${esc(n)}</option>`).join("");
+const langOptions = () => PLANGS.map(([k, n]) => `<option value="${k}"${k === PL ? " selected" : ""}>${esc(n)}</option>`).join("");
 // the chains as their marks only (name on hover and for screen readers), this one ringed; wraps as the list grows
 const chainGrid = () => `<div class="pchaingrid" role="group" title="${esc(pt("nav.chainsTitle"))}">${CHAINS.map((c) => c.href
   ? `<a class="pchain ${esc(c.key)}" href="${esc(c.href)}" aria-label="${esc(c.name)}" title="${esc(c.name)}">${c.icon()}</a>`
@@ -129,7 +129,7 @@ function renderLangMenu() {
   box.querySelector(".menu")?.remove();
   if (isOpen("lang")) {
     const m = document.createElement("div"); m.className = "menu plangmenu";
-    m.innerHTML = LANGS.map(([k, n]) => `<button data-lang="${esc(k)}"${k === PL ? ' class="on" aria-current="true"' : ""}>${esc(n)}</button>`).join("");
+    m.innerHTML = PLANGS.map(([k, n]) => `<button data-lang="${esc(k)}"${k === PL ? ' class="on" aria-current="true"' : ""}>${esc(n)}</button>`).join("");
     m.querySelectorAll<HTMLButtonElement>("button[data-lang]").forEach((b) => (b.onclick = () => setLang(b.dataset.lang!)));
     box.appendChild(m);
   }
@@ -165,7 +165,7 @@ export function mountShell(page: PageName) {
       ${PAGES.map(([k, href, key]) => `<a class="navlink${k === page ? " on" : ""}" href="${href}"${k === page ? ' aria-current="page"' : ""}>${esc(pt(key))}</a>`).join("")}
       <div class="navmorebox" id="pnavbox"><button class="navmore" id="pnavbtn" aria-label="${esc(pt("nav.menu"))}" aria-expanded="false">☰</button></div>
       <div class="pchainbox" id="pchainbox"><button class="piconbtn pchainbtn" id="pchainbtn" aria-label="${esc(pt("nav.chain"))}: ${esc(HERE.name)}" title="${esc(pt("nav.chain"))}: ${esc(HERE.name)}" aria-expanded="false">${HERE.icon()}<span class="pcaret" aria-hidden="true">▾</span></button></div>
-      <div class="plangbox" id="plangbox"><button class="piconbtn" id="plangbtn" aria-label="${esc(pt("lang.label"))}" title="${esc(pt("lang.label"))}: ${esc(LANGS.find(([k]) => k === PL)?.[1] ?? PL)}" aria-expanded="false">${ICON_GLOBE}</button></div>
+      <div class="plangbox" id="plangbox"><button class="piconbtn" id="plangbtn" aria-label="${esc(pt("lang.label"))}" title="${esc(pt("lang.label"))}: ${esc(PLANGS.find(([k]) => k === PL)?.[1] ?? PL)}" aria-expanded="false">${ICON_GLOBE}</button></div>
       <span class="netbadge">${esc(TESTNET ? pt("net.test") : pt("net.main"))}</span>
       <div id="pwallet" class="walletbox"></div>
     </nav></div>`;
@@ -177,7 +177,8 @@ export function mountShell(page: PageName) {
   if (foot) foot.innerHTML = `<p>${esc(pt("foot"))}</p>
     <p>${pt("foot.issuer")}</p>
     <p>${esc(pt("foot.contracts"))}</p>${POOLS.map((p) => `<p class="pfootc"><b>${esc(p.symbol)}</b> ${esc(pt("foot.pool"))} ${addrLink(p.address)} · ${esc(pt("foot.token", { tok: p.tokenSymbol }))} ${addrLink(p.token)} · <a href="https://repo.sourcify.dev/84532/${esc(p.address)}" target="_blank" rel="noopener">${esc(pt("foot.verified"))}</a></p>`).join("")}
-    <p class="social"><a href="https://x.com/sharepotxyz" target="_blank" rel="noopener">X @sharepotxyz</a> · <a href="https://github.com/sharepotxyz/sharepot" target="_blank" rel="noopener">GitHub</a> · <a href="mailto:hello@sharepot.xyz">hello@sharepot.xyz</a></p>`;
+    <p class="social"><a href="https://x.com/sharepotxyz" target="_blank" rel="noopener">X @sharepotxyz</a> · <a href="https://github.com/sharepotxyz/sharepot" target="_blank" rel="noopener">GitHub</a> · <a href="mailto:hello@sharepot.xyz">hello@sharepot.xyz</a> · <a href="#" id="pfootfb">${esc(pt("fb.button"))}</a></p>`;
+  const ffb = document.getElementById("pfootfb"); if (ffb) ffb.onclick = (e) => { e.preventDefault(); openFeedback(); };
   mountFeedback();
   renderWallet();
   // reconnect the last wallet
@@ -195,7 +196,10 @@ function mountFeedback() {
   const btn = document.createElement("button"); btn.id = "fbbtn"; btn.className = "fbbtn"; btn.setAttribute("aria-label", pt("fb.button"));
   btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v11H8l-4 4z"/></svg><span>${esc(pt("fb.button"))}</span>`;
   document.body.appendChild(btn);
-  btn.onclick = () => {
+  btn.onclick = () => openFeedback();
+}
+/** The feedback box: from the floating button (wide screens) or the footer link (every width). */
+export function openFeedback() {
     if (document.getElementById("fbbox")) return;
     const box = document.createElement("div"); box.id = "fbbox"; box.className = "fbbox";
     box.innerHTML = `<div class="fbhead"><b>${esc(pt("fb.head"))}</b><button class="ghost" id="fbx" aria-label="${esc(pt("fb.close"))}">✕</button></div>
@@ -219,7 +223,6 @@ function mountFeedback() {
         setTimeout(() => box.remove(), 2500);
       } catch (e) { note.textContent = pt("fb.fail", { err: errText(e) }); send.disabled = false; send.textContent = pt("fb.send"); }
     };
-  };
 }
 
 /** Pages that send transactions: false for visitors the server flagged (and nothing is sent without a wallet). */

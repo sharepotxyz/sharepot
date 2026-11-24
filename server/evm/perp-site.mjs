@@ -46,6 +46,9 @@ const isBlocked = (req) => BLOCKED.has(country(req));
 // Caddy overwrites CF-Connecting-IP with the client IP it trusts (only Cloudflare's ranges reach this site)
 const clientIp = (req) => String(req.headers["cf-connecting-ip"] ?? req.socket.remoteAddress ?? "?").trim();
 const isAddr = (s) => typeof s === "string" && /^0x[0-9a-fA-F]{40}$/.test(s);
+const NOT_FOUND_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>SharePot Perp · Page not found</title><link rel="icon" href="/favicon.svg">
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f6f7f9;color:#111827;font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}main{text-align:center;padding:24px}h1{font-size:28px;margin:0 0 8px}a{color:#5b4bdb;font-weight:600}</style></head>
+<body><main><h1>Page not found</h1><p>This address is not a page of SharePot Perp.</p><p><a href="/">Go to the pools</a> · <a href="/docs">How it works</a></p></main></body></html>`;
 const SEC = { "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY", "x-content-type-options": "nosniff", "referrer-policy": "strict-origin-when-cross-origin" };
 const json = (res, code, body, extra = {}) => { res.writeHead(code, { "content-type": "application/json", "cache-control": "no-store", ...SEC, ...extra }); res.end(JSON.stringify(body)); };
 const readBody = (req, max = 2048) => new Promise((ok, err) => { let b = ""; req.on("data", (c) => { b += c; if (b.length > max) { err(Object.assign(new Error("body too large"), { status: 413 })); req.destroy(); } }); req.on("end", () => ok(b)); req.on("error", err); });
@@ -267,6 +270,8 @@ function serveStatic(req, res, p) {
   const file = path.resolve(STATIC, "." + rel), ext = path.extname(file).toLowerCase();
   if (!rel || rel.includes("\0") || !file.startsWith(STATIC + path.sep) || (ext === ".html" && !HTML_OK.has(path.basename(file))) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
     // never kept by Cloudflare (it would keep a .js 404 for minutes): a file missing for a moment stays missing that long
+    // a page address gets a page with a way back; a missing file (an old asset) a bare 404
+    if (!ext || ext === ".html") { res.writeHead(404, { "content-type": TYPES[".html"], "cache-control": "no-store", ...SEC }); return res.end(NOT_FOUND_HTML); }
     res.writeHead(404, { "content-type": "text/plain", "cache-control": "no-store", ...SEC }); return res.end("not found");
   }
   if (ext === ".html") {

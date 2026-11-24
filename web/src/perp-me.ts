@@ -22,6 +22,9 @@ type PoolView = { pool: Pool; st: St; mine: Mine; days: LedgerDay[] };
 const fromUrl = new URLSearchParams(location.search).get("address");
 const viewing = (): string | null => (hex(fromUrl, 40) ? fromUrl : getSession()?.address ?? null);
 let views: PoolView[] | null = null, act: Act | null = null, err = "", loading = false, showAll = false;
+/** The site's history index failed (or answered nonsense): positions still come from the chain, results and history
+ *  wait for the next good read (audit 11-22 F031). */
+let actErr = "";
 const SHOWN = 20;   // history rows before "show all"
 
 // ---- the history's search box and chips: what they hold lives across the minute's reloads
@@ -47,18 +50,29 @@ async function load() {
   const who = viewing();
   if (!who) { render(); return; }
   loading = true; render();
+  // the history index (the site's API) and the positions (the chain) fail apart: one never takes the other down
+  let a: Act | null = null, aErr = "";
   try {
-    const a = await api<Act>(`/activity/${who}`);
+    const r = await api<Act>(`/activity/${who}`);
+    if (!Array.isArray((r as any)?.rows)) throw new Error("unexpected response from /api/activity");
+    a = r;
+  } catch (e: any) { aErr = String(e?.message ?? e); }
+  try {
+    const rows = a?.rows ?? (act?.address?.toLowerCase() === who.toLowerCase() ? act.rows : []);
     // every pool, the retired ones too: whoever is still in one sees it here, with the way out
     const vs = await Promise.all(ALL_POOLS.map(async (pool) => {
       const key = pool.address.toLowerCase();
-      const [st, d] = await Promise.all([loadState(pool), api<{ days: LedgerDay[] }>(`/days?pool=${key}`)]);
-      const exitDays = a.rows.filter((r) => r.pool === key && r.ev === "RedeemRequested").map((r) => r.day);
-      return { pool, st, mine: await loadMine(st, who as Address, exitDays), days: d.days };
+      const [st, d] = await Promise.all([loadState(pool), api<{ days: LedgerDay[] }>(`/days?pool=${key}`).catch(() => ({ days: [] as LedgerDay[] }))]);
+      const exitDays = rows.filter((r) => r.pool === key && r.ev === "RedeemRequested").map((r) => r.day);
+      return { pool, st, mine: await loadMine(st, who as Address, exitDays), days: Array.isArray(d?.days) ? d.days : [] };
     }));
     if (who !== viewing()) return;   // another wallet meanwhile
-    act = a; views = vs; err = "";
+    views = vs; err = "";
   } catch (e: any) { err = String(e?.message ?? e); }
+  if (who !== viewing()) return;
+  // a failed index read keeps the last good one for this wallet (shown with its time); with none, results are hidden
+  if (a) { act = a; actErr = ""; }
+  else { actErr = aErr; if (!(act && act.address?.toLowerCase() === who.toLowerCase())) act = { address: who, indexedAt: null, pools: {}, rows: [] }; }
   loading = false; render();
 }
 
@@ -90,9 +104,16 @@ function render() {
   const root = document.getElementById("perp")!;
   const who = viewing();
   const kind = who ? oursKind(who) : null;
-  const head = `<section class="phero" id="pmehead"><h1>${esc(pt("me.title"))}</h1>${who ? `<p>${esc(pt(fromUrl ? "me.viewing" : "me.yours", { addr: short(who) }))}</p>` : ""}${kind ? `<div class="card pwarn">${esc(pt(kind === "bot" ? "me.isBot" : "me.isTreasury"))}</div>` : ""}</section>`;
+  const other = !!who && hex(fromUrl, 40) && who.toLowerCase() !== (getSession()?.address ?? "").toLowerCase();
+  const bad = fromUrl != null && !hex(fromUrl, 40) ? `<div class="card pwarn">${esc(pt(who ? "me.badAddr" : "me.badAddrNone", { a: fromUrl.slice(0, 60) }))}</div>` : "";
+  const head = `<section class="phero" id="pmehead"><h1>${esc(pt(other ? "me.titleOther" : "me.title"))}</h1>${bad}${who ? `<p>${esc(pt(hex(fromUrl, 40) ? "me.viewing" : "me.yours", { addr: short(who) }))}</p>` : ""}${kind ? `<div class="card pwarn">${esc(pt(kind === "bot" ? "me.isBot" : "me.isTreasury"))}</div>` : ""}</section>`;
   if (!who) { root.innerHTML = head + `<div class="card"><p class="note">${esc(pt("me.connect"))}</p></div>`; return; }
-  if (!act || !views) { root.innerHTML = head + `<div class="note">${err ? esc(pt("err", { err })) : "…"}</div>`; return; }
+  if (!act || !views) {
+    root.innerHTML = head + (err ? `<div class="card pwarn perr" title="${esc(err)}"><p>${esc(pt("me.posErr"))}</p><button class="ghost" id="pretry">${esc(pt("err.retry"))}</button></div>` : `<div class="note">${esc(pt("loading"))}</div>`);
+    const rb = document.getElementById("pretry"); if (rb) rb.onclick = () => { err = ""; load(); };
+    return;
+  }
+  const noHist = !!actErr && !act.rows.length;   // no history at all: a result from no cash flows would be wrong
   const rows = act.rows.filter((r) => r.ev !== "EntryBooked" && !(r.ev === "Claimed" && (!r.tokens || r.tokens === "0")));   // bookings are the contract's bookkeeping
   const books = views.map((v) => ({ v, ...ledgerOf(v, act!.rows) }));
   // a retired pool's link opens that pool by address: there its holders exit and withdraw
@@ -107,17 +128,17 @@ function render() {
       if (!p.shares && !p.pending.length && !ex.length) return "";
       const lines = [
         p.shares ? `<b>${esc(pt("me.hold"))}</b> ${money(p.tokens)}${effBlock(t, fillOf(t, e), p.tokens, px, v.pool.symbol, v.pool.tokenSymbol)}` : "",
-        ...p.pending.map((q) => `<b>${esc(pt("me.waitIn"))}</b> ${tok(q.amount)} ${T} <span class="note">· ${esc(fmtTime(q.cutoff))}</span>${why(waitWhy(q.ep, "in", v.st.now, v.st.dispute))}`),
+        ...p.pending.map((q) => `<b>${esc(pt("me.waitIn"))}</b> ${tok(q.amount)} ${T} <span class="note">· ${esc(fmtTime(q.cutoff))}</span>${!other && v.st.open && q.day === v.st.open.day && q.cutoff > v.st.now ? ` <a href="${href(v.pool)}">${esc(pt("me.cancelLink"))}</a>` : ""}${why(waitWhy(q.ep, "in", v.st.now, v.st.dispute))}`),
         ...ex.map((x) => x.ready ? `<b>${esc(pt("me.ready"))}</b> ${tok(x.tokens)} ${T} <a href="${href(v.pool)}">${esc(pt("me.withdraw"))}</a>`
           : `<b>${esc(pt("me.waitOut"))}</b> ${esc(pt("me.about"))} ${tok(x.tokens)} ${T} <span class="note">· ${esc(fmtTime(x.cutoff))}</span>${why(waitWhy(x.ep, "out", v.st.now, v.st.dispute))}`)].filter(Boolean);
       const r = result[t.i];
-      const pnl = !r.filled ? `<span class="note">${esc(pt("me.notYet"))}</span>`
+      const pnl = noHist || !r ? `<span class="note">—</span>` : !r.filled ? `<span class="note">${esc(pt("me.notYet"))}</span>`
         : `${signedTok(r.total)} ${T}${px ? ` <span class="note">≈ ${r.total < 0 ? "−" : ""}${usd((Math.abs(r.total) / 1e8) * px)}</span>` : ""}
           <div class="note pmeparts">${pt("me.parts", { p: signedTok(r.price), f: signedTok(r.funding), fee: signedTok(-r.fees) })}</div>`;
       return `<tr><td class="nw"><a class="pmepos" href="${href(v.pool)}">${label(v, t.i)}</a></td><td>${lines.map((l) => `<div>${l}</div>`).join("")}</td><td${r.filled ? ` data-l="${esc(pt("me.colPnl"))}"` : ' class="nopnl"'}>${pnl}</td></tr>`;
     }).filter(Boolean);
   });
-  const positions = `<section class="card" id="pmepos"><h2>${esc(pt("me.pos"))}</h2>${posRows.length ? `<div class="ptbl"><table class="tbl pmetbl"><thead><tr><th>${esc(pt("me.colPos"))}</th><th>${esc(pt("me.colNow"))}</th><th>${esc(pt("me.colPnl"))}</th></tr></thead><tbody>${posRows.join("")}</tbody></table></div>
+  const positions = `<section class="card" id="pmepos"><h2>${esc(pt(other ? "me.posOther" : "me.pos"))}</h2>${posRows.length ? `<div class="ptbl"><table class="tbl pmetbl"><thead><tr><th>${esc(pt("me.colPos"))}</th><th>${esc(pt("me.colNow"))}</th><th>${esc(pt("me.colPnl"))}</th></tr></thead><tbody>${posRows.join("")}</tbody></table></div>
     <p class="note">${esc(pt("me.pnlNote"))}</p>` : `<p class="note">${esc(pt("me.none"))}</p>`}</section>`;
 
   // ---- history: the wallet's own requests and what each close did to it, newest first
@@ -143,11 +164,11 @@ function render() {
   }
   hist.sort((a, b) => b.ts - a.ts || b.order - a.order);
   if (fPool && !hist.some((h) => poolKey(h.v) === fPool)) fPool = "";   // a stock this wallet has no rows in
-  const idx = `<p class="note" id="pmeidx">${act.indexedAt ? esc(pt("me.indexed", { time: fmtTime(act.indexedAt) })) : ""}</p>`;
+  const idx = `<p class="note" id="pmeidx">${actErr && hist.length ? `<span class="warn">${esc(pt("me.histStale"))}</span> ` : ""}${act.indexedAt ? esc(pt("me.indexed", { time: fmtTime(act.indexedAt) })) : ""}</p>`;
   const bar = `<div class="pmefbar"><label class="pmeq"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>`
     + `<input type="search" id="pmeq" value="${esc(q)}" placeholder="${esc(pt("me.f.q"))}" aria-label="${esc(pt("me.f.q"))}" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search"></label>`
     + `<div id="pmechips">${chipsHtml()}</div></div>`;
-  const history = `<section class="card" id="pmehist"><h2>${esc(pt("me.log"))}</h2>${hist.length ? `${bar}<div id="pmehbody">${histBody()}</div>` : `<p class="note">${esc(pt("me.noRows"))}</p>`}${idx}</section>`;
+  const history = `<section class="card" id="pmehist"><h2>${esc(pt("me.log"))}</h2>${hist.length ? `${bar}<div id="pmehbody">${histBody()}</div>` : `<p class="note">${esc(pt(actErr ? "me.histErr" : "me.noRows"))}</p>`}${idx}</section>`;
   const busy = `<p class="note" id="pmeload"${loading ? "" : " hidden"}>…</p>`;
 
   // a reload (every minute) leaves the search box itself in place, so its focus, its caret, a word half typed with

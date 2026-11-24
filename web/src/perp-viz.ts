@@ -24,7 +24,7 @@ export const balanceChart = (L: number, S: number, M: number, usdOf: (x: number)
   return `<div class="pbal" title="${esc(pt("viz.balTitle", { m: usdOf(M) }))}">
     <div class="pbls">${head("l", pt("mk.long"), L)}${head("s", pt("mk.short"), S)}</div>
     <div class="pbt">${side("l", L)}${side("s", S)}</div>
-    <div class="pkey"><span><i class="sw solid"></i>${esc(pt("viz.keyMatched", { usd: usdOf(M) }))}</span><span><i class="sw faded"></i>${esc(pt("viz.keyUnmatched"))}</span></div>
+    <div class="pkey"><span><i class="sw lsolid"></i>${esc(pt("viz.keyMatched", { usd: usdOf(M) }))}</span><span><i class="sw lfaded"></i>${esc(pt("viz.keyUnmatched"))}</span></div>
   </div>`;
 };
 

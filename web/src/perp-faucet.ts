@@ -10,6 +10,9 @@ import { askGas, health, mountShell, onHealth, onSession, refreshWallet } from "
 let session: Session | null = null;
 /** Each pool's stock token in the wallet (POOLS order; null = not read yet), ETH for fees. */
 let bals: (bigint | null)[] = POOLS.map(() => null), eth: bigint | null = null, busy = false, msg = "";
+/** This wallet has had its test ETH for today (claimed here, or the faucet said so): the button rests until reload. */
+let gasDone = false;
+const TODAY_LIMIT = /already received test ETH today/i;
 
 async function refresh() {
   const s = session;
@@ -34,7 +37,7 @@ function render() {
     ? `<div class="fcard"><div class="note">${esc(pt("fc.connect"))}</div><button class="primary" id="fconnect">${esc(pt("wallet.connect"))}</button></div>`
     : `<div class="fcard">
       <div><div class="tlabel"><span>${esc(pt("fc.eth"))}</span>${have(eth == null ? null : `${(Number(eth) / 1e18).toFixed(4)} ETH`)}</div>
-        <div class="prow" style="margin-top:8px">${health.faucet ? `<button id="pgas" ${off ? "disabled" : ""}>${esc(pt("faucet.gas"))}</button>` : `<a class="btn" href="${esc(httpsUrl(PERP.gasFaucet))}" target="_blank" rel="noopener">${esc(pt("faucet.gas"))}</a>`}</div></div>
+        <div class="prow" style="margin-top:8px">${health.faucet ? `<button id="pgas" ${off || gasDone ? "disabled" : ""}>${esc(pt("faucet.gas"))}</button>` : `<a class="btn" href="${esc(httpsUrl(PERP.gasFaucet))}" target="_blank" rel="noopener">${esc(pt("faucet.gas"))}</a>`}</div></div>
       ${POOLS.map((p, i) => `<div><div class="tlabel"><span>${esc(pt("fc.tok", { tok: p.tokenSymbol }))}</span>${have(bals[i] == null ? null : `${tok(bals[i]!)} ${p.tokenSymbol}`)}</div>
         <div class="prow" style="margin-top:8px"><button data-mint="${i}" ${off ? "disabled" : ""}>${esc(pt("faucet.mint", { tok: p.tokenSymbol }))}</button></div></div>`).join("")}
       ${eth === 0n && health.faucet ? `<div class="note">${esc(pt("fc.autoGas"))}</div>` : ""}
@@ -49,7 +52,10 @@ async function run(fn: () => Promise<string>) {
   if (busy) return;
   busy = true; msg = esc(pt("ord.sending")); render();
   try { msg = await fn(); }
-  catch (e: any) { msg = e?.unconfirmed ? esc(pt("ord.notConfirmed")) + txLink(e.txid) : `<span class="warn">${esc(pt("err", { err: errText(e) }))}</span>`; }
+  catch (e: any) {
+    if (TODAY_LIMIT.test(errText(e))) { gasDone = true; msg = esc(pt("faucet.gasToday")); }
+    else msg = e?.unconfirmed ? esc(pt("ord.notConfirmed")) + txLink(e.txid) : `<span class="warn">${esc(pt("err", { err: errText(e) }))}</span>`;
+  }
   finally { busy = false; await refresh(); }
 }
 
@@ -65,13 +71,13 @@ function bind() {
     return pre + esc(pt("faucet.minted", { tok: p.tokenSymbol })) + txLink(h);
   })));
   const gasBtn = document.getElementById("pgas");
-  if (gasBtn) gasBtn.onclick = () => run(() => askGas(session!.address));
+  if (gasBtn) gasBtn.onclick = () => run(async () => { const r = await askGas(session!.address); gasDone = true; return r; });
 }
 
 // ---------------------------------------------------------------- boot
 mountShell("faucet");
 document.title = `SharePot Perp · ${pt("fc.h1")}`;
-onSession((s) => { session = s; msg = ""; bals = POOLS.map(() => null); eth = null; refresh(); });
+onSession((s) => { session = s; msg = ""; gasDone = false; bals = POOLS.map(() => null); eth = null; refresh(); });
 onHealth(() => render());
 render();
 setInterval(() => { if (!busy && document.visibilityState === "visible") refresh(); }, 30_000);

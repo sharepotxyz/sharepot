@@ -152,7 +152,7 @@ code.mono{font-size:12.5px;background:var(--surface2);padding:1px 5px;border-rad
 .ptile span{color:var(--dim);font-size:12px}.ptile b{font-size:17px;letter-spacing:-.01em}.ptile small{color:var(--dim);font-size:12px;line-height:1.35}
 .ptiles.sm{grid-template-columns:repeat(auto-fit,minmax(96px,1fr));margin:12px 0 8px}.ptiles.sm .ptile{padding:8px 10px}.ptiles.sm .ptile b{font-size:13px;font-weight:600;line-height:1.35}
 .sw{display:inline-block;width:10px;height:10px;border-radius:3px;flex:none;margin-right:6px;vertical-align:-1px}
-.sw.solid{background:var(--dim)}.sw.faded{background:color-mix(in srgb,var(--dim) 30%,transparent)}.sw.mark{width:2px;height:12px;border-radius:0;background:var(--fg)}
+.sw.solid{background:var(--dim)}.sw.lsolid{width:16px;background:linear-gradient(90deg,var(--gain) 50%,var(--drop) 50%)}.sw.lfaded{width:16px;background:linear-gradient(90deg,color-mix(in srgb,var(--gain) 25%,transparent) 50%,color-mix(in srgb,var(--drop) 25%,transparent) 50%)}.sw.faded{background:color-mix(in srgb,var(--dim) 30%,transparent)}.sw.mark{width:2px;height:12px;border-radius:0;background:var(--fg)}
 .f-l{background:var(--gain)}.f-s{background:var(--drop)}.f-h{background:var(--accent)}
 .pkey{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:8px;font-size:12px;color:var(--dim)}.pkey span{display:inline-flex;align-items:center}
 /* the pool: longs left of the centre, shorts right; solid = matched (the same on both sides), faded = no one across */
@@ -189,9 +189,17 @@ code.mono{font-size:12.5px;background:var(--surface2);padding:1px 5px;border-rad
 .peb i{background:color-mix(in srgb,var(--dim) 28%,transparent)}
 .pekey{display:grid;gap:2px;font-size:13px}.pekey>div{display:flex;align-items:baseline;flex-wrap:wrap;column-gap:4px}.pekey .sw{align-self:center}
 .pesum{margin-top:4px;font-size:13px;font-weight:600}
-/* the feedback button: a small round one in the corner on anything narrower than the full top bar (as a pill it sat on the entry card) */
-@media(max-width:1200px){.fbbtn{right:auto;left:14px;bottom:14px;width:44px;height:44px;padding:0;justify-content:center}.fbbtn span{display:none}.fbbtn svg{width:20px;height:20px}body{padding-bottom:64px}}
+/* the feedback button floats only where the page has a margin wide enough to hold it (content is 1160 px wide): narrower,
+   it sat on the entry card (1280) or on labels in the corner (900, phones), so there the footer link opens the same box */
+@media(max-width:1439px){.fbbtn{display:none}}
+/* a Short or Hedge entry the long side cannot cover acts like the stock itself: said first, above the preview */
+.pdecay{font-size:13px;color:var(--dim);margin-top:2px}.pdecay summary{cursor:pointer;list-style:none;text-decoration:underline dotted;text-underline-offset:3px;width:max-content;max-width:100%}.pdecay summary::-webkit-details-marker{display:none}.pdecay[open] .note{margin-top:4px}
+.pacts{margin:10px 0 4px;line-height:1.45;padding:10px 12px;border-radius:10px;border:1px solid color-mix(in srgb,var(--drop) 35%,transparent);background:color-mix(in srgb,var(--drop) 7%,transparent);color:var(--fg)}.pacts b{display:block;margin-bottom:2px;color:var(--drop)}
 /* how-it-works tables on phones: scroll sideways rather than squeeze a column to one character */
 @media(max-width:640px){.pdoc .tbl{display:block;overflow-x:auto}.pdoc .tbl th,.pdoc .tbl td{min-width:9em}.pdoc .tbl td:first-child,.pdoc .tbl th:first-child{white-space:nowrap;min-width:0}}
 @media(max-width:640px){.psteps{grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.psteps li{grid-template-columns:minmax(0,1fr);justify-items:start;row-gap:4px;padding:8px 9px}.psteps i{grid-row:auto;width:22px;height:22px;font-size:12px}.psteps b{font-size:13px;line-height:1.3}.psteps small{display:none}}
 @container (max-width:520px){.ptiles:not(.sm){grid-template-columns:1fr 1fr}.ptiles:not(.sm)>.ptile:nth-child(3){grid-column:1 / -1}}
+/* a first-time visitor needs test tokens before anything else works: the way there sits under the headline (audit 11-22 F034) */
+.pfaucetcta{display:inline-flex;align-items:center;margin-top:12px;font-weight:600;border-color:var(--accent);color:var(--accent);background:var(--accent-bg)}
+/* a read that failed: said in words, with a retry (audit 11-22 F031–F033) */
+.perr{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.perr p{margin:0;flex:1 1 260px}

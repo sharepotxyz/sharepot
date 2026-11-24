@@ -46,7 +46,8 @@ function dayCard(d: Day, prevSettled: Day | undefined, now: number) {
   if (d.state === PROPOSED && d.disputeEnds) row("h.dispute", esc(pt("h.disputeUntil", { time: fmtTime(d.disputeEnds), left: left(d.disputeEnds, now) })));
   if (d.state === SETTLED) {
     const L = Number(d.longExp ?? 0) / 1e8, S = Number(d.shortExp ?? 0) / 1e8, up = d.prevValue ? Number(d.value) > Number(d.prevValue) : false;
-    row("h.sides", esc(pt("h.sidesVal", { l: L.toLocaleString("en-US", { maximumFractionDigits: 2 }), s: S.toLocaleString("en-US", { maximumFractionDigits: 2 }), tok: TOK })));
+    const px = Number(d.value) / 1e8, usd0 = (x: number) => "$" + Math.round(x * px).toLocaleString("en-US");
+    row("h.sides", esc(pt("h.sidesVal", { l: L.toLocaleString("en-US", { maximumFractionDigits: 2 }), s: S.toLocaleString("en-US", { maximumFractionDigits: 2 }), tok: TOK, lu: usd0(L), su: usd0(S) })));
     const moved = BigInt(d.moved ?? "0"), fund = BigInt(d.funding ?? "0");
     row("h.moved", moved > 0n ? esc(pt(up ? "h.movedUp" : "h.movedDown", { n: tok(moved, 6), tok: TOK })) : esc(pt(d.prevValue ? "h.movedNone" : "h.movedFirst")));
     row("h.funding", fund > 0n ? esc(pt(L > S ? "h.fundLongs" : "h.fundShorts", { n: tok(fund, 6), tok: TOK })) : esc(pt("h.fundNone")));
@@ -64,7 +65,11 @@ function dayCard(d: Day, prevSettled: Day | undefined, now: number) {
 function render() {
   const root = document.getElementById("perp")!;
   const intro = `<section class="phero"><h1>${esc(pt("h.title"))}</h1><p>${esc(pt("h.intro"))}</p></section>` + (pool ? poolTabs(pool) : "");
-  if (!data || data.symbol !== pool?.symbol) { root.innerHTML = intro + `<div class="note">${err ? esc(pt("err", { err })) : "…"}</div>`; bindPoolTabs(switchPool); return; }
+  if (!data || (data.symbol && data.symbol !== pool?.symbol)) {
+    root.innerHTML = intro + (err ? `<div class="card pwarn perr" title="${esc(err)}"><p>${esc(pt("h.bad"))}</p><button class="ghost" id="pretry">${esc(pt("err.retry"))}</button></div>` : `<div class="note">${esc(pt("h.loading"))}</div>`);
+    bindPoolTabs(switchPool); const rb = document.getElementById("pretry"); if (rb) rb.onclick = () => { err = ""; render(); load(); };
+    return;
+  }
   const now = Date.now() / 1000, settled = data.days.filter((d) => d.state === SETTLED);
   const cards = data.days.map((d) => dayCard(d, settled.find((x) => x.day < d.day), now)).join("");
   root.innerHTML = intro + `<div class="phist">${cards || `<div class="note">${esc(pt("h.none"))}</div>`}</div>`
@@ -97,7 +102,11 @@ async function check(day: number) {
 
 async function load() {
   const p = pool; if (!p) return render();
-  try { const d = await api<Days>(`/days?s=${encodeURIComponent(p.symbol)}`); if (p !== pool) return; data = d; err = ""; } catch (e: any) { if (p === pool) err = String(e?.message ?? e); }
+  try {
+    const d = await api<Days>(`/days?s=${encodeURIComponent(p.symbol)}`);
+    if (!Array.isArray((d as any)?.days)) throw new Error("unexpected response from /api/days");   // HTML, {} or [] (audit 11-22 F033)
+    if (p !== pool) return; data = d; err = "";
+  } catch (e: any) { if (p === pool) err = String(e?.message ?? e); }
   render();
 }
 

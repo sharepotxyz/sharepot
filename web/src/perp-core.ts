@@ -11,7 +11,9 @@ import zhTW from "./perp-i18n/zh-TW.json";
 
 // ---------------------------------------------------------------- language
 const DICTS: Record<string, Record<string, string>> = { en, "zh-TW": zhTW };
-const known = (l: string | null | undefined) => (l && LANGS.some(([k]) => k === l) ? l : null);
+/** The languages this site is written in (the other SharePot sites have more; offering them here showed English). */
+export const PLANGS = LANGS.filter(([k]) => k in DICTS);
+const known = (l: string | null | undefined) => (l && PLANGS.some(([k]) => k === l) ? l : null);
 const cookieLang = document.cookie.match(/(?:^|;\s*)sp_lang=([\w-]+)/)?.[1];
 const navLang = /^zh-(tw|hk|mo|hant)/i.test(navigator.language) ? "zh-TW" : null;
 export const PL = known(new URLSearchParams(location.search).get("lang")) ?? known(cookieLang) ?? (LANG !== "en" ? LANG : null) ?? navLang ?? "en";
@@ -25,7 +27,8 @@ document.documentElement.lang = PL;
 export const esc = (v: unknown) => String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
 const H23 = { hourCycle: "h23" } as const;
 /** "Tue 17 Nov, 05:00 GMT+8": the viewer's own clock, zone named */
-export const fmtTime = (ts: number) => new Date(ts * 1000).toLocaleString(LOCALE, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZoneName: "shortOffset", ...H23 });
+// zh-TW writes the zone as "[GMT+1]": the brackets go
+export const fmtTime = (ts: number) => new Date(ts * 1000).toLocaleString(LOCALE, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZoneName: "shortOffset", ...H23 }).replace(/\[(GMT[^\]]*)\]/, "$1");
 /** "Fri 13 Nov": a New York session date, printed as that date (not shifted into the viewer's zone) */
 export const fmtDate = (ts: number) => new Date(ts * 1000).toLocaleDateString(LOCALE, { weekday: "short", day: "numeric", month: "short", timeZone: "America/New_York" });
 export const left = (ts: number, now: number) => { const s = ts - now; if (s <= 0) return pt("time.now"); const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.max(1, Math.floor((s % 3600) / 60)); return d > 0 ? pt("time.dh", { d, h }) : h > 0 ? pt("time.hm", { h, m }) : pt("time.m", { m }); };
@@ -36,8 +39,10 @@ export const spct = (f: number, dp = 2) => (f > 0 ? "+" : f < 0 ? "−" : "") + 
 export const DEC = 8, ONE = 10n ** BigInt(DEC);
 export const tok = (raw: bigint, dp = 4) => (Number(raw) / 1e8).toLocaleString("en-US", { maximumFractionDigits: dp });
 /** "12.5" → raw units, exact (no float); null if not a positive amount with ≤ 8 decimals */
+/** A positive amount written with digits and at most one dot; anything else (a comma included: "10,5" is 10.5 in much of
+ *  the world and 105 in the rest, and a wrong guess sends ten times the amount; "1e3", "-5", "abc") is null. */
 export function parseAmount(s: string): bigint | null {
-  const m = s.trim().replace(/,/g, "").match(/^(\d*)(?:\.(\d{0,8})\d*)?$/);
+  const m = s.trim().match(/^(\d*)(?:\.(\d{0,8})\d*)?$/);
   if (!m || (!m[1] && !m[2])) return null;
   const v = BigInt(m[1] || "0") * ONE + BigInt((m[2] ?? "").padEnd(DEC, "0") || "0");
   return v > 0n ? v : null;
@@ -84,7 +89,9 @@ export function setPickedPool(p: Pool) {
   try { localStorage.setItem(PICK_KEY, p.symbol); } catch {}
   const u = new URL(location.href); u.searchParams.delete("pool"); u.searchParams.set("s", p.symbol); history.replaceState(null, "", u);
 }
-const listOf = (items: string[], type: "conjunction" | "disjunction") => { try { return new (Intl as any).ListFormat(LOCALE, { style: "long", type }).format(items) as string; } catch { return items.join(", "); } };
+// a space between a Latin word and a Chinese one ("TSLA 或 META", not "TSLA或META")
+const cjkSpace = (s: string) => s.replace(/([A-Za-z0-9])([\u4e00-\u9fff])/g, "$1 $2").replace(/([\u4e00-\u9fff])([A-Za-z0-9])/g, "$1 $2");
+const listOf = (items: string[], type: "conjunction" | "disjunction") => { try { return cjkSpace(new (Intl as any).ListFormat(LOCALE, { style: "long", type }).format(items) as string); } catch { return items.join(", "); } };
 /** "NVDA, TSLA and META" (or "…or META") in the page's language. */
 export const symbolList = (type: "conjunction" | "disjunction" = "conjunction") => listOf(POOLS.map((p) => p.symbol), type);
 /** "NVDAc, TSLAc and METAc" in the page's language. */
