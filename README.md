@@ -1,3 +1,108 @@
+# SharePot Perp — perpetual pools for tokenized stocks on Base
+
+**Base Stocks Maxxing Season · Programmable Stock Markets track · live on Base Sepolia: <https://base.sharepot.xyz>**
+
+Put a stock token in — NVDA, TSLA or META, as Coinbase-style tokenized stocks — and choose what it does:
+**Long 2x**, **Hedge** (its dollar value locked), **Short 1x** or **Short 2x**. Once a day, at the official close,
+the side that lost moves stock tokens to the side that won, and the crowded side pays the thin side a small funding.
+Nobody borrows, so nobody is ever liquidated; everything goes in and comes out as the stock token itself.
+
+Try it in two minutes, no wallet extension needed: open the site, pick *Test wallet (in this browser)*, get free test
+tokens on the Faucet page, then enter a tier. Every close the pools settled on, with the sha256 of its price evidence,
+is on <https://base.sharepot.xyz/history> — press *Check* and your browser re-hashes the evidence itself.
+
+## Built during the Quest Period (Nov 5 – Dec 5, 2026)
+
+New for this season (the first commit of it is `ff8850e`, 2026-11-17):
+
+- **The pool contract** — [`evm/src/SharePotPerp.sol`](evm/src/SharePotPerp.sol), tested in
+  [`evm/test/SharePotPerp.t.sol`](evm/test/SharePotPerp.t.sol); the test stock token
+  [`evm/src/MockStock.sol`](evm/src/MockStock.sol); deployment [`evm/script/DeployPerp.s.sol`](evm/script/DeployPerp.s.sol).
+- **Three pools on Base Sepolia** (below), source verified on Sourcify.
+- **The close job** — [`server/evm/perp.mjs`](server/evm/perp.mjs): schedules NYSE sessions, proposes each close with
+  the hash of its evidence, settles after the dispute window. Its `verify` mode runs on a second host with a
+  reject-only *guardian* key and rejects any close it cannot reproduce.
+- **The site** — `web/perp*.html`, `web/src/perp-*.ts`, served with a small API by
+  [`server/evm/perp-site.mjs`](server/evm/perp-site.mjs) (daily closes and their evidence, a wallet's activity, a
+  test-ETH faucet).
+- **Demo bots** that keep both sides of the testnet pools populated; the site labels every one of them as ours.
+
+Reused from our earlier SharePot (further down this page): the official-close module
+[`server/prices.mjs`](server/prices.mjs) (Yahoo + Nasdaq, the NYSE calendar), the EVM wallet layer and the alerting
+helpers.
+
+## Contracts (Base Sepolia, chain 84532)
+
+| Stock | Pool | Token |
+|---|---|---|
+| NVDA | [`0x834412789E5D585f4835670909f64Aaf6dacAC5F`](https://repo.sourcify.dev/84532/0x834412789E5D585f4835670909f64Aaf6dacAC5F) | [`0xdFe9b139A9DA77Fe3de7Bc4656443c934b497915`](https://repo.sourcify.dev/84532/0xdFe9b139A9DA77Fe3de7Bc4656443c934b497915) (NVDAc, test token) |
+| TSLA | [`0x859fAcbA35D439Bce7701b176A85065bAE2eB287`](https://repo.sourcify.dev/84532/0x859fAcbA35D439Bce7701b176A85065bAE2eB287) | [`0x1cC48bc9193f92aF35B254f4e0DE3fECD68712D6`](https://repo.sourcify.dev/84532/0x1cC48bc9193f92aF35B254f4e0DE3fECD68712D6) (TSLAc, test token) |
+| META | [`0x326C7f39F768112851867C580d6dA89B99B49a40`](https://repo.sourcify.dev/84532/0x326C7f39F768112851867C580d6dA89B99B49a40) | [`0x1E5C148E8953839C5fCa7C28223978ea874049DD`](https://repo.sourcify.dev/84532/0x1E5C148E8953839C5fCa7C28223978ea874049DD) (METAc, test token) |
+
+## How a day works
+
+1. **Before the bell** (16:00 New York) you request an entry or an exit; it fills at that day's close. An entry can be
+   taken back until the bell (the 0.1 % entry fee is kept).
+2. **About 30 minutes after the bell** the operator proposes the close with the sha256 of its price evidence: Yahoo's
+   final close, checked against Chainlink's feed for the stock **on Base mainnet** (within 1 %) and against Nasdaq's
+   official close once Nasdaq has published it. The operator can never propose a move over 50 % in a day.
+3. **For 6 hours** the close can be disputed: an independent host recomputes it and rejects it on-chain if it differs.
+4. **Settlement**: the matched part of each side moves by its tier's multiple of the stock's move; the crowded side pays
+   funding to the thin side. A tier can lose at most what it holds; it never goes negative.
+
+## Read the pool from your own code
+
+Every number the site shows comes from public view functions, so a wallet, a portfolio tracker, a vault that holds
+the Hedge tier, or a bot can read them directly. Tiers: `0` Long 2x, `1` Hedge, `2` Short 1x, `3` Short 2x; token
+amounts have 8 decimals; leverage and funding are in basis points (`16732` = 1.6732x long, `-20000` = 2x short).
+
+```bash
+POOL=0x834412789E5D585f4835670909f64Aaf6dacAC5F   # the NVDA pool
+RPC=https://sepolia.base.org
+WALLET=0x96490AB6A9A20bc342D06157Fb25fb9C24d035c3   # one of our labelled demo bots, in the Hedge tier
+
+SHARES=$(cast call $POOL "sharesOf(address,uint8)(uint256)" $WALLET 1 --rpc-url $RPC | awk '{print $1}')
+cast call $POOL "sharesToTokens(uint8,uint256)(uint256)" 1 $SHARES --rpc-url $RPC   # its NVDAc in the Hedge tier
+cast call $POOL "effectiveLeverageBps(uint8)(int256)" 0 --rpc-url $RPC              # Long 2x right now, matched part included
+cast call $POOL "fundingRateBps()(int256)" --rpc-url $RPC                           # > 0: longs pay shorts
+cast call $POOL "exposures()(uint256,uint256,uint256)" --rpc-url $RPC               # long, short, matched
+cast call $POOL "lastValue()(uint256)" --rpc-url $RPC                               # the last settled close, 8 decimals
+```
+
+The same from a web app, with [viem](https://viem.sh) and the ABI in [`evm/abi/SharePotPerp.json`](evm/abi/SharePotPerp.json):
+
+```ts
+import { createPublicClient, http } from "viem";
+import { baseSepolia } from "viem/chains";
+import abi from "./evm/abi/SharePotPerp.json" with { type: "json" };
+const wallet = "0x96490AB6A9A20bc342D06157Fb25fb9C24d035c3";   // any address
+const pool = "0x834412789E5D585f4835670909f64Aaf6dacAC5F";
+const client = createPublicClient({ chain: baseSepolia, transport: http() });
+const shares = await client.readContract({ address: pool, abi, functionName: "sharesOf", args: [wallet, 1] });
+const tokens = await client.readContract({ address: pool, abi, functionName: "sharesToTokens", args: [1, shares] });
+```
+
+## Run it
+
+```bash
+# contracts: 53 tests
+cd evm && forge install foundry-rs/forge-std --no-git && forge test
+# the close job end to end on a local anvil chain (Foundry + Node 22; reads real closes from Yahoo, Nasdaq and Chainlink)
+bash scripts/perp-e2e.sh
+```
+
+## Trust model, stated plainly
+
+The **operator** key schedules the trading days and proposes each close (never a move over 50 %). The **guardian** key,
+on another host, can only reject a proposal. The **admin** key can pause new requests, change the fee and funding rate
+within hard caps, and propose a close itself (the way out for a real day past 50 %); on a mainnet launch it would be a
+multisig with a timelock. The site does not let visitors in the United States transact. This is a testnet build: the
+tokens have no value.
+
+---
+
+## Earlier work — the SharePot daily pools (Solana devnet · Robinhood Chain testnet)
+
 # SharePot — bet with your stock tokens, get paid in them
 
 Daily parimutuel pools on US stocks where **the stake and the payout are the tokenized stock itself** — any issuer's

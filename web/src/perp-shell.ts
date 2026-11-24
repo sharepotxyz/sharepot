@@ -177,7 +177,7 @@ export function mountShell(page: PageName) {
   if (foot) foot.innerHTML = `<p>${esc(pt("foot"))}</p>
     <p>${pt("foot.issuer")}</p>
     <p>${esc(pt("foot.contracts"))}</p>${POOLS.map((p) => `<p class="pfootc"><b>${esc(p.symbol)}</b> ${esc(pt("foot.pool"))} ${addrLink(p.address)} · ${esc(pt("foot.token", { tok: p.tokenSymbol }))} ${addrLink(p.token)} · <a href="https://repo.sourcify.dev/84532/${esc(p.address)}" target="_blank" rel="noopener">${esc(pt("foot.verified"))}</a></p>`).join("")}
-    <p class="social"><a href="https://x.com/sharepotxyz" target="_blank" rel="noopener">X @sharepotxyz</a> · <a href="https://github.com/sharepotxyz/sharepot" target="_blank" rel="noopener">GitHub</a> · <a href="mailto:hello@sharepot.xyz">hello@sharepot.xyz</a> · <a href="#" id="pfootfb">${esc(pt("fb.button"))}</a></p>`;
+    <p class="social"><a href="https://x.com/sharepotxyz" target="_blank" rel="noopener">X @sharepotxyz</a> · <a href="https://github.com/sharepotxyz/sharepot/tree/base-perp" target="_blank" rel="noopener">GitHub</a> · <a href="mailto:hello@sharepot.xyz">hello@sharepot.xyz</a> · <a href="#" id="pfootfb">${esc(pt("fb.button"))}</a></p>`;
   const ffb = document.getElementById("pfootfb"); if (ffb) ffb.onclick = (e) => { e.preventDefault(); openFeedback(); };
   mountFeedback();
   renderWallet();
