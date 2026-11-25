@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
-import { nyseYearByRule, sessions, closeMove, chainMove, utcMidnight, addDays, worstPrimaryGap } from "./prices.mjs";
+import { nyseYearByRule, sessions, closeMove, chainMove, utcMidnight, addDays, worstPrimaryGap, nasdaqClose } from "./prices.mjs";
 
 // NYSE's own published lists (nyse.com/markets/hours-calendars and its archives), special closures left out
 const PUBLISHED = {
@@ -38,12 +38,40 @@ test("closes differ inside one range: settles on the primary and says so", async
   bendNasdaq(0.05); const ev = await closeMove("TSLA", DAY, NOW, THR); globalThis.fetch = realFetch;
   assert.equal(ev.ok, true); assert.equal(ev.detail.crossCheck.sameRange, true); assert.equal(ev.detail.crossCheck.agreed, false);
 });
+// A bend that always leaves the day's range: to a −5 % day from the top range, else to a +5 % day (the top range).
+// Sized from the close alone it did not: a fixed +5 % stayed inside the lowest range on a −7.6 % day (TSLA, 2026-11-20)
+// and −5 % of the close stayed inside the top range on a +11.5 % day (TSLA, 2026-11-23).
+const otherRangeBend = () => {
+  const target = agreed.value >= THR.at(-1) ? -50_000 : 50_000, d = agreed.detail;
+  return d.prevClose * (1 + target / 1e6) - d.dividend - d.close;
+};
 test("closes in different ranges: held as a disagreement, never proposed", async () => {
-  // a bend that always leaves the day's range: down 5 % of the close from any range but the lowest; from the lowest
-  // (a big drop) up to about +1 %, a range above it — a fixed +5 % stayed inside it on a −7.6 % day (TSLA, 2026-11-20)
-  const far = agreed.value > -12_500 ? -agreed.detail.close * 0.05 : agreed.detail.close * (-agreed.value / 1e6 + 0.01);
+  const far = otherRangeBend();
   bendNasdaq(far); const ev = await closeMove("TSLA", DAY, NOW, THR); globalThis.fetch = realFetch;
   assert.equal(ev.ok, false); assert.equal(ev.disagree, true); assert.match(ev.reason, /different ranges/);
+});
+
+// 2026-11-25: from 8 pm New York Nasdaq's quote page says "Closed" and its last sale is the last after-hours print, not
+// the 4 pm close (NVDA 2026-11-24: close 155.38, "last sale" 151.95; TSLA 383.5975). Taken as the close, it set the
+// two sources apart every night and sent a Telegram over a proposal that had already matched. Only Nasdaq's historical
+// table is a close; a day it does not carry yet is a day Nasdaq has nothing for.
+const nasdaqTableWithout = (usDay, lastSale) => async (url, init) => {
+  const u = String(url);
+  const json = (j) => new Response(JSON.stringify(j), { status: 200, headers: { "content-type": "application/json" } });
+  if (u.includes("api.nasdaq.com/api/quote/") && u.includes("/info?")) return json({ data: { marketStatus: "Closed", primaryData: { lastSalePrice: lastSale, lastTradeTimestamp: `${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Number(usDay.slice(0, 2)) - 1]} ${Number(usDay.slice(3, 5))}, ${usDay.slice(6)}` }, secondaryData: null } });
+  const r = await realFetch(url, init);
+  if (!u.includes("api.nasdaq.com/api/quote/") || !u.includes("/historical?")) return r;
+  const j = await r.json(); if (j?.data?.tradesTable?.rows) j.data.tradesTable.rows = j.data.tradesTable.rows.filter((row) => row.date !== usDay);
+  return json(j);
+};
+test("after the bell Nasdaq's last sale is an after-hours print, not a close: nothing from Nasdaq for the day", async () => {
+  globalThis.fetch = nasdaqTableWithout(US_DAY, "$1.23");
+  try { assert.equal(await nasdaqClose("TSLA", DAY), null); } finally { globalThis.fetch = realFetch; }
+});
+test("an after-hours last sale in another range holds nothing: past the grace period the primary settles alone", async () => {
+  globalThis.fetch = nasdaqTableWithout(US_DAY, "$" + (agreed.detail.close + otherRangeBend()).toFixed(4));
+  let ev; try { ev = await closeMove("TSLA", DAY, NOW, THR); } finally { globalThis.fetch = realFetch; }
+  assert.equal(ev.ok, true, ev.reason); assert.equal(ev.value, agreed.value); assert.equal(ev.detail.crossCheck.agreed, null);
 });
 
 // On-chain tokens: Jupiter alone settles; DexScreener is recorded and never decides. Numbers in the first test are market #95 (OPENAI, 2026-09-20), which the old rule held.

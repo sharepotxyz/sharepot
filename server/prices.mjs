@@ -142,8 +142,10 @@ async function alpacaDaily(symbol, start, end) {
 // ---------- second source: Nasdaq's official close (no key), used only to confirm the primary ----------
 const NASDAQ_HEADERS = { "user-agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128 Safari/537.36", accept: "application/json" };
 const usDate = (s) => { const m = String(s ?? "").match(/^(\d{2})\/(\d{2})\/(\d{4})$/); return m ? `${m[3]}-${m[1]}-${m[2]}` : null; };
-/** Official close of `symbol` on `date` per Nasdaq: the historical table once it carries the day, else the last sale
- *  of a closed session on that day. null when Nasdaq has nothing for the day yet; throws when Nasdaq is unreachable. */
+/** Official close of `symbol` on `date` per Nasdaq: its historical table, once it carries the day. null when Nasdaq has
+ *  nothing for the day yet; throws when Nasdaq is unreachable. Not the quote page's last sale: from 8 pm New York it says
+ *  "Closed" and its last sale is the last after-hours print, not the 4 pm close (NVDA 2026-11-24: 151.95 against a
+ *  155.38 close), which set the two sources apart every night (2026-11-25). */
 const nasdaqClass = new Map(); // symbol → asset class Nasdaq knows it under ("stocks" or "etf"; SPY is an etf)
 export async function nasdaqClose(symbol, date) {
   const px = (v) => { const n = Number(String(v ?? "").replace(/[$,]/g, "")); return Number.isFinite(n) && n > 0 ? n : null; };
@@ -155,10 +157,6 @@ export async function nasdaqClose(symbol, date) {
   if (hist === null) throw new Error(`nasdaq: ${symbol} unknown under stocks and etf`);
   const row = hist.find((r) => usDate(r.date) === date);
   if (row && px(row.close)) return { close: px(row.close), via: "historical" };
-  const info = (await getJson(`https://api.nasdaq.com/api/quote/${symbol}/info?assetclass=${nasdaqClass.get(symbol)}`, NASDAQ_HEADERS)).json?.data;
-  const pd = info?.primaryData ?? {}, closed = /closed/i.test(String(info?.marketStatus ?? ""));
-  const tsDate = (() => { const m = String(pd.lastTradeTimestamp ?? "").match(/^([A-Z][a-z]{2}) (\d{1,2}), (\d{4})/); return m && MONTHS[m[1]] ? `${m[3]}-${MONTHS[m[1]]}-${m[2].padStart(2, "0")}` : null; })();
-  if (closed && tsDate === date && px(pd.lastSalePrice)) return { close: px(pd.lastSalePrice), via: "last-sale" };
   return null;
 }
 /** How long after the bell the resolver keeps waiting for the second source before it settles on the primary alone. */
